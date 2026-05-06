@@ -13,6 +13,7 @@ dependencies = [
   "httpx>=0.27.0",
   "pymupdf>=1.24.0",
   "langgraph>=0.2.0",
+  "python-dotenv>=1.0.1",
 ]
 
 [project.optional-dependencies]
@@ -37,4 +38,3 @@ paper_agent = ["latex_templates/**/*.j2"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-

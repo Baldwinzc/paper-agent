@@ -23,6 +23,7 @@ The current scaffold supports:
 - Experiment-result summarization from pasted Markdown/CSV text.
 - Innovation-point analysis.
 - Venue template selection and optional remote template download.
+- Optional OpenAI-compatible LLM calls for higher-quality section drafting.
 - Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
 - LaTeX composition using a built-in template fallback.
 
@@ -42,6 +43,18 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+Configure Qwen/DashScope or another OpenAI-compatible provider in a local `.env`:
+
+```env
+OPENAI_API_KEY=your-api-key
+OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+TEXT_MODEL=qwen-plus
+LLM_TIMEOUT_SECONDS=120
+LLM_MAX_RETRIES=3
+```
+
+Do not commit `.env`; it is ignored by git.
+
 CLI dry run:
 
 ```powershell
@@ -54,4 +67,3 @@ paper-agent demo --output outputs/demo
 - Method writing is driven by innovation points, not raw code diffs.
 - Every contribution should be traceable to a baseline limitation, a method decision, or experiment evidence.
 - The reviewer agent should flag overclaiming and missing evidence.
-
