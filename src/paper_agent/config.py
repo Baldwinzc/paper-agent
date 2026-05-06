@@ -33,10 +33,11 @@ def load_llm_config() -> LLMConfig:
     """Load LLM settings from environment or local .env."""
 
     load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
     return LLMConfig(
-        api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-        base_url=os.getenv("OPENAI_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip(),
-        model=os.getenv("TEXT_MODEL", "qwen-plus").strip(),
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_API_BASE", "https://ark.cn-beijing.volces.com/api/v3").strip(),
+        model=os.getenv("TEXT_MODEL", "doubao-seed-1-8-251228").strip(),
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
         connect_timeout_seconds=float(os.getenv("LLM_CONNECT_TIMEOUT_SECONDS", "10")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
@@ -44,4 +45,3 @@ def load_llm_config() -> LLMConfig:
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
     )
-

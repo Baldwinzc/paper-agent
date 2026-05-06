@@ -6,12 +6,12 @@ def test_endpoint_builder_accepts_base_url():
     client = LLMClient(
         LLMConfig(
             api_key="test-key",
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            model="qwen-plus",
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            model="doubao-seed-1-8-251228",
         )
     )
 
-    assert client.endpoint == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert client.endpoint == "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 
 
 def test_payload_uses_messages_and_model():
@@ -19,7 +19,7 @@ def test_payload_uses_messages_and_model():
         LLMConfig(
             api_key="test-key",
             base_url="https://example.com/v1",
-            model="qwen-plus",
+            model="doubao-seed-1-8-251228",
             max_tokens=123,
         )
     )
@@ -31,7 +31,7 @@ def test_payload_uses_messages_and_model():
         response_format={"type": "json_object"},
     )
 
-    assert payload["model"] == "qwen-plus"
+    assert payload["model"] == "doubao-seed-1-8-251228"
     assert payload["messages"] == [{"role": "user", "content": "hello"}]
     assert payload["max_tokens"] == 123
     assert payload["response_format"] == {"type": "json_object"}

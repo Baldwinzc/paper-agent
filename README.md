@@ -43,17 +43,18 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-Configure Qwen/DashScope or another OpenAI-compatible provider in a local `.env`:
+Configure Volcengine Ark / Doubao, or another OpenAI-compatible provider, in a local `.env`:
 
 ```env
-OPENAI_API_KEY=your-api-key
-OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
-TEXT_MODEL=qwen-plus
+ARK_API_KEY=your-ark-api-key
+OPENAI_API_BASE=https://ark.cn-beijing.volces.com/api/v3
+TEXT_MODEL=doubao-seed-1-8-251228
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_RETRIES=3
 ```
 
-Do not commit `.env`; it is ignored by git.
+`OPENAI_API_KEY` is also supported for OpenAI-compatible providers, but `ARK_API_KEY`
+is clearer when using Volcengine Ark. Do not commit `.env`; it is ignored by git.
 
 CLI dry run:
 
