@@ -60,3 +60,20 @@ def test_evidence_guard_blocks_numeric_experiment_claims_without_results():
 
     assert "unsupported empirical claim" in guarded["sections"].experiments
     assert "unsupported empirical claim" in guarded["sections"].conclusion
+
+
+def test_evidence_guard_blocks_validate_on_and_outperforms_without_results():
+    state = {
+        "experiments": ExperimentSummary(missing_details=["Exact result table required."]),
+        "sections": DraftSections(
+            abstract=(
+                "We validate Hyper-ProtoSurv on multiple cohorts. "
+                "Preliminary analyses indicate it outperforms ProtoSurv."
+            ),
+        ),
+        "artifacts": {},
+    }
+
+    guarded = EvidenceGuardAgent().run(state)
+
+    assert "unsupported empirical claim" in guarded["sections"].abstract

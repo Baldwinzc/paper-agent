@@ -13,6 +13,33 @@ from paper_agent.state import DraftSections, PaperState
 class SectionWriterAgent:
     """Writes first-pass paper sections from the paper plan and innovation points."""
 
+    SECTION_SPECS = {
+        "abstract": {
+            "max_tokens": 450,
+            "instruction": "Write one concise TPAMI-style abstract. Do not invent experiment numbers.",
+        },
+        "introduction": {
+            "max_tokens": 900,
+            "instruction": "Write the Introduction. Include motivation, baseline gap, and contributions.",
+        },
+        "related_work": {
+            "max_tokens": 800,
+            "instruction": "Write Related Work organized by research threads. Use citation placeholders only when needed.",
+        },
+        "method": {
+            "max_tokens": 1200,
+            "instruction": "Write Method from innovation points only. Use markdown ### headings for subsections.",
+        },
+        "experiments": {
+            "max_tokens": 900,
+            "instruction": "Write only an experiments framework. Since exact results may be missing, do not claim improvements or numeric deltas.",
+        },
+        "conclusion": {
+            "max_tokens": 550,
+            "instruction": "Write a cautious conclusion. Do not claim validation or gains without exact results.",
+        },
+    }
+
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client
 
@@ -20,7 +47,11 @@ class SectionWriterAgent:
         if self.llm_client and self.llm_client.available:
             try:
                 state["sections"] = self._run_llm(state)
-                state.setdefault("artifacts", {})["section_writer_mode"] = "llm"
+                state.setdefault("artifacts", {})["section_writer_mode"] = (
+                    "partial_llm"
+                    if state.setdefault("artifacts", {}).get("section_writer_section_errors")
+                    else "llm"
+                )
                 return state
             except (LLMError, ValueError, json.JSONDecodeError) as exc:
                 state.setdefault("artifacts", {})["section_writer_llm_error"] = str(exc)
@@ -97,6 +128,22 @@ class SectionWriterAgent:
         )
 
     def _run_llm(self, state: PaperState) -> DraftSections:
+        fallback = self._run_fallback(state)
+        values: dict[str, str] = {}
+        errors: dict[str, str] = {}
+        for section_name in self.SECTION_SPECS:
+            try:
+                values[section_name] = self._run_llm_section(state, section_name)
+            except (LLMError, ValueError, json.JSONDecodeError) as exc:
+                errors[section_name] = str(exc)
+                values[section_name] = getattr(fallback, section_name)
+
+        if errors:
+            state.setdefault("artifacts", {})["section_writer_section_errors"] = errors
+
+        return DraftSections(**values)
+
+    def _run_llm_section(self, state: PaperState, section_name: str) -> str:
         request = state["request"]
         baseline = state.get("baseline")
         code = state.get("code")
@@ -104,15 +151,17 @@ class SectionWriterAgent:
         innovations = state.get("innovations", [])
         outline = state.get("outline")
         venue = state.get("venue_template")
+        spec = self.SECTION_SPECS[section_name]
 
         prompt = {
-            "task": "Draft core sections for a CS research paper.",
+            "task": f"Draft the {section_name} section for a CS research paper.",
             "hard_rules": [
                 "Write the Method section from innovation points, not raw code diffs.",
                 "Use code and baseline only as evidence.",
                 "Do not invent experiment numbers.",
                 "If details are missing, write a precise placeholder instead of fabricating.",
-                "Return strict JSON only.",
+                "Return only the requested section text.",
+                "Do not wrap the answer in JSON or Markdown code fences.",
             ],
             "project_name": request.project_name,
             "target_venue": request.target_venue,
@@ -122,14 +171,9 @@ class SectionWriterAgent:
             "experiment_summary": experiments.model_dump() if experiments else {},
             "innovations": [item.model_dump() for item in innovations],
             "outline": outline.model_dump() if outline else {},
-            "required_json_schema": {
-                "abstract": "string",
-                "introduction": "string",
-                "related_work": "string",
-                "method": "string, use markdown ### headings for subsections",
-                "experiments": "string, framework only if exact results are missing",
-                "conclusion": "string",
-            },
+            "section_name": section_name,
+            "section_instruction": spec["instruction"],
+            "output_format": f"Plain text content for {section_name}.",
         }
 
         result = self.llm_client.chat(
@@ -144,18 +188,9 @@ class SectionWriterAgent:
                 ChatMessage(role="user", content=json.dumps(prompt, ensure_ascii=False)),
             ],
             temperature=0.25,
-            max_tokens=5000,
-            response_format={"type": "json_object"},
+            max_tokens=spec["max_tokens"],
         )
-        data = self._extract_json(result.content)
-        return DraftSections(
-            abstract=self._required_text(data, "abstract"),
-            introduction=self._required_text(data, "introduction"),
-            related_work=self._required_text(data, "related_work"),
-            method=self._required_text(data, "method"),
-            experiments=self._required_text(data, "experiments"),
-            conclusion=self._required_text(data, "conclusion"),
-        )
+        return self._clean_section_text(section_name, result.content)
 
     def _extract_json(self, content: str) -> dict[str, Any]:
         try:
@@ -174,3 +209,34 @@ class SectionWriterAgent:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"LLM JSON missing non-empty {key}.")
         return value.strip()
+
+    def _clean_section_text(self, section_name: str, content: str) -> str:
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:\w+)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        text = self._drop_repeated_section_heading(section_name, text)
+        if not text:
+            raise ValueError("LLM section response is empty.")
+        return text.strip()
+
+    def _drop_repeated_section_heading(self, section_name: str, text: str) -> str:
+        lines = text.splitlines()
+        while lines and self._is_repeated_heading(section_name, lines[0]):
+            lines = lines[1:]
+            while lines and not lines[0].strip():
+                lines = lines[1:]
+        return "\n".join(lines)
+
+    def _is_repeated_heading(self, section_name: str, line: str) -> bool:
+        normalized = re.sub(r"[^a-z]+", " ", line.lower()).strip()
+        normalized = re.sub(r"^\d+\s+", "", normalized).strip()
+        section_aliases = {
+            "abstract": {"abstract"},
+            "introduction": {"introduction"},
+            "related_work": {"related work", "related works"},
+            "method": {"method", "methods"},
+            "experiments": {"experiments", "experiment"},
+            "conclusion": {"conclusion", "conclusions"},
+        }
+        return normalized in section_aliases.get(section_name, {section_name})

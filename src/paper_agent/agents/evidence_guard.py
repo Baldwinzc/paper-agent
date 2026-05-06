@@ -24,9 +24,15 @@ class EvidenceGuardAgent:
     ]
     UNSUPPORTED_EXPERIMENT_PATTERNS = [
         r"\bdemonstrat(?:e|es|ed|ing)\s+(?:improved|superior|consistent|significant)",
+        r"\bdemonstrat(?:e|es|ed|ing)\s+(?:enhanced|better|strong)",
+        r"\bsuperior\s+performance\b",
+        r"\benhanced\s+robustness\b",
         r"\bconfirm(?:s|ed|ing)?\s+(?:the|that|each)",
         r"\bachiev(?:e|es|ed|ing)\s+(?:improved|superior|state-of-the-art)",
         r"\bvalidate(?:s|d|ing)?\s+(?:the|our|framework|across|on)",
+        r"\bvalidate\b[^.]{0,100}\bon\b",
+        r"\bpreliminary\s+analys(?:is|es)\s+indicate\b",
+        r"\boutperform(?:s|ed|ing)?\b",
         r"\bvalidated\s+across\b",
         r"\bmeasurable\s+gains\b",
         r"\bconsistent\s+gains\b",
