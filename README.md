@@ -1,0 +1,57 @@
+# paper-agent
+
+Paper-agent is a research writing agent for computer science graduate workflows.
+
+The first milestone focuses on a practical paper-drafting loop:
+
+1. Read a baseline paper PDF.
+2. Read our method notes, code summary, target venue, and experiment results.
+3. Analyze credible innovation points.
+4. Generate a paper plan and draft core sections.
+5. Compose the result into the target venue's LaTeX template.
+
+The project is intentionally not a "paper ghostwriter". It is a scientific argument
+assistant: code, experiments, and the baseline paper are evidence; the Method section is
+written from validated innovation points.
+
+## Current Scope
+
+The current scaffold supports:
+
+- Baseline PDF extraction with a text fallback.
+- Lightweight codebase summarization.
+- Experiment-result summarization from pasted Markdown/CSV text.
+- Innovation-point analysis.
+- Venue template selection and optional remote template download.
+- Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
+- LaTeX composition using a built-in template fallback.
+
+## Run Locally
+
+```powershell
+cd D:\code\agent\paper-agent
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+uvicorn paper_agent.api:app --reload --port 8000
+```
+
+Health check:
+
+```powershell
+curl http://localhost:8000/health
+```
+
+CLI dry run:
+
+```powershell
+paper-agent demo --output outputs/demo
+```
+
+## Design Principles
+
+- Venue handling and LaTeX formatting are first-class responsibilities.
+- Method writing is driven by innovation points, not raw code diffs.
+- Every contribution should be traceable to a baseline limitation, a method decision, or experiment evidence.
+- The reviewer agent should flag overclaiming and missing evidence.
+
