@@ -53,6 +53,16 @@ class LatexComposerAgent:
         return re.sub(r"[^a-zA-Z0-9_-]+", "-", text.strip().lower()).strip("-") or "paper"
 
     def _latex_escape(self, text: str) -> str:
+        converted_lines = []
+        for line in text.splitlines():
+            if line.startswith("### "):
+                title = line[4:].strip()
+                converted_lines.append(r"\subsection{" + self._escape_inline(title) + "}")
+            else:
+                converted_lines.append(self._escape_inline(line))
+        return "\n".join(converted_lines)
+
+    def _escape_inline(self, text: str) -> str:
         replacements = {
             "&": r"\&",
             "%": r"\%",
@@ -77,4 +87,3 @@ class LatexComposerAgent:
             f"## Experiments\n\n{sections.experiments}\n\n"
             f"## Conclusion\n\n{sections.conclusion}\n"
         )
-

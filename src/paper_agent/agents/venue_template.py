@@ -15,6 +15,7 @@ class VenueTemplateAgent:
 
     TEMPLATE_REGISTRY = {
         "ieee": "https://template-selector.ieee.org/secure/templateSelector/downloadTemplate?publicationTypeId=1&titleId=1",
+        "ieee_journal": "https://template-selector.ieee.org/secure/templateSelector/downloadTemplate?publicationTypeId=2&titleId=1002148",
         "cvpr": "https://github.com/cvpr-org/author-kit/releases/latest/download/cvpr-author-kit.zip",
         "acl": "https://github.com/acl-org/acl-style-files/archive/refs/heads/master.zip",
         "neurips": "https://media.neurips.cc/Conferences/NeurIPS2025/Styles/neurips_2025.sty",
@@ -56,6 +57,8 @@ class VenueTemplateAgent:
 
     def _classify(self, venue: str) -> str:
         lowered = venue.lower()
+        if any(name in lowered for name in ["tpami", "t-pami", "pattern analysis and machine intelligence"]):
+            return "ieee_journal"
         if "ieee" in lowered:
             return "ieee"
         if "cvpr" in lowered or "iccv" in lowered or "eccv" in lowered:
@@ -73,4 +76,3 @@ class VenueTemplateAgent:
         if "springer" in lowered or "lncs" in lowered:
             return "springer"
         return "generic"
-

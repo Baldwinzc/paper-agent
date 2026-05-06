@@ -16,12 +16,17 @@ class InnovationAnalyzerAgent:
 
         notes = request.method_notes.strip()
         innovations: list[InnovationPoint] = []
+        claims = []
         if notes:
-            chunks = [chunk.strip("- \n") for chunk in notes.split("\n") if chunk.strip()]
-            for index, chunk in enumerate(chunks[:3], start=1):
+            claims = [chunk.strip("- \n") for chunk in notes.split("\n") if chunk.strip()]
+        elif code and code.method_claims:
+            claims = code.method_claims
+
+        if claims:
+            for index, chunk in enumerate(claims[:4], start=1):
                 innovations.append(
                     InnovationPoint(
-                        name=f"Innovation {index}: {chunk[:64]}",
+                        name=f"Innovation {index}: {self._innovation_name(chunk)}",
                         motivation=(
                             baseline.limitations[0]
                             if baseline and baseline.limitations
@@ -29,7 +34,11 @@ class InnovationAnalyzerAgent:
                         ),
                         technical_idea=chunk,
                         evidence=self._evidence(code, experiments),
-                        risk="Needs manual confirmation that the contribution is novel and not overclaimed.",
+                        risk=(
+                            "Needs manual confirmation that the contribution is novel and not overclaimed."
+                            if notes
+                            else "Inferred from repository text; user should confirm novelty and wording."
+                        ),
                     )
                 )
 
@@ -55,3 +64,17 @@ class InnovationAnalyzerAgent:
             evidence.extend(experiments.observations[:2])
         return evidence or ["Evidence needs to be supplied."]
 
+    def _innovation_name(self, claim: str) -> str:
+        lowered = claim.lower()
+        if "ot-driven adaptive hyperedges" in lowered and "bidirectional hyperedge" in lowered:
+            return "OT-driven adaptive hyperedges with bidirectional hyperedge convolution"
+        if "online prototype bank" in lowered and "removed" in lowered:
+            return "Offline OT prototype construction replacing online prototype regularization"
+        if "hcon_beta" in lowered or "loss-weight" in lowered:
+            return "Minimal survival-reconstruction training objective"
+        if "wasserstein-barycenter" in lowered:
+            return "Wasserstein-barycenter prototype geometry"
+        if "cross-cluster mask" in lowered:
+            return "Cross-cluster OT purity constraint"
+        clean = claim.split("[", 1)[0].strip()
+        return clean[:90].rstrip(" ,.;:")

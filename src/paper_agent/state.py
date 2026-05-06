@@ -35,6 +35,7 @@ class CodeSummary(BaseModel):
     languages: dict[str, int] = Field(default_factory=dict)
     likely_entrypoints: list[str] = Field(default_factory=list)
     likely_method_files: list[str] = Field(default_factory=list)
+    method_claims: list[str] = Field(default_factory=list)
     summary: str = ""
 
 
@@ -56,7 +57,18 @@ class InnovationPoint(BaseModel):
 
 class VenueTemplate(BaseModel):
     venue: str
-    family: Literal["generic", "ieee", "acm", "springer", "neurips", "icml", "iclr", "acl", "cvpr"] = "generic"
+    family: Literal[
+        "generic",
+        "ieee",
+        "ieee_journal",
+        "acm",
+        "springer",
+        "neurips",
+        "icml",
+        "iclr",
+        "acl",
+        "cvpr",
+    ] = "generic"
     template_source: str = "built-in"
     template_dir: str = ""
     main_template: str = "main.tex.j2"
@@ -97,4 +109,3 @@ class PaperState(TypedDict, total=False):
     review_findings: list[ReviewFinding]
     final_markdown: str
     artifacts: dict[str, Any]
-

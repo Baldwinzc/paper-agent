@@ -16,3 +16,15 @@ def test_workflow_generates_latex_and_sections():
     assert state["innovations"]
     assert state["venue_template"].family == "ieee"
     assert state["latex_output_path"].name == "main.tex"
+
+
+def test_tpami_uses_ieee_journal_template():
+    request = PaperRequest(
+        project_name="demo-paper",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+    )
+
+    state = PaperWorkflow().run(request)
+
+    assert state["venue_template"].family == "ieee_journal"
