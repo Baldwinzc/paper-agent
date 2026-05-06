@@ -42,6 +42,5 @@ class ReviewerAgent:
                 )
             )
 
-        state["review_findings"] = findings
+        state["review_findings"] = [*state.get("review_findings", []), *findings]
         return state
-
