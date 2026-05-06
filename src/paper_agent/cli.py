@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from paper_agent.config import load_llm_config
-from paper_agent.llm import ChatMessage, LLMClient
+from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
 
@@ -45,12 +45,19 @@ def main() -> None:
     elif args.command == "llm-ping":
         config = load_llm_config()
         client = LLMClient(config)
-        result = client.chat(
-            [
-                ChatMessage(role="system", content="You are a concise API health-check assistant."),
-                ChatMessage(role="user", content="Reply with exactly: paper-agent-ok"),
-            ],
-            temperature=0,
-            max_tokens=16,
-        )
+        try:
+            result = client.chat(
+                [
+                    ChatMessage(role="system", content="You are a concise API health-check assistant."),
+                    ChatMessage(role="user", content="Reply with exactly: paper-agent-ok"),
+                ],
+                temperature=0,
+                max_tokens=16,
+            )
+        except LLMError as exc:
+            raise SystemExit(f"LLM ping failed: {exc}") from exc
         print(result.content.strip())
+
+
+if __name__ == "__main__":
+    main()

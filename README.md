@@ -61,6 +61,20 @@ CLI dry run:
 paper-agent demo --output outputs/demo
 ```
 
+If the `paper-agent` command is not available yet, install the project first:
+
+```powershell
+cd D:\code\agent\paper-agent
+pip install -e .
+```
+
+Or run the CLI without installing:
+
+```powershell
+$env:PYTHONPATH="D:\code\agent\paper-agent\src"
+python -m paper_agent.cli llm-ping
+```
+
 ## Design Principles
 
 - Venue handling and LaTeX formatting are first-class responsibilities.
