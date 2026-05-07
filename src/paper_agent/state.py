@@ -69,7 +69,9 @@ class VenueTemplate(BaseModel):
         "acl",
         "cvpr",
     ] = "generic"
+    template_name: str = ""
     template_source: str = "built-in"
+    overleaf_url: str = ""
     template_dir: str = ""
     main_template: str = "main.tex.j2"
     notes: list[str] = Field(default_factory=list)

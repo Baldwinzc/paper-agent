@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from paper_agent.state import PaperState
+from paper_agent.state import PaperState, VenueTemplate
 from paper_agent.tables import extract_markdown_tables, markdown_table_to_latex
 
 
@@ -54,7 +54,8 @@ class LatexComposerAgent:
             conclusion=self._latex_escape(sections.conclusion),
         )
         self._copy_template_assets(template_dir, output_root)
-        self._write_project_helpers(output_root, request.target_venue, venue_template.template_source)
+        self._copy_cached_template_assets(Path(venue_template.template_dir), output_root)
+        self._write_project_helpers(output_root, venue_template)
 
         output_path = output_root / "main.tex"
         output_path.write_text(rendered, encoding="utf-8")
@@ -101,7 +102,22 @@ class LatexComposerAgent:
             else:
                 shutil.copy2(path, destination)
 
-    def _write_project_helpers(self, output_root: Path, venue: str, template_source: str) -> None:
+    def _copy_cached_template_assets(self, cached_template_dir: Path, output_root: Path) -> None:
+        if not cached_template_dir.exists():
+            return
+
+        allowed_suffixes = {".bst", ".cls", ".sty", ".bbx", ".cbx", ".def", ".clo"}
+        for path in sorted(cached_template_dir.rglob("*")):
+            if not path.is_file() or path.name == "SOURCE_URL.txt":
+                continue
+            if path.suffix.lower() not in allowed_suffixes:
+                continue
+            destination = output_root / path.name
+            if destination.exists():
+                continue
+            shutil.copy2(path, destination)
+
+    def _write_project_helpers(self, output_root: Path, venue_template: VenueTemplate) -> None:
         references = output_root / "references.bib"
         if not references.exists():
             references.write_text(
@@ -118,10 +134,33 @@ class LatexComposerAgent:
                     "Upload the generated zip file to Overleaf with New Project > Upload Project.",
                     "Set `main.tex` as the main document if Overleaf does not detect it automatically.",
                     "",
-                    f"- Target venue: {venue}",
-                    f"- Template source: {template_source}",
+                    f"- Target venue: {venue_template.venue}",
+                    f"- Template: {venue_template.template_name or venue_template.family}",
+                    f"- Template source: {venue_template.template_source}",
+                    f"- Overleaf template page: {venue_template.overleaf_url or 'not configured'}",
                     "- `references.bib` is a placeholder; add real BibTeX entries before submission.",
                     "- Generated text should be reviewed against the actual experiments and baseline paper.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        source_notes = output_root / "TEMPLATE_SOURCE.md"
+        source_notes.write_text(
+            "\n".join(
+                [
+                    "# Template Source",
+                    "",
+                    f"- Venue: {venue_template.venue}",
+                    f"- Family: {venue_template.family}",
+                    f"- Template: {venue_template.template_name or venue_template.family}",
+                    f"- Source: {venue_template.template_source}",
+                    f"- Overleaf: {venue_template.overleaf_url or 'not configured'}",
+                    "",
+                    "## Notes",
+                    "",
+                    *[f"- {note}" for note in venue_template.notes],
                     "",
                 ]
             ),

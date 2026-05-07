@@ -23,6 +23,7 @@ The current scaffold supports:
 - Experiment-result summarization from pasted Markdown/CSV text.
 - Innovation-point analysis.
 - Venue template selection and optional remote template download.
+- Remote template artifact caching/extraction when a venue exposes a downloadable zip or style file.
 - Optional OpenAI-compatible LLM calls for higher-quality section drafting.
 - Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
 - LaTeX composition using a built-in template fallback.
@@ -58,7 +59,8 @@ LLM_MAX_RETRIES=3
 `OPENAI_API_KEY` is also supported for OpenAI-compatible providers, but `ARK_API_KEY`
 is clearer when using Volcengine Ark. Do not commit `.env`; it is ignored by git.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
-the configured model.
+the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
+template downloads during tests or offline runs.
 
 CLI dry run:
 

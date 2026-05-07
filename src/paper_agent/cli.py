@@ -53,6 +53,7 @@ def main() -> None:
         output.mkdir(parents=True, exist_ok=True)
         (output / "draft.md").write_text(state["final_markdown"], encoding="utf-8")
         print(f"Draft written to {output / 'draft.md'}")
+        print(f"Template source: {state['venue_template'].template_source}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
@@ -83,6 +84,7 @@ def main() -> None:
         guard_findings = state.get("artifacts", {}).get("evidence_guard_findings", [])
         print(f"Evidence guard findings: {len(guard_findings)}")
         print(f"Review findings: {len(state.get('review_findings', []))}")
+        print(f"Template source: {state['venue_template'].template_source}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:

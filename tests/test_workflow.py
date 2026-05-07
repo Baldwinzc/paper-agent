@@ -1,3 +1,4 @@
+import os
 from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
@@ -7,6 +8,9 @@ from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
+
+
+os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
 
 
 def test_workflow_generates_latex_and_sections():
@@ -27,6 +31,7 @@ def test_workflow_generates_latex_and_sections():
     assert state["sections"].abstract
     assert state["innovations"]
     assert state["venue_template"].family == "ieee"
+    assert state["venue_template"].overleaf_url
     assert state["latex_project_dir"].name == "demo-paper"
     assert state["latex_output_path"].name == "main.tex"
     assert r"\begin{table}" in state["latex_output_path"].read_text(encoding="utf-8")
@@ -42,6 +47,8 @@ def test_tpami_uses_ieee_journal_template():
     state = PaperWorkflow().run(request)
 
     assert state["venue_template"].family == "ieee_journal"
+    assert state["venue_template"].template_name == "IEEE journal paper template"
+    assert state["venue_template"].overleaf_url == "https://www.overleaf.com/org/ieee"
 
 
 def test_evidence_guard_blocks_no_cox_claim_when_cox_evidence_exists():
@@ -126,6 +133,22 @@ def test_zip_latex_project_contains_overleaf_files(tmp_path):
     assert zip_path.exists()
     with ZipFile(zip_path) as archive:
         assert set(archive.namelist()) == {"main.tex", "references.bib"}
+
+
+def test_workflow_writes_template_source_notes():
+    request = PaperRequest(
+        project_name="template-notes-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+    )
+
+    state = PaperWorkflow().run(request)
+    source_notes = state["latex_project_dir"] / "TEMPLATE_SOURCE.md"
+
+    assert source_notes.exists()
+    content = source_notes.read_text(encoding="utf-8")
+    assert "IEEE journal paper template" in content
+    assert "https://www.overleaf.com/org/ieee" in content
 
 
 def test_markdown_experiment_tables_render_as_booktabs_latex():
