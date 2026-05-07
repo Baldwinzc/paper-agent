@@ -15,6 +15,10 @@ class ReferenceResolverAgent:
     """Uses OpenAlex to enrich seed bibliography entries."""
 
     OPENALEX_WORKS_URL = "https://api.openalex.org/works"
+    S2_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+
+    def __init__(self) -> None:
+        self._semantic_scholar_rate_limited = False
 
     def run(self, state: PaperState) -> PaperState:
         if self._disabled():
@@ -52,19 +56,21 @@ class ReferenceResolverAgent:
         data = self._query_openalex(query)
         results = data.get("results", []) if isinstance(data, dict) else []
         if not results:
-            return entry.model_copy(
-                update={"note": f"{entry.note} OpenAlex returned no candidates for query: {query}."}
+            return self._resolve_entry_with_semantic_scholar(
+                entry,
+                query,
+                f"{entry.note} OpenAlex returned no candidates for query: {query}.",
             )
 
         work = results[0]
         if not self._confident_match(query, str(work.get("title") or "")):
-            return entry.model_copy(
-                update={
-                    "note": (
-                        f"{entry.note} OpenAlex candidate was rejected as low-confidence "
-                        f"for query: {query}."
-                    )
-                }
+            return self._resolve_entry_with_semantic_scholar(
+                entry,
+                query,
+                (
+                    f"{entry.note} OpenAlex candidate was rejected as low-confidence "
+                    f"for query: {query}."
+                ),
             )
         return self._entry_from_openalex(entry, query, work)
 
@@ -78,6 +84,67 @@ class ReferenceResolverAgent:
         if mailto:
             params["mailto"] = mailto
         response = httpx.get(self.OPENALEX_WORKS_URL, params=params, timeout=15)
+        response.raise_for_status()
+        return response.json()
+
+    def _resolve_entry_with_semantic_scholar(
+        self,
+        entry: CitationEntry,
+        query: str,
+        prior_note: str,
+    ) -> CitationEntry:
+        if self._semantic_scholar_rate_limited:
+            return entry.model_copy(
+                update={"note": f"{prior_note} Semantic Scholar fallback skipped after rate limit."}
+            )
+        try:
+            data = self._query_semantic_scholar(query)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                self._semantic_scholar_rate_limited = True
+                return entry.model_copy(
+                    update={
+                        "note": (
+                            f"{prior_note} Semantic Scholar fallback was rate limited "
+                            "and skipped for the remaining references."
+                        )
+                    }
+                )
+            return entry.model_copy(
+                update={
+                    "note": (
+                        f"{prior_note} Semantic Scholar lookup failed with HTTP "
+                        f"{exc.response.status_code}."
+                    )
+                }
+            )
+        except Exception as exc:
+            return entry.model_copy(
+                update={"note": f"{prior_note} Semantic Scholar lookup failed: {type(exc).__name__}."}
+            )
+        results = data.get("data", []) if isinstance(data, dict) else []
+        if not results:
+            return entry.model_copy(
+                update={"note": f"{prior_note} Semantic Scholar returned no candidates."}
+            )
+        paper = results[0]
+        if not self._confident_match(query, str(paper.get("title") or "")):
+            return entry.model_copy(
+                update={"note": f"{prior_note} Semantic Scholar candidate was low-confidence."}
+            )
+        return self._entry_from_semantic_scholar(entry, query, paper)
+
+    def _query_semantic_scholar(self, query: str) -> dict[str, Any]:
+        params = {
+            "query": query,
+            "limit": 1,
+            "fields": "title,year,venue,authors,externalIds,url",
+        }
+        headers = {}
+        api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+        if api_key:
+            headers["x-api-key"] = api_key
+        response = httpx.get(self.S2_SEARCH_URL, params=params, headers=headers, timeout=15)
         response.raise_for_status()
         return response.json()
 
@@ -105,6 +172,33 @@ class ReferenceResolverAgent:
                 "venue": venue,
                 "doi": doi,
                 "url": url,
+                "note": note,
+            }
+        )
+
+    def _entry_from_semantic_scholar(
+        self,
+        original: CitationEntry,
+        query: str,
+        paper: dict[str, Any],
+    ) -> CitationEntry:
+        external_ids = paper.get("externalIds") or {}
+        doi = self._clean_doi(str(external_ids.get("DOI") or ""))
+        title = str(paper.get("title") or original.title)
+        authors = [
+            str(author.get("name"))
+            for author in paper.get("authors", [])[:8]
+            if author.get("name")
+        ]
+        note = f"Resolved by Semantic Scholar from query: {query}. Verify relevance before submission."
+        return original.model_copy(
+            update={
+                "title": title,
+                "authors": authors or original.authors,
+                "year": str(paper.get("year") or original.year),
+                "venue": str(paper.get("venue") or original.venue),
+                "doi": doi,
+                "url": f"https://doi.org/{doi}" if doi else str(paper.get("url") or original.url),
                 "note": note,
             }
         )

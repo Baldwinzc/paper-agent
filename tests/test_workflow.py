@@ -342,6 +342,7 @@ def test_reference_resolver_rejects_low_confidence_match(monkeypatch):
 
     monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
     monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", fake_query)
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_semantic_scholar", lambda self, query: {"data": []})
     entry = ReferenceResolverAgent()._resolve_entry(
         CitationEntry(
             key="x",
@@ -352,6 +353,59 @@ def test_reference_resolver_rejects_low_confidence_match(monkeypatch):
 
     assert not entry.doi
     assert "low-confidence" in entry.note
+
+
+def test_reference_resolver_falls_back_to_semantic_scholar(monkeypatch):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", lambda self, query: {"results": []})
+    monkeypatch.setattr(
+        ReferenceResolverAgent,
+        "_query_semantic_scholar",
+        lambda self, query: {
+            "data": [
+                {
+                    "title": "Whole slide image survival prediction with hypergraph learning",
+                    "year": 2025,
+                    "venue": "Medical Image Analysis",
+                    "externalIds": {"DOI": "10.1234/s2"},
+                    "url": "https://www.semanticscholar.org/paper/test",
+                    "authors": [{"name": "Ada Lovelace"}],
+                }
+            ]
+        },
+    )
+    entry = ReferenceResolverAgent()._resolve_entry(
+        CitationEntry(
+            key="x",
+            title="Representative work on hypergraph learning",
+            query="whole slide image survival prediction hypergraph learning",
+        )
+    )
+
+    assert entry.doi == "10.1234/s2"
+    assert entry.year == "2025"
+    assert entry.venue == "Medical Image Analysis"
+    assert "Semantic Scholar" in entry.note
+
+
+def test_reference_resolver_handles_semantic_scholar_rate_limit(monkeypatch):
+    class FakeResponse:
+        status_code = 429
+
+    def raise_rate_limit(self, query):
+        raise __import__("httpx").HTTPStatusError("rate limited", request=None, response=FakeResponse())
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", lambda self, query: {"results": []})
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_semantic_scholar", raise_rate_limit)
+    resolver = ReferenceResolverAgent()
+
+    first = resolver._resolve_entry(CitationEntry(key="a", title="A", query="whole slide image survival prediction"))
+    second = resolver._resolve_entry(CitationEntry(key="b", title="B", query="hypergraph learning"))
+
+    assert "rate limited" in first.note
+    assert "skipped after rate limit" in second.note
+    assert "https://api.semanticscholar.org" not in first.note
 
 
 def test_reference_resolver_deduplicates_repeated_dois(monkeypatch):

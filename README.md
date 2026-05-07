@@ -68,8 +68,9 @@ client compatible with the current section-writing pipeline.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
-Set `PAPER_AGENT_DISABLE_REFERENCE_RESOLVE=1` to skip OpenAlex metadata lookup.
+Set `PAPER_AGENT_DISABLE_REFERENCE_RESOLVE=1` to skip scholarly metadata lookup.
 Set `OPENALEX_MAILTO=you@example.com` to identify your OpenAlex API traffic.
+`SEMANTIC_SCHOLAR_API_KEY` is optional and only raises Semantic Scholar rate limits.
 
 CLI dry run:
 
