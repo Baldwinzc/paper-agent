@@ -31,6 +31,7 @@ The current scaffold supports:
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
 - Seed BibTeX generation with explicit reviewer warnings for unverified references.
 - Optional OpenAlex metadata resolution for bibliography seeds.
+- Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 
 ## Run Locally
 

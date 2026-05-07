@@ -42,7 +42,12 @@ class LatexComposerAgent:
             markdown_table_to_latex(table) for table in experiment_tables
         )
         citation_keys = {entry.key for entry in state.get("bibliography", [])}
-        experiments_latex = self._latex_escape(sections.experiments, citation_keys=citation_keys)
+        citation_aliases = state.get("artifacts", {}).get("citation_key_aliases", {})
+        experiments_latex = self._latex_escape(
+            sections.experiments,
+            citation_keys=citation_keys,
+            citation_aliases=citation_aliases,
+        )
         if experiment_table_latex:
             experiments_latex = experiments_latex + "\n\n" + experiment_table_latex
 
@@ -50,12 +55,32 @@ class LatexComposerAgent:
         template_values = {
             "title": title,
             "venue": request.target_venue,
-            "abstract": self._latex_escape(sections.abstract, citation_keys=citation_keys),
-            "introduction": self._latex_escape(sections.introduction, citation_keys=citation_keys),
-            "related_work": self._latex_escape(sections.related_work, citation_keys=citation_keys),
-            "method": self._latex_escape(sections.method, citation_keys=citation_keys),
+            "abstract": self._latex_escape(
+                sections.abstract,
+                citation_keys=citation_keys,
+                citation_aliases=citation_aliases,
+            ),
+            "introduction": self._latex_escape(
+                sections.introduction,
+                citation_keys=citation_keys,
+                citation_aliases=citation_aliases,
+            ),
+            "related_work": self._latex_escape(
+                sections.related_work,
+                citation_keys=citation_keys,
+                citation_aliases=citation_aliases,
+            ),
+            "method": self._latex_escape(
+                sections.method,
+                citation_keys=citation_keys,
+                citation_aliases=citation_aliases,
+            ),
             "experiments": experiments_latex,
-            "conclusion": self._latex_escape(sections.conclusion, citation_keys=citation_keys),
+            "conclusion": self._latex_escape(
+                sections.conclusion,
+                citation_keys=citation_keys,
+                citation_aliases=citation_aliases,
+            ),
         }
         if venue_template.sample_main_tex:
             rendered = self._render_from_sample_main(Path(venue_template.sample_main_tex), template_values)
@@ -76,19 +101,35 @@ class LatexComposerAgent:
     def _slug(self, text: str) -> str:
         return re.sub(r"[^a-zA-Z0-9_-]+", "-", text.strip().lower()).strip("-") or "paper"
 
-    def _latex_escape(self, text: str, citation_keys: set[str] | None = None) -> str:
+    def _latex_escape(
+        self,
+        text: str,
+        citation_keys: set[str] | None = None,
+        citation_aliases: dict[str, str] | None = None,
+    ) -> str:
         converted_lines = []
         for line in text.splitlines():
             if line.startswith("### "):
                 title = line[4:].strip()
                 converted_lines.append(r"\subsection{" + self._escape_inline(title) + "}")
             else:
-                converted_lines.append(self._escape_inline(line, citation_keys=citation_keys))
+                converted_lines.append(
+                    self._escape_inline(
+                        line,
+                        citation_keys=citation_keys,
+                        citation_aliases=citation_aliases,
+                    )
+                )
         return "\n".join(converted_lines)
 
-    def _escape_inline(self, text: str, citation_keys: set[str] | None = None) -> str:
+    def _escape_inline(
+        self,
+        text: str,
+        citation_keys: set[str] | None = None,
+        citation_aliases: dict[str, str] | None = None,
+    ) -> str:
         if citation_keys:
-            text = self._convert_known_citations(text, citation_keys)
+            text = self._convert_known_citations(text, citation_keys, citation_aliases or {})
         replacements = {
             "&": r"\&",
             "%": r"\%",
@@ -100,12 +141,18 @@ class LatexComposerAgent:
             text = text.replace(old, new)
         return text
 
-    def _convert_known_citations(self, text: str, citation_keys: set[str]) -> str:
+    def _convert_known_citations(
+        self,
+        text: str,
+        citation_keys: set[str],
+        citation_aliases: dict[str, str],
+    ) -> str:
         def replace(match: re.Match[str]) -> str:
             raw = match.group(1)
-            keys = [part.strip() for part in raw.split(",")]
-            if keys and all(key in citation_keys for key in keys):
-                return r"\cite{" + ",".join(keys) + "}"
+            keys = [citation_aliases.get(part.strip(), part.strip()) for part in raw.split(",")]
+            deduped = list(dict.fromkeys(keys))
+            if deduped and all(key in citation_keys for key in deduped):
+                return r"\cite{" + ",".join(deduped) + "}"
             return match.group(0)
 
         return re.sub(r"\[([A-Za-z0-9,\s]+)\]", replace, text)

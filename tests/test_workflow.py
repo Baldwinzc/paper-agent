@@ -57,6 +57,9 @@ def test_workflow_generates_latex_and_sections():
     assert r"\begin{table}" in state["latex_output_path"].read_text(encoding="utf-8")
     assert state["bibliography"]
     assert (state["latex_project_dir"] / "references.bib").read_text(encoding="utf-8")
+    report = state["latex_project_dir"] / "DRAFT_REPORT.md"
+    assert report.exists()
+    assert "Draft Report" in report.read_text(encoding="utf-8")
 
 
 def test_tpami_uses_ieee_journal_template():
@@ -393,3 +396,22 @@ def test_known_markdown_citations_convert_to_latex_cite():
 
     tex = state["latex_output_path"].read_text(encoding="utf-8")
     assert r"\cite{survivalprediction}" in tex
+
+
+def test_citation_aliases_convert_to_retained_key():
+    request = PaperRequest(
+        project_name="citation-alias-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+        keywords=["whole-slide images", "survival prediction"],
+    )
+
+    state = PaperWorkflow().run(request)
+    state["artifacts"]["citation_key_aliases"] = {"survivalprediction": "wholeslideimages"}
+    state["bibliography"] = [entry for entry in state["bibliography"] if entry.key != "survivalprediction"]
+    state["sections"].related_work = "Prior work [survivalprediction] motivates this setting."
+    state = LatexComposerAgent().run(state)
+
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert r"\cite{wholeslideimages}" in tex
+    assert "survivalprediction" not in tex
