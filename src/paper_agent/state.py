@@ -52,6 +52,7 @@ class ExperimentSummary(BaseModel):
 class CitationEntry(BaseModel):
     key: str
     title: str
+    query: str = ""
     authors: list[str] = Field(default_factory=list)
     year: str = ""
     venue: str = ""

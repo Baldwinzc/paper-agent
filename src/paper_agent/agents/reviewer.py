@@ -46,7 +46,10 @@ class ReviewerAgent:
             unverified = [
                 entry
                 for entry in state["bibliography"]
-                if "Seed" in entry.note or "replace" in entry.note.lower() or not entry.year
+                if "Seed" in entry.note
+                or "replace" in entry.note.lower()
+                or "verify" in entry.note.lower()
+                or not entry.year
             ]
             if unverified:
                 findings.append(

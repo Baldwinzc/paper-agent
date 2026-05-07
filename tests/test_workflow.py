@@ -4,16 +4,18 @@ from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
-from paper_agent.state import PaperRequest
+from paper_agent.state import CitationEntry, PaperRequest
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
+from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 
 
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_LLM", "1")
+os.environ.setdefault("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "1")
 
 
 def test_workflow_generates_latex_and_sections():
@@ -267,6 +269,99 @@ def test_bibliography_seeds_are_written_to_markdown_and_bibtex():
     assert "@misc{" in bibtex
     assert "Verify metadata before submission" in bibtex
     assert any("Bibliography contains seed entries" in finding.issue for finding in state["review_findings"])
+
+
+def test_reference_resolver_enriches_seed_entry(monkeypatch):
+    def fake_query(self, query):
+        return {
+            "results": [
+                {
+                    "title": "Computational pathology with whole-slide images",
+                    "doi": "https://doi.org/10.1234/example",
+                    "publication_year": 2024,
+                    "primary_location": {"source": {"display_name": "IEEE Transactions"}},
+                    "authorships": [
+                        {"author": {"display_name": "Ada Lovelace"}},
+                        {"author": {"display_name": "Grace Hopper"}},
+                    ],
+                    "ids": {"openalex": "https://openalex.org/W123"},
+                }
+            ]
+        }
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", fake_query)
+    state = PaperWorkflow().run(
+        PaperRequest(
+            project_name="resolver-demo",
+            target_venue="TPAMI",
+            method_notes="Adaptive feature calibration",
+            keywords=["whole-slide images"],
+        )
+    )
+    bibtex = (state["latex_project_dir"] / "references.bib").read_text(encoding="utf-8")
+
+    assert "Ada Lovelace and Grace Hopper" in bibtex
+    assert "year = {2024}" in bibtex
+    assert "doi = {10.1234/example}" in bibtex
+    assert "journal = {IEEE Transactions}" in bibtex
+    assert state["artifacts"]["reference_resolver_resolved"] >= 1
+
+
+def test_reference_resolver_rejects_low_confidence_match(monkeypatch):
+    def fake_query(self, query):
+        return {
+            "results": [
+                {
+                    "title": "Unrelated work on software maintenance",
+                    "doi": "https://doi.org/10.1234/unrelated",
+                    "publication_year": 2024,
+                    "authorships": [],
+                }
+            ]
+        }
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", fake_query)
+    entry = ReferenceResolverAgent()._resolve_entry(
+        CitationEntry(
+            key="x",
+            title="Representative work on whole slide images",
+            query="whole slide images cancer survival prediction",
+        )
+    )
+
+    assert not entry.doi
+    assert "low-confidence" in entry.note
+
+
+def test_reference_resolver_deduplicates_repeated_dois(monkeypatch):
+    def fake_query(self, query):
+        return {
+            "results": [
+                {
+                    "title": f"{query} study",
+                    "doi": "https://doi.org/10.1234/shared",
+                    "publication_year": 2024,
+                    "authorships": [{"author": {"display_name": "Ada Lovelace"}}],
+                }
+            ]
+        }
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", fake_query)
+    state = PaperWorkflow().run(
+        PaperRequest(
+            project_name="dedupe-demo",
+            target_venue="TPAMI",
+            method_notes="Adaptive feature calibration",
+            keywords=["whole-slide images", "survival prediction"],
+        )
+    )
+
+    dois = [entry.doi for entry in state["bibliography"] if entry.doi]
+    assert dois == ["10.1234/shared"]
+    assert state["artifacts"]["citation_key_aliases"]
 
 
 def test_known_markdown_citations_convert_to_latex_cite():

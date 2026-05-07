@@ -30,6 +30,7 @@ The current scaffold supports:
 - Overleaf-ready zip export for free Overleaf upload workflows.
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
 - Seed BibTeX generation with explicit reviewer warnings for unverified references.
+- Optional OpenAlex metadata resolution for bibliography seeds.
 
 ## Run Locally
 
@@ -66,6 +67,8 @@ client compatible with the current section-writing pipeline.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
+Set `PAPER_AGENT_DISABLE_REFERENCE_RESOLVE=1` to skip OpenAlex metadata lookup.
+Set `OPENALEX_MAILTO=you@example.com` to identify your OpenAlex API traffic.
 
 CLI dry run:
 

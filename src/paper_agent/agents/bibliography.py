@@ -11,6 +11,8 @@ from paper_agent.state import CitationEntry, PaperState
 class BibliographyAgent:
     """Builds seed BibTeX entries and citation keys from local evidence."""
 
+    BROAD_TERMS = {"representation", "attention", "optimization", "adaptation", "retrieval"}
+
     def run(self, state: PaperState) -> PaperState:
         entries: OrderedDict[str, CitationEntry] = OrderedDict()
         baseline = state.get("baseline")
@@ -22,6 +24,7 @@ class BibliographyAgent:
                 CitationEntry(
                     key=self._citation_key(baseline.title, preferred_prefix="baseline"),
                     title=baseline.title,
+                    query=self._contextual_query(baseline.title, state),
                     authors=["Baseline authors"],
                     note="Seed entry extracted from the provided baseline PDF; verify metadata before submission.",
                 ),
@@ -34,6 +37,7 @@ class BibliographyAgent:
                 CitationEntry(
                     key=self._citation_key(title, preferred_prefix=term),
                     title=title,
+                    query=self._contextual_query(term, state),
                     authors=["Related work authors"],
                     note="Seed related-work entry generated from project keywords; replace with real paper metadata.",
                 ),
@@ -45,6 +49,7 @@ class BibliographyAgent:
                 CitationEntry(
                     key="relatedworkseed",
                     title=f"Related work for {request.project_name}",
+                    query=request.project_name,
                     authors=["To be completed"],
                     note="Placeholder bibliography seed; replace with real paper metadata.",
                 ),
@@ -58,13 +63,34 @@ class BibliographyAgent:
         request = state["request"]
         baseline = state.get("baseline")
         innovations = state.get("innovations", [])
+        explicit_keywords = {self._normalize_term(term).lower() for term in request.keywords}
         terms: list[str] = []
         terms.extend(request.keywords)
         if baseline:
             terms.extend(baseline.related_terms)
         for innovation in innovations:
             terms.append(innovation.name)
-        return list(dict.fromkeys(self._normalize_term(term) for term in terms if term))[:8]
+        filtered = []
+        for term in terms:
+            normalized = self._normalize_term(term)
+            if not normalized:
+                continue
+            if normalized.lower() in self.BROAD_TERMS and normalized.lower() not in explicit_keywords:
+                continue
+            filtered.append(normalized)
+        return list(dict.fromkeys(filtered))[:8]
+
+    def _contextual_query(self, term: str, state: PaperState) -> str:
+        request = state["request"]
+        normalized_term = self._normalize_term(term).lower()
+        context_terms = [
+            keyword
+            for keyword in request.keywords
+            if self._normalize_term(keyword).lower() != normalized_term
+        ][:2]
+        if not context_terms:
+            context_terms = ["computer science"]
+        return " ".join(dict.fromkeys(f"{term} {' '.join(context_terms)}".split()))
 
     def _thread_title(self, term: str) -> str:
         words = term.replace("-", " ").replace("_", " ").strip()
