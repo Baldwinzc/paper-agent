@@ -130,6 +130,8 @@ class LatexComposerAgent:
     ) -> str:
         if citation_keys:
             text = self._convert_known_citations(text, citation_keys, citation_aliases or {})
+        text = re.sub(r"\[PLACEHOLDER:\s*(.+?)\]", r"\\textbf{TODO:} \1", text, flags=re.I)
+        text = re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", text)
         replacements = {
             "&": r"\&",
             "%": r"\%",

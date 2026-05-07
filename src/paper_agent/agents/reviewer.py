@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from paper_agent.state import PaperState, ReviewFinding
 
 
@@ -60,5 +62,33 @@ class ReviewerAgent:
                     )
                 )
 
+        if sections:
+            placeholder_hits = self._placeholder_hits(sections.model_dump())
+            if placeholder_hits:
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue=f"Draft still contains placeholders: {', '.join(placeholder_hits[:5])}.",
+                        suggestion="Replace figure/table/detail placeholders before treating the draft as paper-ready.",
+                    )
+                )
+
         state["review_findings"] = [*state.get("review_findings", []), *findings]
         return state
+
+    def _placeholder_hits(self, section_values: dict[str, str]) -> list[str]:
+        patterns = [
+            r"\bTODO\b",
+            r"\bTBD\b",
+            r"\bplaceholder\b",
+            r"Table\s+[XY]",
+            r"Fig\.\s*\[",
+            r"\[.*?to be (?:added|filled|completed|refined).*?\]",
+        ]
+        hits = []
+        for section, text in section_values.items():
+            for pattern in patterns:
+                if re.search(pattern, text, flags=re.I):
+                    hits.append(section)
+                    break
+        return hits

@@ -11,6 +11,7 @@ from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
+from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 
 
@@ -396,6 +397,50 @@ def test_known_markdown_citations_convert_to_latex_cite():
 
     tex = state["latex_output_path"].read_text(encoding="utf-8")
     assert r"\cite{survivalprediction}" in tex
+
+
+def test_latex_composer_converts_markdown_bold():
+    request = PaperRequest(
+        project_name="bold-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+    )
+
+    state = PaperWorkflow().run(request)
+    state["sections"].related_work = "**Important thread** discusses the baseline."
+    state = LatexComposerAgent().run(state)
+
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert r"\textbf{Important thread}" in tex
+
+
+def test_latex_composer_converts_placeholder_markup_to_todo():
+    request = PaperRequest(
+        project_name="placeholder-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+    )
+
+    state = PaperWorkflow().run(request)
+    state["sections"].experiments = "[PLACEHOLDER: Insert the real ablation table.]"
+    state = LatexComposerAgent().run(state)
+
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert r"\textbf{TODO:} Insert the real ablation table." in tex
+    assert "[PLACEHOLDER" not in tex
+
+
+def test_reviewer_flags_placeholders():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [],
+        "sections": DraftSections(method="The architecture is shown in Fig. [placeholder for figure]."),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    assert any("placeholders" in finding.issue for finding in reviewed["review_findings"])
 
 
 def test_citation_aliases_convert_to_retained_key():
