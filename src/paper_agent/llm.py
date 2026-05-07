@@ -49,8 +49,8 @@ class LLMResult:
 class LLMClient:
     """Small OpenAI-compatible chat completions client.
 
-    The client is provider-neutral and works with DashScope/Qwen through:
-    https://dashscope.aliyuncs.com/compatible-mode/v1
+    The client is provider-neutral and works with OpenAI-compatible providers,
+    including DeepSeek at https://api.deepseek.com.
     """
 
     RETRY_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -137,7 +137,9 @@ class LLMClient:
 
     def _ensure_configured(self) -> None:
         if not self.available:
-            raise LLMConfigurationError("OPENAI_API_KEY and TEXT_MODEL must be configured.")
+            raise LLMConfigurationError(
+                "DEEPSEEK_API_KEY or OPENAI_API_KEY, plus TEXT_MODEL, must be configured."
+            )
 
     def _payload(
         self,
@@ -201,4 +203,3 @@ class LLMClient:
         if base.endswith("/chat/completions"):
             return base
         return f"{base}/chat/completions"
-

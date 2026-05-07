@@ -36,15 +36,19 @@ def load_llm_config() -> LLMConfig:
     if os.getenv("PAPER_AGENT_DISABLE_LLM", "").strip().lower() in {"1", "true", "yes", "on"}:
         return LLMConfig(
             api_key="",
-            base_url=os.getenv("OPENAI_API_BASE", "https://ark.cn-beijing.volces.com/api/v3").strip(),
-            model=os.getenv("TEXT_MODEL", "doubao-seed-1-8-251228").strip(),
+            base_url=_default_base_url(),
+            model=_default_text_model(),
         )
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
+    api_key = (
+        os.getenv("DEEPSEEK_API_KEY", "").strip()
+        or os.getenv("OPENAI_API_KEY", "").strip()
+        or os.getenv("ARK_API_KEY", "").strip()
+    )
     return LLMConfig(
         api_key=api_key,
-        base_url=os.getenv("OPENAI_API_BASE", "https://ark.cn-beijing.volces.com/api/v3").strip(),
-        model=os.getenv("TEXT_MODEL", "doubao-seed-1-8-251228").strip(),
+        base_url=_default_base_url(),
+        model=_default_text_model(),
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
         connect_timeout_seconds=float(os.getenv("LLM_CONNECT_TIMEOUT_SECONDS", "10")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
@@ -52,3 +56,15 @@ def load_llm_config() -> LLMConfig:
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
     )
+
+
+def _default_base_url() -> str:
+    return (
+        os.getenv("DEEPSEEK_API_BASE", "").strip()
+        or os.getenv("OPENAI_API_BASE", "").strip()
+        or "https://api.deepseek.com"
+    )
+
+
+def _default_text_model() -> str:
+    return os.getenv("TEXT_MODEL", "deepseek-v4-pro").strip()

@@ -47,18 +47,18 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-Configure Volcengine Ark / Doubao, or another OpenAI-compatible provider, in a local `.env`:
+Configure DeepSeek V4 Pro, or another OpenAI-compatible provider, in a local `.env`:
 
 ```env
-ARK_API_KEY=your-ark-api-key
-OPENAI_API_BASE=https://ark.cn-beijing.volces.com/api/v3
-TEXT_MODEL=doubao-seed-1-8-251228
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_API_BASE=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-pro
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_RETRIES=3
 ```
 
-`OPENAI_API_KEY` is also supported for OpenAI-compatible providers, but `ARK_API_KEY`
-is clearer when using Volcengine Ark. Do not commit `.env`; it is ignored by git.
+`OPENAI_API_BASE` and `OPENAI_API_KEY` are also supported for OpenAI-compatible
+providers, and `ARK_API_KEY` is still supported for Volcengine Ark. Do not commit `.env`; it is ignored by git.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
