@@ -22,6 +22,8 @@ class LatexComposerAgent:
         outline = state["outline"]
 
         output_root = Path("outputs") / self._slug(request.project_name)
+        if output_root.exists():
+            shutil.rmtree(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
 
         template_dir = Path(__file__).resolve().parents[1] / "latex_templates" / venue_template.family
@@ -39,7 +41,8 @@ class LatexComposerAgent:
         experiment_table_latex = "\n\n".join(
             markdown_table_to_latex(table) for table in experiment_tables
         )
-        experiments_latex = self._latex_escape(sections.experiments)
+        citation_keys = {entry.key for entry in state.get("bibliography", [])}
+        experiments_latex = self._latex_escape(sections.experiments, citation_keys=citation_keys)
         if experiment_table_latex:
             experiments_latex = experiments_latex + "\n\n" + experiment_table_latex
 
@@ -47,12 +50,12 @@ class LatexComposerAgent:
         template_values = {
             "title": title,
             "venue": request.target_venue,
-            "abstract": self._latex_escape(sections.abstract),
-            "introduction": self._latex_escape(sections.introduction),
-            "related_work": self._latex_escape(sections.related_work),
-            "method": self._latex_escape(sections.method),
+            "abstract": self._latex_escape(sections.abstract, citation_keys=citation_keys),
+            "introduction": self._latex_escape(sections.introduction, citation_keys=citation_keys),
+            "related_work": self._latex_escape(sections.related_work, citation_keys=citation_keys),
+            "method": self._latex_escape(sections.method, citation_keys=citation_keys),
             "experiments": experiments_latex,
-            "conclusion": self._latex_escape(sections.conclusion),
+            "conclusion": self._latex_escape(sections.conclusion, citation_keys=citation_keys),
         }
         if venue_template.sample_main_tex:
             rendered = self._render_from_sample_main(Path(venue_template.sample_main_tex), template_values)
@@ -60,7 +63,7 @@ class LatexComposerAgent:
             rendered = template.render(**template_values)
         self._copy_template_assets(template_dir, output_root)
         self._copy_cached_template_assets(Path(venue_template.template_dir), output_root)
-        self._write_project_helpers(output_root, venue_template)
+        self._write_project_helpers(output_root, venue_template, state)
 
         output_path = output_root / "main.tex"
         output_path.write_text(rendered, encoding="utf-8")
@@ -73,17 +76,19 @@ class LatexComposerAgent:
     def _slug(self, text: str) -> str:
         return re.sub(r"[^a-zA-Z0-9_-]+", "-", text.strip().lower()).strip("-") or "paper"
 
-    def _latex_escape(self, text: str) -> str:
+    def _latex_escape(self, text: str, citation_keys: set[str] | None = None) -> str:
         converted_lines = []
         for line in text.splitlines():
             if line.startswith("### "):
                 title = line[4:].strip()
                 converted_lines.append(r"\subsection{" + self._escape_inline(title) + "}")
             else:
-                converted_lines.append(self._escape_inline(line))
+                converted_lines.append(self._escape_inline(line, citation_keys=citation_keys))
         return "\n".join(converted_lines)
 
-    def _escape_inline(self, text: str) -> str:
+    def _escape_inline(self, text: str, citation_keys: set[str] | None = None) -> str:
+        if citation_keys:
+            text = self._convert_known_citations(text, citation_keys)
         replacements = {
             "&": r"\&",
             "%": r"\%",
@@ -94,6 +99,16 @@ class LatexComposerAgent:
         for old, new in replacements.items():
             text = text.replace(old, new)
         return text
+
+    def _convert_known_citations(self, text: str, citation_keys: set[str]) -> str:
+        def replace(match: re.Match[str]) -> str:
+            raw = match.group(1)
+            keys = [part.strip() for part in raw.split(",")]
+            if keys and all(key in citation_keys for key in keys):
+                return r"\cite{" + ",".join(keys) + "}"
+            return match.group(0)
+
+        return re.sub(r"\[([A-Za-z0-9,\s]+)\]", replace, text)
 
     def _copy_template_assets(self, template_dir: Path, output_root: Path) -> None:
         for path in template_dir.iterdir():
@@ -130,6 +145,9 @@ class LatexComposerAgent:
         }
         for path in sorted(cached_template_dir.rglob("*")):
             if not path.is_file() or path.name == "SOURCE_URL.txt":
+                continue
+            relative_parts = path.relative_to(cached_template_dir).parts
+            if relative_parts and relative_parts[0] == "user":
                 continue
             if path.suffix.lower() not in allowed_suffixes:
                 continue
@@ -227,13 +245,14 @@ class LatexComposerAgent:
             return preamble
         return preamble + "\n" + rf"\usepackage{{{package}}}"
 
-    def _write_project_helpers(self, output_root: Path, venue_template: VenueTemplate) -> None:
+    def _write_project_helpers(
+        self,
+        output_root: Path,
+        venue_template: VenueTemplate,
+        state: PaperState,
+    ) -> None:
         references = output_root / "references.bib"
-        if not references.exists():
-            references.write_text(
-                "% Add baseline and related-work BibTeX entries here.\n",
-                encoding="utf-8",
-            )
+        references.write_text(self._bibtex(state), encoding="utf-8")
 
         readme = output_root / "README_OVERLEAF.md"
         readme.write_text(
@@ -282,6 +301,9 @@ class LatexComposerAgent:
         sections = state["sections"]
         outline = state["outline"]
         title = outline.title_candidates[0] if outline.title_candidates else state["request"].project_name
+        references = "\n".join(
+            f"- `{entry.key}`: {entry.title}" for entry in state.get("bibliography", [])
+        )
         return (
             f"# {title}\n\n"
             f"## Abstract\n\n{sections.abstract}\n\n"
@@ -289,5 +311,32 @@ class LatexComposerAgent:
             f"## Related Work\n\n{sections.related_work}\n\n"
             f"## Method\n\n{sections.method}\n\n"
             f"## Experiments\n\n{sections.experiments}\n\n"
-            f"## Conclusion\n\n{sections.conclusion}\n"
+            f"## Conclusion\n\n{sections.conclusion}\n\n"
+            f"## Reference Seeds\n\n{references or '- To be completed.'}\n"
         )
+
+    def _bibtex(self, state: PaperState) -> str:
+        entries = state.get("bibliography", [])
+        if not entries:
+            return "% Add baseline and related-work BibTeX entries here.\n"
+        return "\n\n".join(self._bibtex_entry(entry) for entry in entries) + "\n"
+
+    def _bibtex_entry(self, entry) -> str:
+        fields = {
+            "title": entry.title,
+            "author": " and ".join(entry.authors) if entry.authors else "To be completed",
+            "year": entry.year or "TODO",
+            "journal": entry.venue,
+            "doi": entry.doi,
+            "url": entry.url,
+            "note": entry.note or "Verify metadata before submission.",
+        }
+        lines = [f"@misc{{{entry.key},"]
+        for name, value in fields.items():
+            if value:
+                lines.append(f"  {name} = {{{self._bibtex_escape(value)}}},")
+        lines.append("}")
+        return "\n".join(lines)
+
+    def _bibtex_escape(self, text: str) -> str:
+        return text.replace("\\", r"\textbackslash{}").replace("{", r"\{").replace("}", r"\}")

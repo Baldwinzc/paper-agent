@@ -49,6 +49,17 @@ class ExperimentSummary(BaseModel):
     missing_details: list[str] = Field(default_factory=list)
 
 
+class CitationEntry(BaseModel):
+    key: str
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: str = ""
+    venue: str = ""
+    doi: str = ""
+    url: str = ""
+    note: str = ""
+
+
 class InnovationPoint(BaseModel):
     name: str
     motivation: str
@@ -106,6 +117,7 @@ class PaperState(TypedDict, total=False):
     baseline: BaselineSummary
     code: CodeSummary
     experiments: ExperimentSummary
+    bibliography: list[CitationEntry]
     innovations: list[InnovationPoint]
     venue_template: VenueTemplate
     outline: PaperOutline

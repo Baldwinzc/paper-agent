@@ -8,6 +8,7 @@ from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
+from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 
 
@@ -37,6 +38,8 @@ def test_workflow_generates_latex_and_sections():
     assert state["latex_project_dir"].name == "demo-paper"
     assert state["latex_output_path"].name == "main.tex"
     assert r"\begin{table}" in state["latex_output_path"].read_text(encoding="utf-8")
+    assert state["bibliography"]
+    assert (state["latex_project_dir"] / "references.bib").read_text(encoding="utf-8")
 
 
 def test_tpami_uses_ieee_journal_template():
@@ -246,3 +249,37 @@ def test_markdown_experiment_tables_render_as_booktabs_latex():
     assert r"\toprule" in latex
     assert r"$\pm$" in latex
     assert r"w/o L\_rec" in latex
+
+
+def test_bibliography_seeds_are_written_to_markdown_and_bibtex():
+    request = PaperRequest(
+        project_name="citation-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+        keywords=["survival prediction", "whole-slide images"],
+    )
+
+    state = PaperWorkflow().run(request)
+    markdown = state["final_markdown"]
+    bibtex = (state["latex_project_dir"] / "references.bib").read_text(encoding="utf-8")
+
+    assert "## Reference Seeds" in markdown
+    assert "@misc{" in bibtex
+    assert "Verify metadata before submission" in bibtex
+    assert any("Bibliography contains seed entries" in finding.issue for finding in state["review_findings"])
+
+
+def test_known_markdown_citations_convert_to_latex_cite():
+    request = PaperRequest(
+        project_name="citation-conversion-demo",
+        target_venue="TPAMI",
+        method_notes="Adaptive feature calibration",
+        keywords=["survival prediction"],
+    )
+
+    state = PaperWorkflow().run(request)
+    state["sections"].related_work = "Prior survival work [survivalprediction] motivates this setting."
+    state = LatexComposerAgent().run(state)
+
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert r"\cite{survivalprediction}" in tex

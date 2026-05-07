@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
+from paper_agent.agents.bibliography import BibliographyAgent
 from paper_agent.agents.code_understanding import CodeUnderstandingAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
@@ -32,6 +33,7 @@ class PaperWorkflow:
             InnovationAnalyzerAgent(),
             VenueTemplateAgent(),
             PaperPlannerAgent(),
+            BibliographyAgent(),
             SectionWriterAgent(llm_client=llm_client),
             EvidenceGuardAgent(),
             LatexComposerAgent(),

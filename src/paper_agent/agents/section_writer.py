@@ -74,6 +74,8 @@ class SectionWriterAgent:
         method_subsections = "\n\n".join(
             self._method_subsection(index, item) for index, item in enumerate(innovations, start=1)
         )
+        citation_keys = state.setdefault("artifacts", {}).get("citation_keys", [])
+        citation_hint = self._citation_hint(citation_keys)
 
         return DraftSections(
             abstract=(
@@ -94,10 +96,10 @@ class SectionWriterAgent:
             ),
             related_work=(
                 "Related work should be organized by research threads rather than as a flat list. "
-                "First, discuss the direct baseline family and the assumptions inherited from it. "
+                f"First, discuss the direct baseline family {citation_hint}. "
                 "Second, discuss methods related to each proposed innovation point. "
                 "Third, clarify how the proposed work differs in motivation, mechanism, or evidence. "
-                "Citation placeholders should be replaced after bibliography ingestion."
+                "All generated citation metadata must be verified before submission."
             ),
             method=(
                 "We describe the proposed method by following the innovation points established during "
@@ -151,6 +153,7 @@ class SectionWriterAgent:
         innovations = state.get("innovations", [])
         outline = state.get("outline")
         venue = state.get("venue_template")
+        bibliography = state.get("bibliography", [])
         spec = self.SECTION_SPECS[section_name]
 
         prompt = {
@@ -170,6 +173,8 @@ class SectionWriterAgent:
             "code_summary": code.model_dump() if code else {},
             "experiment_summary": experiments.model_dump() if experiments else {},
             "innovations": [item.model_dump() for item in innovations],
+            "bibliography": [entry.model_dump() for entry in bibliography],
+            "allowed_citation_keys": [entry.key for entry in bibliography],
             "outline": outline.model_dump() if outline else {},
             "section_name": section_name,
             "section_instruction": spec["instruction"],
@@ -191,6 +196,13 @@ class SectionWriterAgent:
             max_tokens=spec["max_tokens"],
         )
         return self._clean_section_text(section_name, result.content)
+
+    def _citation_hint(self, citation_keys: list[str]) -> str:
+        if not citation_keys:
+            return "with citation keys to be added"
+        return "using seed citations such as " + ", ".join(
+            rf"\cite{{{key}}}" for key in citation_keys[:3]
+        )
 
     def _extract_json(self, content: str) -> dict[str, Any]:
         try:

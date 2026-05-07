@@ -29,6 +29,7 @@ The current scaffold supports:
 - LaTeX composition using a built-in template fallback.
 - Overleaf-ready zip export for free Overleaf upload workflows.
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
+- Seed BibTeX generation with explicit reviewer warnings for unverified references.
 
 ## Run Locally
 

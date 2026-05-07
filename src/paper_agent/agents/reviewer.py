@@ -42,5 +42,20 @@ class ReviewerAgent:
                 )
             )
 
+        if state.get("bibliography"):
+            unverified = [
+                entry
+                for entry in state["bibliography"]
+                if "Seed" in entry.note or "replace" in entry.note.lower() or not entry.year
+            ]
+            if unverified:
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue="Bibliography contains seed entries that are not submission-ready.",
+                        suggestion="Replace generated seed BibTeX entries with verified metadata from real papers.",
+                    )
+                )
+
         state["review_findings"] = [*state.get("review_findings", []), *findings]
         return state
