@@ -1,6 +1,7 @@
 from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
+from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 
 
@@ -77,3 +78,27 @@ def test_evidence_guard_blocks_validate_on_and_outperforms_without_results():
     guarded = EvidenceGuardAgent().run(state)
 
     assert "unsupported empirical claim" in guarded["sections"].abstract
+
+
+def test_experiment_analyzer_extracts_tcga_mock_results():
+    raw = """
+    | Method | BLCA | BRCA | LGG | LUAD | UCEC |
+    |---|---:|---:|---:|---:|---:|
+    | ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |
+    | Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |
+    Metric: C-index and IBS. Ablation w/o L_rec is lower.
+    """
+    state = {
+        "request": PaperRequest(
+            project_name="demo",
+            target_venue="TPAMI",
+            experiment_results=raw,
+        )
+    }
+
+    state = ExperimentAnalyzerAgent().run(state)
+
+    assert state["experiments"].datasets == ["BLCA", "BRCA", "LGG", "LUAD", "UCEC"]
+    assert "C-INDEX" in state["experiments"].metrics
+    assert "IBS" in state["experiments"].metrics
+    assert not state["experiments"].missing_details

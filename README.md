@@ -76,6 +76,24 @@ $env:PYTHONPATH="D:\code\agent\paper-agent\src"
 python -m paper_agent.cli llm-ping
 ```
 
+Draft from local materials:
+
+```powershell
+python -m paper_agent.cli draft `
+  --project-name hyper-protosurv-mock `
+  --target-venue TPAMI `
+  --baseline D:\code\agent\example\baseline `
+  --code-path D:\code\agent\example\code\hyper-protosurv `
+  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --keyword "whole-slide images" `
+  --keyword "survival prediction" `
+  --output outputs\hyper-protosurv-mock\draft.md
+```
+
+The bundled `examples/hyper_protosurv_mock_experiments.md` file contains synthetic
+mock numbers for pipeline testing only. Replace it with real experiment tables before
+using generated text in a paper.
+
 ## Design Principles
 
 - Venue handling and LaTeX formatting are first-class responsibilities.

@@ -23,7 +23,7 @@ class SectionWriterAgent:
             "instruction": "Write the Introduction. Include motivation, baseline gap, and contributions.",
         },
         "related_work": {
-            "max_tokens": 800,
+            "max_tokens": 1100,
             "instruction": "Write Related Work organized by research threads. Use citation placeholders only when needed.",
         },
         "method": {
@@ -35,7 +35,7 @@ class SectionWriterAgent:
             "instruction": "Write only an experiments framework. Since exact results may be missing, do not claim improvements or numeric deltas.",
         },
         "conclusion": {
-            "max_tokens": 550,
+            "max_tokens": 700,
             "instruction": "Write a cautious conclusion. Do not claim validation or gains without exact results.",
         },
     }
