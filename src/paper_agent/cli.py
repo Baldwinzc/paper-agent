@@ -111,7 +111,7 @@ def main() -> None:
                     ChatMessage(role="user", content="Reply with exactly: paper-agent-ok"),
                 ],
                 temperature=0,
-                max_tokens=16,
+                max_tokens=128,
             )
         except LLMError as exc:
             raise SystemExit(f"LLM ping failed: {exc}") from exc

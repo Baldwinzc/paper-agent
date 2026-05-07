@@ -156,6 +156,10 @@ class LLMClient:
         }
         if response_format:
             payload["response_format"] = response_format
+        if self.config.thinking in {"enabled", "disabled"}:
+            payload["thinking"] = {"type": self.config.thinking}
+        if self.config.reasoning_effort:
+            payload["reasoning_effort"] = self.config.reasoning_effort
         return payload
 
     def _headers(self) -> dict[str, str]:

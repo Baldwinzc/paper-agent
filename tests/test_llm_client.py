@@ -35,6 +35,7 @@ def test_payload_uses_messages_and_model():
     assert payload["messages"] == [{"role": "user", "content": "hello"}]
     assert payload["max_tokens"] == 123
     assert payload["response_format"] == {"type": "json_object"}
+    assert payload["thinking"] == {"type": "disabled"}
 
 
 def test_config_defaults_to_deepseek_v4_pro(monkeypatch):
@@ -50,6 +51,7 @@ def test_config_defaults_to_deepseek_v4_pro(monkeypatch):
     assert config.api_key == "test-key"
     assert config.base_url == "https://api.deepseek.com"
     assert config.model == "deepseek-v4-pro"
+    assert config.thinking == "disabled"
 
 
 def test_config_accepts_deepseek_base_alias(monkeypatch):

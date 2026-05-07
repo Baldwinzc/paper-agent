@@ -23,6 +23,8 @@ class LLMConfig:
     retry_base_seconds: float = 1.5
     max_tokens: int = 4096
     temperature: float = 0.3
+    thinking: str = "disabled"
+    reasoning_effort: str = ""
 
     @property
     def configured(self) -> bool:
@@ -55,6 +57,8 @@ def load_llm_config() -> LLMConfig:
         retry_base_seconds=float(os.getenv("LLM_RETRY_BASE_SECONDS", "1.5")),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
+        thinking=os.getenv("LLM_THINKING", "disabled").strip().lower(),
+        reasoning_effort=os.getenv("LLM_REASONING_EFFORT", "").strip(),
     )
 
 

@@ -55,10 +55,14 @@ DEEPSEEK_API_BASE=https://api.deepseek.com
 TEXT_MODEL=deepseek-v4-pro
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_RETRIES=3
+LLM_THINKING=disabled
 ```
 
 `OPENAI_API_BASE` and `OPENAI_API_KEY` are also supported for OpenAI-compatible
 providers, and `ARK_API_KEY` is still supported for Volcengine Ark. Do not commit `.env`; it is ignored by git.
+`LLM_THINKING=disabled` is the default because DeepSeek V4 thinking mode can return
+reasoning content separately from the final `content` field; disabling it keeps the
+client compatible with the current section-writing pipeline.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
