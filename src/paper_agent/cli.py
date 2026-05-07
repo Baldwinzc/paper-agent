@@ -18,6 +18,8 @@ def main() -> None:
     demo = sub.add_parser("demo", help="Run a deterministic demo draft.")
     demo.add_argument("--output", default="outputs/demo", help="Output directory for markdown.")
     demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
+    demo.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    demo.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     draft = sub.add_parser("draft", help="Draft a paper from local research materials.")
     draft.add_argument("--project-name", required=True)
     draft.add_argument("--target-venue", required=True)
@@ -27,6 +29,8 @@ def main() -> None:
     draft.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
     draft.add_argument("--output", default="", help="Optional path for generated Markdown copy.")
     draft.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
+    draft.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    draft.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     args = parser.parse_args()
 
@@ -47,6 +51,8 @@ def main() -> None:
                 "Ablation w/o calibration drops performance."
             ),
             keywords=["representation", "uncertainty", "efficient inference"],
+            template_zip_path=args.template_zip or None,
+            template_dir_path=args.template_dir or None,
         )
         state = PaperWorkflow().run(request)
         output = Path(args.output)
@@ -68,6 +74,8 @@ def main() -> None:
             target_venue=args.target_venue,
             baseline_pdf_path=str(baseline_pdf),
             code_path=args.code_path,
+            template_zip_path=args.template_zip or None,
+            template_dir_path=args.template_dir or None,
             experiment_results=experiment_results,
             keywords=args.keyword,
         )

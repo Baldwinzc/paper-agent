@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,12 +110,21 @@ class VenueTemplateAgent:
 
         source = "built-in"
         notes = list(spec.notes)
-        template_fetch_disabled = os.getenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "").strip().lower()
-        if template_fetch_disabled in {"1", "true", "yes", "on"}:
-            notes.append("Remote template fetch disabled by PAPER_AGENT_DISABLE_TEMPLATE_FETCH.")
-        elif spec.remote_url:
-            source, fetch_notes = self._cache_remote_template(spec.remote_url, template_root)
-            notes.extend(fetch_notes)
+        sample_main_tex = ""
+        if request.template_zip_path or request.template_dir_path:
+            source, template_root, sample_main_tex, notes = self._prepare_user_template(
+                request=request,
+                family=family,
+                notes=notes,
+            )
+        else:
+            template_fetch_disabled = os.getenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "").strip().lower()
+            if template_fetch_disabled in {"1", "true", "yes", "on"}:
+                notes.append("Remote template fetch disabled by PAPER_AGENT_DISABLE_TEMPLATE_FETCH.")
+            elif spec.remote_url:
+                source, fetch_notes = self._cache_remote_template(spec.remote_url, template_root)
+                notes.extend(fetch_notes)
+            sample_main_tex = self._find_sample_main_tex(template_root)
 
         state["venue_template"] = VenueTemplate(
             venue=request.target_venue,
@@ -123,10 +133,54 @@ class VenueTemplateAgent:
             template_source=source,
             overleaf_url=spec.overleaf_url,
             template_dir=str(template_root),
+            sample_main_tex=sample_main_tex,
             main_template="main.tex.j2",
             notes=notes,
         )
         return state
+
+    def _prepare_user_template(
+        self,
+        request: PaperRequest,
+        family: str,
+        notes: list[str],
+    ) -> tuple[str, Path, str, list[str]]:
+        if request.template_zip_path and request.template_dir_path:
+            raise ValueError("Use either template_zip_path or template_dir_path, not both.")
+
+        project_slug = self._slug(request.project_name)
+        template_root = (
+            Path(os.getenv("PAPER_AGENT_DATA_DIR", "data"))
+            / "templates"
+            / family
+            / "user"
+            / project_slug
+        )
+        if template_root.exists():
+            shutil.rmtree(template_root)
+        template_root.mkdir(parents=True, exist_ok=True)
+
+        if request.template_zip_path:
+            source_path = Path(request.template_zip_path).resolve()
+            if not source_path.is_file():
+                raise FileNotFoundError(f"Template zip not found: {source_path}")
+            self._extract_zip(source_path, template_root)
+            source = f"user-zip:{source_path}"
+            notes.append("User-provided template zip extracted and used as the primary template source.")
+        else:
+            source_path = Path(request.template_dir_path or "").resolve()
+            if not source_path.is_dir():
+                raise FileNotFoundError(f"Template directory not found: {source_path}")
+            self._copy_directory(source_path, template_root)
+            source = f"user-dir:{source_path}"
+            notes.append("User-provided template directory copied and used as the primary template source.")
+
+        sample_main_tex = self._find_sample_main_tex(template_root)
+        if sample_main_tex:
+            notes.append(f"Sample LaTeX main file detected: {Path(sample_main_tex).name}")
+        else:
+            notes.append("No sample main .tex file detected; using built-in main.tex structure.")
+        return source, template_root, sample_main_tex, notes
 
     def _cache_remote_template(self, url: str, template_root: Path) -> tuple[str, list[str]]:
         notes: list[str] = []
@@ -186,6 +240,34 @@ class VenueTemplateAgent:
                     archive.extract(member, extracted)
         except BadZipFile as exc:
             raise ValueError(f"Downloaded template is not a valid zip: {artifact}") from exc
+
+    def _copy_directory(self, source: Path, destination: Path) -> None:
+        for path in source.rglob("*"):
+            if not path.is_file():
+                continue
+            target = destination / path.relative_to(source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+
+    def _find_sample_main_tex(self, template_root: Path) -> str:
+        candidates = sorted(template_root.rglob("*.tex"))
+        if not candidates:
+            return ""
+        for preferred_name in ["main.tex", "bare_jrnl.tex", "bare_conf.tex", "sample.tex"]:
+            for candidate in candidates:
+                if candidate.name.lower() == preferred_name:
+                    return str(candidate)
+        for candidate in candidates:
+            try:
+                text = candidate.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if r"\documentclass" in text and r"\begin{document}" in text:
+                return str(candidate)
+        return str(candidates[0])
+
+    def _slug(self, text: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]+", "-", text.strip().lower()).strip("-") or "paper"
 
     def _classify(self, venue: str) -> str:
         lowered = venue.lower()

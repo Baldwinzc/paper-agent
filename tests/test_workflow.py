@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
@@ -11,6 +12,7 @@ from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 
 
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
+os.environ.setdefault("PAPER_AGENT_DISABLE_LLM", "1")
 
 
 def test_workflow_generates_latex_and_sections():
@@ -149,6 +151,73 @@ def test_workflow_writes_template_source_notes():
     content = source_notes.read_text(encoding="utf-8")
     assert "IEEE journal paper template" in content
     assert "https://www.overleaf.com/org/ieee" in content
+
+
+def test_user_template_directory_supplies_preamble_and_assets(tmp_path):
+    template_dir = tmp_path / "official-template"
+    template_dir.mkdir()
+    (template_dir / "main.tex").write_text(
+        "\n".join(
+            [
+                r"\documentclass[journal]{IEEEtran}",
+                r"\usepackage{officialstyle}",
+                r"\title{Official Sample Title}",
+                r"\begin{document}",
+                r"\maketitle",
+                r"Sample body.",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (template_dir / "officialstyle.sty").write_text(r"\ProvidesPackage{officialstyle}", encoding="utf-8")
+
+    state = PaperWorkflow().run(
+        PaperRequest(
+            project_name="manual-template-dir-demo",
+            target_venue="TPAMI",
+            method_notes="Adaptive feature calibration",
+            template_dir_path=str(template_dir),
+        )
+    )
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    source_notes = (state["latex_project_dir"] / "TEMPLATE_SOURCE.md").read_text(encoding="utf-8")
+
+    assert state["venue_template"].template_source.startswith("user-dir:")
+    assert r"\documentclass[journal]{IEEEtran}" in tex
+    assert r"\usepackage{officialstyle}" in tex
+    assert "\\title{" in tex
+    assert "\title" not in tex
+    assert "Official Sample Title" not in tex
+    assert (state["latex_project_dir"] / "officialstyle.sty").exists()
+    assert "user-dir:" in source_notes
+
+
+def test_user_template_zip_is_extracted_and_detected(tmp_path):
+    source_dir = tmp_path / "zip-source"
+    source_dir.mkdir()
+    (source_dir / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}Sample\end{document}",
+        encoding="utf-8",
+    )
+    (source_dir / "custom.cls").write_text(r"\NeedsTeXFormat{LaTeX2e}", encoding="utf-8")
+    zip_path = tmp_path / "official-template.zip"
+    with ZipFile(zip_path, "w") as archive:
+        for path in source_dir.rglob("*"):
+            archive.write(path, Path("template") / path.name)
+
+    state = PaperWorkflow().run(
+        PaperRequest(
+            project_name="manual-template-zip-demo",
+            target_venue="TPAMI",
+            method_notes="Adaptive feature calibration",
+            template_zip_path=str(zip_path),
+        )
+    )
+
+    assert state["venue_template"].template_source.startswith("user-zip:")
+    assert state["venue_template"].sample_main_tex.endswith("main.tex")
+    assert (state["latex_project_dir"] / "custom.cls").exists()
 
 
 def test_markdown_experiment_tables_render_as_booktabs_latex():

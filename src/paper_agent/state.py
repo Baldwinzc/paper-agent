@@ -15,6 +15,8 @@ class PaperRequest(BaseModel):
     target_venue: str
     baseline_pdf_path: str | None = None
     code_path: str | None = None
+    template_zip_path: str | None = None
+    template_dir_path: str | None = None
     method_notes: str = ""
     experiment_results: str = ""
     keywords: list[str] = Field(default_factory=list)
@@ -73,6 +75,7 @@ class VenueTemplate(BaseModel):
     template_source: str = "built-in"
     overleaf_url: str = ""
     template_dir: str = ""
+    sample_main_tex: str = ""
     main_template: str = "main.tex.j2"
     notes: list[str] = Field(default_factory=list)
 

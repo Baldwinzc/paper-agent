@@ -97,6 +97,23 @@ python -m paper_agent.cli draft `
   --zip outputs\hyper-protosurv-mock-overleaf.zip
 ```
 
+Use a manually downloaded official template when automatic fetching is blocked:
+
+```powershell
+python -m paper_agent.cli draft `
+  --project-name hyper-protosurv-mock `
+  --target-venue TPAMI `
+  --baseline D:\code\agent\example\baseline `
+  --code-path D:\code\agent\example\code\hyper-protosurv `
+  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --template-zip D:\path\to\official-template.zip `
+  --zip outputs\hyper-protosurv-mock-overleaf.zip
+```
+
+`--template-dir D:\path\to\official-template-folder` is also supported. If the
+template contains a sample `main.tex`, paper-agent reuses its preamble and style
+assets while replacing the sample body with the generated paper draft.
+
 For a free Overleaf account, upload the generated zip through
 `New Project > Upload Project`. The zip contains `main.tex`, `references.bib`, and
 upload notes; add real BibTeX entries before submission.
