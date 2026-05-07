@@ -33,6 +33,13 @@ def load_llm_config() -> LLMConfig:
     """Load LLM settings from environment or local .env."""
 
     load_dotenv()
+    if os.getenv("PAPER_AGENT_DISABLE_LLM", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return LLMConfig(
+            api_key="",
+            base_url=os.getenv("OPENAI_API_BASE", "https://ark.cn-beijing.volces.com/api/v3").strip(),
+            model=os.getenv("TEXT_MODEL", "doubao-seed-1-8-251228").strip(),
+        )
+
     api_key = os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
     return LLMConfig(
         api_key=api_key,

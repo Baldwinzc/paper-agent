@@ -26,6 +26,7 @@ The current scaffold supports:
 - Optional OpenAI-compatible LLM calls for higher-quality section drafting.
 - Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
 - LaTeX composition using a built-in template fallback.
+- Overleaf-ready zip export for free Overleaf upload workflows.
 
 ## Run Locally
 
@@ -55,6 +56,8 @@ LLM_MAX_RETRIES=3
 
 `OPENAI_API_KEY` is also supported for OpenAI-compatible providers, but `ARK_API_KEY`
 is clearer when using Volcengine Ark. Do not commit `.env`; it is ignored by git.
+Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
+the configured model.
 
 CLI dry run:
 
@@ -87,8 +90,13 @@ python -m paper_agent.cli draft `
   --experiment-results examples\hyper_protosurv_mock_experiments.md `
   --keyword "whole-slide images" `
   --keyword "survival prediction" `
-  --output outputs\hyper-protosurv-mock\draft.md
+  --output outputs\hyper-protosurv-mock\draft.md `
+  --zip outputs\hyper-protosurv-mock-overleaf.zip
 ```
+
+For a free Overleaf account, upload the generated zip through
+`New Project > Upload Project`. The zip contains `main.tex`, `references.bib`, and
+upload notes; add real BibTeX entries before submission.
 
 The bundled `examples/hyper_protosurv_mock_experiments.md` file contains synthetic
 mock numbers for pipeline testing only. Replace it with real experiment tables before

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -43,8 +44,12 @@ class LatexComposerAgent:
             experiments=self._latex_escape(sections.experiments),
             conclusion=self._latex_escape(sections.conclusion),
         )
+        self._copy_template_assets(template_dir, output_root)
+        self._write_project_helpers(output_root, request.target_venue, venue_template.template_source)
+
         output_path = output_root / "main.tex"
         output_path.write_text(rendered, encoding="utf-8")
+        state["latex_project_dir"] = output_root
         state["latex_output_path"] = output_path
         state["final_markdown"] = self._markdown(state)
         return state
@@ -73,6 +78,45 @@ class LatexComposerAgent:
         for old, new in replacements.items():
             text = text.replace(old, new)
         return text
+
+    def _copy_template_assets(self, template_dir: Path, output_root: Path) -> None:
+        for path in template_dir.iterdir():
+            if path.name.endswith(".j2"):
+                continue
+            destination = output_root / path.name
+            if path.is_dir():
+                if destination.exists():
+                    shutil.rmtree(destination)
+                shutil.copytree(path, destination)
+            else:
+                shutil.copy2(path, destination)
+
+    def _write_project_helpers(self, output_root: Path, venue: str, template_source: str) -> None:
+        references = output_root / "references.bib"
+        if not references.exists():
+            references.write_text(
+                "% Add baseline and related-work BibTeX entries here.\n",
+                encoding="utf-8",
+            )
+
+        readme = output_root / "README_OVERLEAF.md"
+        readme.write_text(
+            "\n".join(
+                [
+                    "# Overleaf Upload Notes",
+                    "",
+                    "Upload the generated zip file to Overleaf with New Project > Upload Project.",
+                    "Set `main.tex` as the main document if Overleaf does not detect it automatically.",
+                    "",
+                    f"- Target venue: {venue}",
+                    f"- Template source: {template_source}",
+                    "- `references.bib` is a placeholder; add real BibTeX entries before submission.",
+                    "- Generated text should be reviewed against the actual experiments and baseline paper.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
     def _markdown(self, state: PaperState) -> str:
         sections = state["sections"]

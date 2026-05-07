@@ -33,7 +33,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-paper_agent = ["latex_templates/**/*.j2"]
+paper_agent = ["latex_templates/**/*"]
 
 [tool.ruff]
 line-length = 100

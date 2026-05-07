@@ -1,3 +1,6 @@
+from zipfile import ZipFile
+
+from paper_agent.export import zip_latex_project
 from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
@@ -18,6 +21,7 @@ def test_workflow_generates_latex_and_sections():
     assert state["sections"].abstract
     assert state["innovations"]
     assert state["venue_template"].family == "ieee"
+    assert state["latex_project_dir"].name == "demo-paper"
     assert state["latex_output_path"].name == "main.tex"
 
 
@@ -102,3 +106,16 @@ def test_experiment_analyzer_extracts_tcga_mock_results():
     assert "C-INDEX" in state["experiments"].metrics
     assert "IBS" in state["experiments"].metrics
     assert not state["experiments"].missing_details
+
+
+def test_zip_latex_project_contains_overleaf_files(tmp_path):
+    project = tmp_path / "paper"
+    project.mkdir()
+    (project / "main.tex").write_text(r"\documentclass{article}", encoding="utf-8")
+    (project / "references.bib").write_text("% refs", encoding="utf-8")
+
+    zip_path = zip_latex_project(project, tmp_path / "paper.zip")
+
+    assert zip_path.exists()
+    with ZipFile(zip_path) as archive:
+        assert set(archive.namelist()) == {"main.tex", "references.bib"}

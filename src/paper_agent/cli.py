@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from paper_agent.config import load_llm_config
+from paper_agent.export import zip_latex_project
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
@@ -16,6 +17,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Run a deterministic demo draft.")
     demo.add_argument("--output", default="outputs/demo", help="Output directory for markdown.")
+    demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     draft = sub.add_parser("draft", help="Draft a paper from local research materials.")
     draft.add_argument("--project-name", required=True)
     draft.add_argument("--target-venue", required=True)
@@ -24,6 +26,7 @@ def main() -> None:
     draft.add_argument("--experiment-results", required=True, help="Markdown/CSV/text experiment results file.")
     draft.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
     draft.add_argument("--output", default="", help="Optional path for generated Markdown copy.")
+    draft.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     args = parser.parse_args()
 
@@ -50,6 +53,10 @@ def main() -> None:
         (output / "draft.md").write_text(state["final_markdown"], encoding="utf-8")
         print(f"Draft written to {output / 'draft.md'}")
         print(f"LaTeX written to {state['latex_output_path']}")
+        if args.zip:
+            zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
+            state["latex_zip_path"] = zip_path
+            print(f"Overleaf zip written to {zip_path}")
     elif args.command == "draft":
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
@@ -75,6 +82,10 @@ def main() -> None:
         print(f"Evidence guard findings: {len(guard_findings)}")
         print(f"Review findings: {len(state.get('review_findings', []))}")
         print(f"LaTeX written to {state['latex_output_path']}")
+        if args.zip:
+            zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
+            state["latex_zip_path"] = zip_path
+            print(f"Overleaf zip written to {zip_path}")
     elif args.command == "llm-ping":
         config = load_llm_config()
         client = LLMClient(config)

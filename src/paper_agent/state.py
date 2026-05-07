@@ -105,7 +105,9 @@ class PaperState(TypedDict, total=False):
     venue_template: VenueTemplate
     outline: PaperOutline
     sections: DraftSections
+    latex_project_dir: Path
     latex_output_path: Path
+    latex_zip_path: Path
     review_findings: list[ReviewFinding]
     final_markdown: str
     artifacts: dict[str, Any]
