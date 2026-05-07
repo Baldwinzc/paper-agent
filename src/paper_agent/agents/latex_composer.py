@@ -9,6 +9,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from paper_agent.state import PaperState
+from paper_agent.tables import extract_markdown_tables, markdown_table_to_latex
 
 
 class LatexComposerAgent:
@@ -34,6 +35,14 @@ class LatexComposerAgent:
             lstrip_blocks=True,
         )
         template = env.get_template("main.tex.j2")
+        experiment_tables = extract_markdown_tables(request.experiment_results)
+        experiment_table_latex = "\n\n".join(
+            markdown_table_to_latex(table) for table in experiment_tables
+        )
+        experiments_latex = self._latex_escape(sections.experiments)
+        if experiment_table_latex:
+            experiments_latex = experiments_latex + "\n\n" + experiment_table_latex
+
         rendered = template.render(
             title=outline.title_candidates[0] if outline.title_candidates else request.project_name,
             venue=request.target_venue,
@@ -41,7 +50,7 @@ class LatexComposerAgent:
             introduction=self._latex_escape(sections.introduction),
             related_work=self._latex_escape(sections.related_work),
             method=self._latex_escape(sections.method),
-            experiments=self._latex_escape(sections.experiments),
+            experiments=experiments_latex,
             conclusion=self._latex_escape(sections.conclusion),
         )
         self._copy_template_assets(template_dir, output_root)
@@ -51,6 +60,7 @@ class LatexComposerAgent:
         output_path.write_text(rendered, encoding="utf-8")
         state["latex_project_dir"] = output_root
         state["latex_output_path"] = output_path
+        state.setdefault("artifacts", {})["latex_table_count"] = len(experiment_tables)
         state["final_markdown"] = self._markdown(state)
         return state
 

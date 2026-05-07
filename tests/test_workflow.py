@@ -1,6 +1,7 @@
 from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
+from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import PaperRequest
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
@@ -13,7 +14,12 @@ def test_workflow_generates_latex_and_sections():
         project_name="demo-paper",
         target_venue="IEEE Conference",
         method_notes="Adaptive feature calibration",
-        experiment_results="baseline accuracy 80, ours accuracy 83 on DatasetA",
+        experiment_results=(
+            "| Method | DatasetA Accuracy |\n"
+            "|---|---:|\n"
+            "| baseline | 80 |\n"
+            "| ours | 83 |\n"
+        ),
     )
 
     state = PaperWorkflow().run(request)
@@ -23,6 +29,7 @@ def test_workflow_generates_latex_and_sections():
     assert state["venue_template"].family == "ieee"
     assert state["latex_project_dir"].name == "demo-paper"
     assert state["latex_output_path"].name == "main.tex"
+    assert r"\begin{table}" in state["latex_output_path"].read_text(encoding="utf-8")
 
 
 def test_tpami_uses_ieee_journal_template():
@@ -119,3 +126,31 @@ def test_zip_latex_project_contains_overleaf_files(tmp_path):
     assert zip_path.exists()
     with ZipFile(zip_path) as archive:
         assert set(archive.namelist()) == {"main.tex", "references.bib"}
+
+
+def test_markdown_experiment_tables_render_as_booktabs_latex():
+    raw = """
+    ## Main Results
+    Metric: C-index.
+
+    | Method | BLCA | Average |
+    |---|---:|---:|
+    | ProtoSurv baseline | 0.646 +/- 0.024 | 0.667 |
+    | Hyper-ProtoSurv ours | 0.671 +/- 0.021 | 0.690 |
+
+    ## Ablation Results
+
+    | Variant | Average C-index |
+    |---|---:|
+    | Full | 0.690 |
+    | w/o L_rec | 0.672 |
+    """
+
+    tables = extract_markdown_tables(raw)
+    latex = markdown_tables_to_latex(raw)
+
+    assert len(tables) == 2
+    assert tables[0].caption == "Main Results. Metric: C-index."
+    assert r"\toprule" in latex
+    assert r"$\pm$" in latex
+    assert r"w/o L\_rec" in latex

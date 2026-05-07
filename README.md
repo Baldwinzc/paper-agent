@@ -27,6 +27,7 @@ The current scaffold supports:
 - Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
 - LaTeX composition using a built-in template fallback.
 - Overleaf-ready zip export for free Overleaf upload workflows.
+- Markdown experiment table conversion to `booktabs` LaTeX tables.
 
 ## Run Locally
 
