@@ -6,6 +6,7 @@ from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import CitationEntry, PaperRequest
 from paper_agent.workflow import PaperWorkflow
+from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
@@ -16,6 +17,20 @@ from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_LLM", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "1")
+
+
+def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
+    reader = BaselineReaderAgent()
+    text_title = "Leveraging Tumor Heterogeneity: Heterogeneous"
+    path_title = reader._guess_title_from_path(
+        "NeurIPS-2024-leveraging-tumor-heterogeneity-heterogeneous-graph-representation-learning-for-cancer-survival-prediction-in-whole-slide-images-Paper-Conference.pdf"
+    )
+
+    assert (
+        path_title
+        == "Leveraging Tumor Heterogeneity Heterogeneous Graph Representation Learning for Cancer Survival Prediction in Whole Slide Images"
+    )
+    assert reader._best_title(text_title, path_title) == path_title
 
 
 def test_workflow_generates_latex_and_sections():

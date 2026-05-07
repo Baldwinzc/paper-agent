@@ -24,7 +24,7 @@ class BibliographyAgent:
                 CitationEntry(
                     key=self._citation_key(baseline.title, preferred_prefix="baseline"),
                     title=baseline.title,
-                    query=self._contextual_query(baseline.title, state),
+                    query=baseline.title,
                     authors=["Baseline authors"],
                     note="Seed entry extracted from the provided baseline PDF; verify metadata before submission.",
                 ),
