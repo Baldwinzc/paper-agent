@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
@@ -19,6 +21,7 @@ def main() -> None:
     demo = sub.add_parser("demo", help="Run a deterministic demo draft.")
     demo.add_argument("--output", default="outputs/demo", help="Output directory for markdown.")
     demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
+    demo.add_argument("--summary", default="", help="Optional path for a JSON run summary.")
     demo.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     demo.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     demo.add_argument(
@@ -35,12 +38,35 @@ def main() -> None:
     draft.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
     draft.add_argument("--output", default="", help="Optional path for generated Markdown copy.")
     draft.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
+    draft.add_argument("--summary", default="", help="Optional path for a JSON run summary.")
     draft.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     draft.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     draft.add_argument(
         "--skip-llm-self-review",
         action="store_true",
         help="Skip the final LLM self-review pass for this run.",
+    )
+    sample = sub.add_parser(
+        "sample-hyper-protosurv",
+        help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
+    )
+    sample.add_argument("--example-root", default=r"D:\code\agent\example")
+    sample.add_argument("--output-dir", default="outputs/hyper-protosurv-sample")
+    sample.add_argument("--zip", default="outputs/hyper-protosurv-sample-overleaf.zip")
+    sample.add_argument(
+        "--experiment-results",
+        default="examples/hyper_protosurv_mock_experiments.md",
+        help="Experiment table file; relative paths are resolved from the project root.",
+    )
+    sample.add_argument(
+        "--online",
+        action="store_true",
+        help="Allow template/reference network calls. The default sample run is offline.",
+    )
+    sample.add_argument(
+        "--allow-llm",
+        action="store_true",
+        help="Allow configured LLM calls. The default sample run is deterministic and local.",
     )
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
@@ -70,8 +96,9 @@ def main() -> None:
         state = PaperWorkflow().run(request)
         output = Path(args.output)
         output.mkdir(parents=True, exist_ok=True)
-        (output / "draft.md").write_text(state["final_markdown"], encoding="utf-8")
-        print(f"Draft written to {output / 'draft.md'}")
+        markdown_path = output / "draft.md"
+        markdown_path.write_text(state["final_markdown"], encoding="utf-8")
+        print(f"Draft written to {markdown_path}")
         print(f"Template source: {state['venue_template'].template_source}")
         print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
@@ -81,6 +108,9 @@ def main() -> None:
             zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
             state["latex_zip_path"] = zip_path
             print(f"Overleaf zip written to {zip_path}")
+        if args.summary:
+            summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
+            print(f"Run summary written to {summary_path}")
     elif args.command == "draft":
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
@@ -96,10 +126,12 @@ def main() -> None:
             skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
+        markdown_path = None
         if args.output:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(state["final_markdown"], encoding="utf-8")
+            markdown_path = output_path
             print(f"Markdown written to {output_path}")
         print(f"Section writer mode: {state.get('artifacts', {}).get('section_writer_mode')}")
         section_errors = state.get("artifacts", {}).get("section_writer_section_errors", {})
@@ -117,6 +149,11 @@ def main() -> None:
             zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
             state["latex_zip_path"] = zip_path
             print(f"Overleaf zip written to {zip_path}")
+        if args.summary:
+            summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
+            print(f"Run summary written to {summary_path}")
+    elif args.command == "sample-hyper-protosurv":
+        _run_hyper_protosurv_sample(args)
     elif args.command == "llm-ping":
         config = load_llm_config()
         client = LLMClient(config)
@@ -149,6 +186,115 @@ def _resolve_baseline_pdf(path_value: str) -> Path:
 
 def _llm_self_review_mode(state: dict) -> str:
     return str(state.get("artifacts", {}).get("llm_self_review", {}).get("mode", "not run"))
+
+
+def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
+    if not args.allow_llm:
+        os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
+    if not args.online:
+        os.environ["PAPER_AGENT_DISABLE_TEMPLATE_FETCH"] = "1"
+        os.environ["PAPER_AGENT_DISABLE_REFERENCE_RESOLVE"] = "1"
+        os.environ["PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY"] = "1"
+
+    example_root = Path(args.example_root)
+    baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
+    code_path = example_root / "code" / "hyper-protosurv"
+    if not code_path.is_dir():
+        raise SystemExit(f"Hyper-ProtoSurv code directory not found: {code_path}")
+
+    experiment_path = _resolve_project_relative_path(args.experiment_results)
+    if not experiment_path.is_file():
+        raise SystemExit(f"Experiment results file not found: {experiment_path}")
+
+    request = PaperRequest(
+        project_name="hyper-protosurv-sample",
+        target_venue="TPAMI",
+        baseline_pdf_path=str(baseline_pdf),
+        code_path=str(code_path),
+        method_notes=(
+            "Hyper-ProtoSurv explores adaptive hypergraph prototype learning, "
+            "bidirectional hyperedge updates, cross-attention fusion, and reconstruction "
+            "regularization as reflected by the code structure and mock ablation table."
+        ),
+        experiment_results=experiment_path.read_text(encoding="utf-8"),
+        keywords=[
+            "whole-slide images",
+            "survival prediction",
+            "computational pathology",
+            "hypergraph learning",
+        ],
+        skip_llm_self_review=not args.allow_llm,
+    )
+    state = PaperWorkflow().run(request)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    markdown_path = output_dir / "draft.md"
+    markdown_path.write_text(state["final_markdown"], encoding="utf-8")
+    print(f"Markdown written to {markdown_path}")
+
+    if args.zip:
+        zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
+        state["latex_zip_path"] = zip_path
+        print(f"Overleaf zip written to {zip_path}")
+
+    summary_path = _write_run_summary(state, output_dir / "RUN_SUMMARY.json", markdown_path)
+    print(f"Run summary written to {summary_path}")
+    print(f"Review findings: {len(state.get('review_findings', []))}")
+    print(f"Template source: {state['venue_template'].template_source}")
+    print(f"Bibliography entries: {len(state.get('bibliography', []))}")
+    print(f"LLM self-review: {_llm_self_review_mode(state)}")
+
+
+def _resolve_project_relative_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return _project_root() / path
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _write_run_summary(state: dict, summary_path: Path, markdown_path: Path | None = None) -> Path:
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(_build_run_summary(state, markdown_path), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return summary_path
+
+
+def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
+    artifacts = state.get("artifacts", {})
+    request = state.get("request")
+    llm_review = artifacts.get("llm_self_review", {})
+    reference_verification = artifacts.get("reference_verification", {})
+    return {
+        "project_name": getattr(request, "project_name", ""),
+        "target_venue": getattr(request, "target_venue", ""),
+        "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
+        "llm_self_review_mode": llm_review.get("mode", "not run"),
+        "llm_unsupported_claims": len(llm_review.get("unsupported_claims", [])),
+        "review_findings": len(state.get("review_findings", [])),
+        "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
+        "bibliography_entries": len(state.get("bibliography", [])),
+        "reference_resolver_mode": artifacts.get("reference_resolver_mode", "not run"),
+        "reference_resolved": reference_verification.get("resolved_count", 0),
+        "reference_unresolved": reference_verification.get("unresolved_count", 0),
+        "related_work_candidates": len(artifacts.get("related_work_candidates", [])),
+        "latex_tables": artifacts.get("latex_table_count", 0),
+        "undefined_citation_keys": artifacts.get("undefined_citation_keys", []),
+        "template_source": getattr(state.get("venue_template"), "template_source", ""),
+        "outputs": {
+            "markdown": str(markdown_path) if markdown_path else "",
+            "latex_project_dir": str(state.get("latex_project_dir", "")),
+            "latex_output_path": str(state.get("latex_output_path", "")),
+            "latex_zip_path": str(state.get("latex_zip_path", "")),
+            "draft_report_path": artifacts.get("draft_report_path", ""),
+        },
+    }
 
 
 def _run_llm_self_review_smoke() -> None:

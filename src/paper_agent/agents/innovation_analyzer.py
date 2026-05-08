@@ -71,6 +71,8 @@ class InnovationAnalyzerAgent:
 
     def _innovation_name(self, claim: str) -> str:
         lowered = claim.lower()
+        if "adaptive hypergraph prototype" in lowered and "bidirectional hyperedge" in lowered:
+            return "Adaptive hypergraph prototype learning with bidirectional updates"
         if "ot-driven adaptive hyperedges" in lowered and "bidirectional hyperedge" in lowered:
             return "OT-driven adaptive hyperedges with bidirectional hyperedge convolution"
         if "online prototype bank" in lowered and "removed" in lowered:
@@ -81,5 +83,28 @@ class InnovationAnalyzerAgent:
             return "Wasserstein-barycenter prototype geometry"
         if "cross-cluster mask" in lowered:
             return "Cross-cluster OT purity constraint"
+        return self._compact_title(claim)
+
+    def _compact_title(self, claim: str, limit: int = 90) -> str:
         clean = claim.split("[", 1)[0].strip()
-        return clean[:90].rstrip(" ,.;:")
+        for marker in [
+            " as reflected by ",
+            " as suggested by ",
+            " according to ",
+            " based on ",
+        ]:
+            if marker in clean.lower():
+                start = clean.lower().find(marker)
+                clean = clean[:start].strip()
+                break
+        clean = clean.rstrip(" ,.;:")
+        if len(clean) <= limit:
+            return clean
+        words = clean.split()
+        shortened = ""
+        for word in words:
+            candidate = f"{shortened} {word}".strip()
+            if len(candidate) > limit:
+                break
+            shortened = candidate
+        return (shortened or clean[:limit]).rstrip(" ,.;:")

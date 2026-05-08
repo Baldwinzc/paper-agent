@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.bibliography import BibliographyAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
+from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.draft_report import DraftReportAgent
@@ -73,6 +75,27 @@ def test_baseline_reader_strips_pdf_section_prefix_noise():
     assert "Abstract" not in cleaned
     assert not cleaned.startswith("cn")
     assert problem.startswith("Survival prediction")
+
+
+def test_innovation_name_uses_readable_hypergraph_title():
+    name = InnovationAnalyzerAgent()._innovation_name(
+        "Hyper-ProtoSurv explores adaptive hypergraph prototype learning, "
+        "bidirectional hyperedge updates, cross-attention fusion, and reconstruction "
+        "regularization as reflected by the code structure and mock ablation table."
+    )
+
+    assert name == "Adaptive hypergraph prototype learning with bidirectional updates"
+
+
+def test_innovation_name_truncates_at_word_boundary():
+    name = InnovationAnalyzerAgent()._innovation_name(
+        "A long contribution title with adaptive calibration, hierarchical modeling, "
+        "regularized survival objectives, uncertainty handling, and efficient inference"
+    )
+
+    assert len(name) <= 90
+    assert name.endswith("efficient") is False
+    assert not name.endswith("infer")
 
 
 def test_workflow_generates_latex_and_sections():
@@ -1146,6 +1169,99 @@ def test_api_returns_llm_self_review_summary(monkeypatch):
     )
 
     assert response["llm_self_review"] == {"mode": "disabled"}
+
+
+def test_run_summary_reports_core_metrics(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="summary-demo", target_venue="TPAMI"),
+        "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+        "bibliography": [CitationEntry(key="paper", title="Paper")],
+        "review_findings": [SimpleNamespace()],
+        "latex_project_dir": tmp_path / "latex",
+        "latex_output_path": tmp_path / "latex" / "main.tex",
+        "latex_zip_path": tmp_path / "paper.zip",
+        "artifacts": {
+            "section_writer_mode": "fallback",
+            "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
+            "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
+            "related_work_candidates": [{"title": "A"}],
+            "latex_table_count": 3,
+            "undefined_citation_keys": ["missing"],
+            "draft_report_path": str(tmp_path / "latex" / "DRAFT_REPORT.md"),
+        },
+    }
+
+    summary = cli_module._build_run_summary(state, tmp_path / "draft.md")
+
+    assert summary["project_name"] == "summary-demo"
+    assert summary["llm_self_review_mode"] == "disabled"
+    assert summary["bibliography_entries"] == 1
+    assert summary["reference_unresolved"] == 2
+    assert summary["related_work_candidates"] == 1
+    assert summary["outputs"]["markdown"].endswith("draft.md")
+
+
+def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    experiment_path = tmp_path / "experiments.md"
+    experiment_path.write_text("| Method | BLCA |\n|---|---:|\n| ours | 0.67 |\n", encoding="utf-8")
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [CitationEntry(key="paper", title="Paper")],
+                "artifacts": {
+                    "llm_self_review": {"mode": "disabled"},
+                    "latex_table_count": 1,
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    output_dir = tmp_path / "out"
+    zip_path = tmp_path / "sample.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "sample-hyper-protosurv",
+            "--example-root",
+            str(example_root),
+            "--experiment-results",
+            str(experiment_path),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+        ],
+    )
+
+    cli_module.main()
+
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert (output_dir / "draft.md").read_text(encoding="utf-8") == "# Draft"
+    assert zip_path.exists()
+    assert captured["request"].baseline_pdf_path.endswith("baseline.pdf")
+    assert captured["request"].code_path.endswith("hyper-protosurv")
+    assert captured["request"].skip_llm_self_review
+    assert summary["llm_self_review_mode"] == "disabled"
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

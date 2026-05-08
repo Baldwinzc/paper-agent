@@ -24,6 +24,7 @@ venue-ready paper scaffold.
 - Conclusion.
 - Reviewer-style critique.
 - LaTeX project based on the target venue template.
+- JSON run summary for reproducibility and progress inspection.
 
 ## Agent Workflow
 
@@ -74,6 +75,8 @@ draft-generation call.
 The same skip control is represented on `PaperRequest`, so API integrations can
 disable only the final reviewer call without changing process-wide environment
 variables.
+Showcase runs produce a compact JSON summary containing output paths, review
+counts, citation/reference status, LaTeX table counts, and LLM self-review mode.
 
 ## Phases
 

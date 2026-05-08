@@ -42,6 +42,7 @@ The current scaffold supports:
 - Optional LLM self-review that reads the evidence bundle and flags unsupported
   factual claims without mutating the draft.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
+- JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 
 ## Run Locally
@@ -131,7 +132,8 @@ python -m paper_agent.cli draft `
   --keyword "whole-slide images" `
   --keyword "survival prediction" `
   --output outputs\hyper-protosurv-mock\draft.md `
-  --zip outputs\hyper-protosurv-mock-overleaf.zip
+  --zip outputs\hyper-protosurv-mock-overleaf.zip `
+  --summary outputs\hyper-protosurv-mock\RUN_SUMMARY.json
 ```
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
@@ -157,6 +159,17 @@ python -m paper_agent.cli draft `
 `--template-dir D:\path\to\official-template-folder` is also supported. If the
 template contains a sample `main.tex`, paper-agent reuses its preamble and style
 assets while replacing the sample body with the generated paper draft.
+
+Showcase the local Hyper-ProtoSurv example in deterministic offline mode:
+
+```powershell
+python -m paper_agent.cli sample-hyper-protosurv
+```
+
+This reads `D:\code\agent\example`, writes `outputs\hyper-protosurv-sample\draft.md`,
+creates `outputs\hyper-protosurv-sample\RUN_SUMMARY.json`, and packages an
+Overleaf zip. Add `--allow-llm` to spend configured model calls, and `--online`
+to allow remote template/reference lookups.
 
 For a free Overleaf account, upload the generated zip through
 `New Project > Upload Project`. The zip contains `main.tex`, `references.bib`, and
