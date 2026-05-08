@@ -88,6 +88,10 @@ class LLMSelfReviewAgent:
                 "A claim is unsupported if it introduces a dataset, metric, number, "
                 "baseline, method component, or contribution not present in evidence.",
                 "Do not flag cautious statements such as 'requires manual verification'.",
+                "Do not flag pending-evaluation placeholders as unsupported claims.",
+                "Do not require ablations or metrics to support a method implementation "
+                "claim when the code evidence contains that component; require experiments "
+                "only for effectiveness, improvement, or performance claims.",
                 "Return at most five unsupported_claims.",
                 "Keep every JSON string under 160 characters.",
                 "Return JSON only.",
@@ -197,10 +201,15 @@ class LLMSelfReviewAgent:
             raise ValueError("unsupported_claims must be a list.")
         if not isinstance(notes, list):
             raise ValueError("section_quality_notes must be a list.")
-        data["unsupported_claims"] = [
+        cleaned_claims = [
             self._clean_claim(item)
             for item in claims
             if isinstance(item, dict)
+        ]
+        data["unsupported_claims"] = [
+            claim
+            for claim in cleaned_claims
+            if claim["claim"] and not self._claim_says_supported(claim)
         ]
         data["section_quality_notes"] = [str(item) for item in notes]
         return data
@@ -216,6 +225,106 @@ class LLMSelfReviewAgent:
             "evidence_needed": str(item.get("evidence_needed", "")).strip()[:500],
             "severity": severity,
         }
+
+    def _claim_says_supported(self, claim: dict[str, str]) -> bool:
+        reason = claim.get("reason", "").lower()
+        evidence_needed = re.sub(r"[^a-z0-9]+", "", claim.get("evidence_needed", "").lower())
+        if evidence_needed in {"na", "n/a", "none", "notneeded", "notapplicable"}:
+            return True
+        if "not an unsupported factual claim" in reason:
+            return True
+        if self._claim_is_pending_placeholder(claim):
+            return True
+        if self._claim_only_needs_empirical_validation(claim):
+            return True
+        supported_phrases = [
+            "claim is supported",
+            "is supported",
+            "well-supported",
+            "matching the claim",
+            "matches the claim",
+            "cautious statement",
+            "acceptable",
+            "no factual claim",
+        ]
+        unsupported_phrases = [
+            "not supported",
+            "unsupported",
+            "does not support",
+            "lacks support",
+            "no evidence",
+            "not explicitly stated",
+        ]
+        if any(phrase in reason for phrase in unsupported_phrases):
+            return False
+        return any(phrase in reason for phrase in supported_phrases)
+
+    def _claim_is_pending_placeholder(self, claim: dict[str, str]) -> bool:
+        text = " ".join([claim.get("claim", ""), claim.get("reason", "")]).lower()
+        pending_markers = [
+            "remain pending",
+            "remains pending",
+            "pending evaluation",
+            "future experimental",
+            "future experiment",
+            "will be reported once",
+            "placeholder statement",
+            "not a factual claim",
+        ]
+        return any(marker in text for marker in pending_markers)
+
+    def _claim_only_needs_empirical_validation(self, claim: dict[str, str]) -> bool:
+        claim_text = claim.get("claim", "").lower()
+        evidence_needed = claim.get("evidence_needed", "").lower()
+        empirical_requests = [
+            "ablation",
+            "component analysis",
+            "performance",
+            "experimental results",
+            "experiments comparing",
+            "sensitivity analysis",
+            "loss curves",
+            "metrics",
+            "statistical",
+        ]
+        if not any(marker in evidence_needed for marker in empirical_requests):
+            return False
+        empirical_claim_markers = [
+            "outperform",
+            "improve",
+            "gain",
+            "achieve",
+            "obtains",
+            "superior",
+            "state-of-the-art",
+            "competitive",
+            "effective",
+            "validated",
+            "accuracy",
+            "c-index",
+            "auc",
+            "ibs",
+        ]
+        if any(marker in claim_text for marker in empirical_claim_markers):
+            return False
+        implementation_markers = [
+            "build",
+            "construct",
+            "consist",
+            "combine",
+            "objective",
+            "loss",
+            "module",
+            "prototype",
+            "hypergraph",
+            "hcon",
+            "wasserstein",
+            "reconstruction",
+            "mask",
+            "removes",
+            "eliminates",
+        ]
+        return any(marker in claim_text for marker in implementation_markers)
 
     def _finding_from_claim(self, claim: dict[str, str]) -> ReviewFinding:
         section = claim.get("section") or "unknown"

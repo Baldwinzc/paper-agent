@@ -60,6 +60,10 @@ class InnovationAnalyzerAgent:
         evidence = []
         if code and code.summary:
             evidence.append(code.summary)
+        if code and code.implementation_evidence:
+            evidence.extend(self._select_implementation_evidence(code.implementation_evidence))
+        if code and code.method_claims:
+            evidence.extend(code.method_claims[:2])
         if experiments:
             experiment_evidence = [
                 observation
@@ -68,6 +72,33 @@ class InnovationAnalyzerAgent:
             ]
             evidence.extend(experiment_evidence[:1])
         return evidence or ["Evidence needs to be supplied."]
+
+    def _select_implementation_evidence(self, implementation_evidence: list[str]) -> list[str]:
+        selected: list[str] = []
+        labels: set[str] = set()
+        for item in implementation_evidence:
+            label = self._evidence_label(item)
+            if label and label in labels:
+                continue
+            selected.append(item)
+            if label:
+                labels.add(label)
+            if len(selected) >= 8:
+                return selected
+        for item in implementation_evidence:
+            if item in selected:
+                continue
+            selected.append(item)
+            if len(selected) >= 8:
+                break
+        return selected
+
+    def _evidence_label(self, evidence_item: str) -> str:
+        if "(" in evidence_item and ")" in evidence_item:
+            return evidence_item.split("(", 1)[1].split(")", 1)[0]
+        if "[" in evidence_item and "]" in evidence_item:
+            return evidence_item.split("[", 1)[1].split("]", 1)[0]
+        return ""
 
     def _innovation_name(self, claim: str) -> str:
         lowered = claim.lower()

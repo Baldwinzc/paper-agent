@@ -38,6 +38,7 @@ class CodeSummary(BaseModel):
     languages: dict[str, int] = Field(default_factory=dict)
     likely_entrypoints: list[str] = Field(default_factory=list)
     likely_method_files: list[str] = Field(default_factory=list)
+    implementation_evidence: list[str] = Field(default_factory=list)
     method_claims: list[str] = Field(default_factory=list)
     summary: str = ""
 

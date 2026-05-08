@@ -12,6 +12,7 @@ from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, Pape
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.bibliography import BibliographyAgent
+from paper_agent.agents.code_understanding import CodeUnderstandingAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
@@ -121,6 +122,68 @@ def test_innovation_name_truncates_at_word_boundary():
     assert len(name) <= 90
     assert name.endswith("efficient") is False
     assert not name.endswith("infer")
+
+
+def test_code_understanding_extracts_implementation_evidence(tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "utils").mkdir()
+    (tmp_path / "data_preparation").mkdir()
+    (tmp_path / "models" / "model_protosurv_v1.py").write_text(
+        "class LINKX_PROTO_HG:\n"
+        "    def __init__(self):\n"
+        "        self.hcon = HCoN(input_feat_x_dim=512)\n"
+        "        self.proto_fusion_to_p = CrossAttention()\n"
+        "    def forward(self, data):\n"
+        "        M_OT = data.prototypes\n"
+        "        x_emb, m_emb = self.hcon(hx1, hx2, x0, hy1, hy2, M_OT, alpha=0.5, beta=0.5)\n"
+        "        rec_loss = F.binary_cross_entropy_with_logits(logits, target_H)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "utils" / "core_funcs.py").write_text(
+        "loss = loss_surv + args.hcon_beta * hcon_rec_loss\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "data_preparation" / "hypergraph_construction_wb.py").write_text(
+        "X_bar = ot.lp.free_support_barycenter(measures_locations, measures_weights, X_init)\n",
+        encoding="utf-8",
+    )
+
+    state = CodeUnderstandingAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="code-evidence-demo",
+                target_venue="TPAMI",
+                code_path=str(tmp_path),
+            )
+        }
+    )
+
+    evidence = state["code"].implementation_evidence
+    assert any("(BHE/HCoN module)" in item and "self.hcon" in item for item in evidence)
+    assert any("(cross-attention fusion)" in item and "CrossAttention" in item for item in evidence)
+    assert any("(reconstruction objective)" in item and "hcon_rec_loss" in item for item in evidence)
+    assert any("(OT/Wasserstein hypergraph construction)" in item for item in evidence)
+    assert "implementation evidence snippets" in state["code"].summary
+
+
+def test_innovation_evidence_includes_code_implementation_snippets():
+    state = {
+        "request": PaperRequest(project_name="innovation-evidence-demo", target_venue="TPAMI"),
+        "code": CodeSummary(
+            summary="Scanned method files.",
+            implementation_evidence=[
+                "models/model_protosurv_v1.py:140 (BHE/HCoN module) self.hcon = HCoN(...)"
+            ],
+            method_claims=["OT-driven adaptive hyperedges with bidirectional hyperedge convolution."],
+        ),
+    }
+
+    InnovationAnalyzerAgent().run(state)
+
+    evidence = state["innovations"][0].evidence
+    assert "Scanned method files." in evidence
+    assert any("(BHE/HCoN module)" in item for item in evidence)
+    assert any("OT-driven adaptive hyperedges" in item for item in evidence)
 
 
 def test_workflow_generates_latex_and_sections():
@@ -1177,6 +1240,62 @@ def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
     assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
     assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
     assert client.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
+
+
+def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    client = FakeLLMClient(
+        """
+        {
+          "unsupported_claims": [
+            {
+              "section": "method",
+              "claim": "The objective combines Cox loss and reconstruction loss.",
+              "reason": "The evidence shows this objective in configs/protosurv.yml. Supported.",
+              "evidence_needed": "N/A",
+              "severity": "minor"
+            },
+            {
+              "section": "abstract",
+              "claim": "Quantitative evaluation remains pending and will be reported once full results are available.",
+              "reason": "This is a placeholder statement, not a factual claim.",
+              "evidence_needed": "Complete experimental results.",
+              "severity": "minor"
+            },
+            {
+              "section": "method",
+              "claim": "The model builds prototypes with a Wasserstein hypergraph and reconstruction loss.",
+              "reason": "No ablation studies are provided to validate that these components function as claimed.",
+              "evidence_needed": "Ablation studies or component analysis.",
+              "severity": "major"
+            },
+            {
+              "section": "experiments",
+              "claim": "The method obtains 0.999 on XYZ.",
+              "reason": "XYZ and 0.999 are absent from the supplied experiment table.",
+              "evidence_needed": "Add an experiment row for XYZ.",
+              "severity": "major"
+            }
+          ],
+          "section_quality_notes": []
+        }
+        """
+    )
+    state = {
+        "request": PaperRequest(project_name="llm-review-filter-demo", target_venue="TPAMI"),
+        "sections": DraftSections(method="Supported method.", experiments="Unsupported result."),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+
+    claims = reviewed["artifacts"]["llm_self_review"]["unsupported_claims"]
+    assert len(claims) == 1
+    assert claims[0]["section"] == "experiments"
+    assert "Cox loss" not in " ".join(finding.issue for finding in reviewed["review_findings"])
 
 
 def test_cli_llm_self_review_smoke_reports_unavailable_without_llm(monkeypatch, capsys):
