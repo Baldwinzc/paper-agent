@@ -65,6 +65,21 @@ class DraftReportAgent:
         else:
             lines.append("- No missing experiment details detected by the analyzer.")
 
+        if experiments and experiments.result_tables:
+            lines.extend(["", "## Parsed Experiment Results", ""])
+            for table in experiments.result_tables:
+                lines.append(
+                    f"- {table.caption}: {table.method} vs {table.baseline}; "
+                    f"comparisons: {len(table.comparisons)}"
+                )
+                for comparison in table.comparisons[:5]:
+                    metric = f" {comparison.metric}" if comparison.metric else ""
+                    lines.append(
+                        f"  - {comparison.dataset or 'reported column'}{metric}: "
+                        f"{comparison.method_value:.3f} vs {comparison.baseline_value:.3f} "
+                        f"(signed improvement {comparison.signed_improvement:+.3f})"
+                    )
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])

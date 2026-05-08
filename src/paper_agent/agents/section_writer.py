@@ -185,8 +185,14 @@ class SectionWriterAgent:
             "the evaluation metrics supplied by the author",
         )
         missing = [self._paper_prose(item).rstrip(".") for item in missing_details]
+        result_tables = experiments.result_tables if experiments else []
 
-        if result_summary:
+        if result_tables:
+            main_results = (
+                "### Main Results\n"
+                + self._structured_main_results_text(result_tables)
+            )
+        elif result_summary:
             main_results = (
                 "### Main Results\n"
                 f"The parsed result tables report the following evidence: {result_summary} "
@@ -233,6 +239,47 @@ class SectionWriterAgent:
             )
 
         return f"{setup}\n\n{main_results}\n\n{completion}"
+
+    def _structured_main_results_text(self, result_tables) -> str:
+        table_sentences = []
+        example_sentences = []
+        for table in result_tables[:3]:
+            comparisons = table.comparisons
+            if not comparisons:
+                continue
+            wins = sum(1 for comparison in comparisons if comparison.improved)
+            average_delta = sum(comparison.signed_improvement for comparison in comparisons) / len(comparisons)
+            metric = table.metric or "reported metrics"
+            table_sentences.append(
+                f"In {table.caption}, {table.method} improves over {table.baseline} on "
+                f"{wins}/{len(comparisons)} {metric} comparisons, with an average signed "
+                f"improvement of {average_delta:+.3f}."
+            )
+            strongest = sorted(
+                comparisons,
+                key=lambda item: abs(item.signed_improvement),
+                reverse=True,
+            )[:2]
+            for comparison in strongest:
+                example_sentences.append(self._comparison_sentence(comparison))
+        body = " ".join(table_sentences)
+        if example_sentences:
+            body += " Representative comparisons include " + "; ".join(example_sentences[:4]) + "."
+        return (
+            body
+            + " These claims are copied from the supplied experiment tables and should not be "
+            "extended beyond the reported metrics."
+        )
+
+    def _comparison_sentence(self, comparison) -> str:
+        metric = f" {comparison.metric}" if comparison.metric else ""
+        dataset = comparison.dataset or "the reported column"
+        direction = "higher" if comparison.higher_is_better else "lower"
+        return (
+            f"{dataset}{metric}: {comparison.method_value:.3f} vs "
+            f"{comparison.baseline_value:.3f} ({comparison.signed_improvement:+.3f}, "
+            f"{direction} is better)"
+        )
 
     def _conclusion_text(self, innovations, experiments, result_summary: str) -> str:
         innovation_names = self._innovation_name_list(innovations)

@@ -89,6 +89,10 @@ counts, citation/reference status, LaTeX table counts, and LLM self-review mode.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.
+Experiment result files should expose real trained-model tables with method rows
+and dataset-metric columns. The analyzer stores per-column comparisons, signed
+improvements, and metric direction so generated result prose can be traced back
+to exact user-supplied values.
 
 ## Phases
 

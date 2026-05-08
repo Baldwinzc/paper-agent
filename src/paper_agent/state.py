@@ -45,10 +45,32 @@ class CodeSummary(BaseModel):
     summary: str = ""
 
 
+class ExperimentComparison(BaseModel):
+    table_caption: str = ""
+    dataset: str = ""
+    metric: str = ""
+    method: str = ""
+    baseline: str = ""
+    method_value: float
+    baseline_value: float
+    signed_improvement: float
+    higher_is_better: bool = True
+    improved: bool = False
+
+
+class ExperimentTableSummary(BaseModel):
+    caption: str = ""
+    metric: str = ""
+    method: str = ""
+    baseline: str = ""
+    comparisons: list[ExperimentComparison] = Field(default_factory=list)
+
+
 class ExperimentSummary(BaseModel):
     raw_preview: str = ""
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
+    result_tables: list[ExperimentTableSummary] = Field(default_factory=list)
     observations: list[str] = Field(default_factory=list)
     missing_details: list[str] = Field(default_factory=list)
 

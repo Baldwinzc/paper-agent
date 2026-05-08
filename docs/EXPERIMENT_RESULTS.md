@@ -1,0 +1,66 @@
+# Experiment Results Format
+
+`paper-agent` accepts Markdown, CSV-like text, or pasted notes, but the most reliable
+format is a Markdown table with one method column and one numeric column per
+dataset-metric pair.
+
+Use real trained-model results only. Cohort metadata is useful for dataset
+description, but it is not evidence for performance claims.
+
+## Main Result Table
+
+```markdown
+## Main Results
+
+Metric: C-index. Higher is better.
+
+| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |
+|---|---:|---:|---:|---:|---:|
+| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |
+| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |
+```
+
+The analyzer reads this as structured evidence:
+
+- dataset: `BLCA`, `BRCA`, `LGG`, `LUAD`, `UCEC`
+- metric: `C-INDEX`
+- baseline value and proposed-method value per column
+- signed improvement, respecting whether higher or lower is better
+
+## Lower-Is-Better Metrics
+
+For metrics such as `IBS`, `Brier`, `MAE`, `RMSE`, `loss`, or `error`, lower
+values are treated as better.
+
+```markdown
+## Calibration Results
+
+Metric: IBS. Lower is better.
+
+| Method | BLCA IBS | BRCA IBS |
+|---|---:|---:|
+| ProtoSurv baseline | 0.180 | 0.210 |
+| Hyper-ProtoSurv ours | 0.160 | 0.190 |
+```
+
+## Ablations
+
+Ablation tables should keep the full method name for the proposed model and use
+variant names for removed components.
+
+```markdown
+## Ablation Study
+
+Metric: C-index. Higher is better.
+
+| Variant | BLCA C-index | BRCA C-index |
+|---|---:|---:|
+| Hyper-ProtoSurv ours | 0.671 | 0.691 |
+| w/o bidirectional HCoN | 0.655 | 0.674 |
+| w/o reconstruction loss | 0.659 | 0.678 |
+```
+
+The current analyzer uses baseline-vs-ours tables for automatic result claims.
+Ablation tables are retained in LaTeX and flagged as available evidence, but the
+agent should not write strong component conclusions until ablation support is
+made explicit and verified.

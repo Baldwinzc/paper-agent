@@ -151,9 +151,13 @@ python -m paper_agent.cli draft `
 ```
 
 For the lower-level `draft` command, `--experiment-results` should point to a
-real result or cohort summary file supplied by the user. If you only want to run
-the built-in local TCGA showcase, use `sample-hyper-protosurv`; it reads
-`dataset_csv/*.csv` directly.
+real result file supplied by the user. The preferred format is documented in
+`docs/EXPERIMENT_RESULTS.md`: use a Markdown table with one method column and
+numeric dataset-metric columns such as `BLCA C-index` or `BRCA IBS`. The analyzer
+extracts baseline value, proposed-method value, signed improvement, and whether
+higher or lower is better. If you only want to run the built-in local TCGA
+showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
+cohort metadata, not as performance evidence.
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
 the final second-pass reviewer to call the configured model. The CLI maps this

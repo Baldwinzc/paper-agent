@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 
 from paper_agent.tables import MarkdownTable, extract_markdown_tables
-from paper_agent.state import ExperimentSummary, PaperRequest, PaperState
+from paper_agent.state import (
+    ExperimentComparison,
+    ExperimentSummary,
+    ExperimentTableSummary,
+    PaperRequest,
+    PaperState,
+)
 
 
 class ExperimentAnalyzerAgent:
@@ -36,24 +42,30 @@ class ExperimentAnalyzerAgent:
         raw = request.experiment_results.strip()
         metrics = sorted({self._normalize_metric(m.group(1)) for m in self.METRIC_RE.finditer(raw)})
         datasets = self._extract_datasets(raw, metrics)
-        result_findings = self._table_result_findings(raw)
+        result_tables = self._table_summaries(raw, metrics)
+        result_findings = [self._table_result_finding(table) for table in result_tables]
+        result_findings = [finding for finding in result_findings if finding]
         observations = self._observations(raw, result_findings)
         missing = []
         if not datasets:
             missing.append("Dataset names are not explicit.")
         if not metrics:
             missing.append("Evaluation metrics are not explicit.")
-        if "baseline" not in raw.lower():
+        if not any(table.baseline for table in result_tables) and "baseline" not in raw.lower():
             missing.append("Baseline comparison rows should be made explicit.")
 
         state["experiments"] = ExperimentSummary(
             raw_preview=raw[:2000],
             datasets=datasets,
             metrics=metrics,
+            result_tables=result_tables,
             observations=observations,
             missing_details=missing,
         )
         state.setdefault("artifacts", {})["experiment_result_findings"] = result_findings
+        state["artifacts"]["experiment_result_tables"] = [
+            table.model_dump() for table in result_tables
+        ]
         return state
 
     def _observations(self, raw: str, result_findings: list[str]) -> list[str]:
@@ -95,15 +107,15 @@ class ExperimentAnalyzerAgent:
             and candidate.upper() not in self.DATASET_STOPWORDS
         ][:8]
 
-    def _table_result_findings(self, raw: str) -> list[str]:
-        findings: list[str] = []
+    def _table_summaries(self, raw: str, metrics: list[str]) -> list[ExperimentTableSummary]:
+        summaries: list[ExperimentTableSummary] = []
         for table in extract_markdown_tables(raw):
-            finding = self._table_result_finding(table)
-            if finding:
-                findings.append(finding)
-        return findings
+            summary = self._table_summary(table, metrics)
+            if summary and summary.comparisons:
+                summaries.append(summary)
+        return summaries
 
-    def _table_result_finding(self, table: MarkdownTable) -> str:
+    def _table_summary(self, table: MarkdownTable, metrics: list[str]) -> ExperimentTableSummary | None:
         method_index = self._method_column_index(table.headers)
         baseline = self._find_row(table.rows, method_index, ["baseline"])
         ours = self._find_row(
@@ -112,9 +124,12 @@ class ExperimentAnalyzerAgent:
             ["ours", "proposed", "our method", "paper-agent", "hyper-protosurv"],
         )
         if not baseline or not ours:
-            return ""
+            return None
 
-        comparisons = []
+        comparisons: list[ExperimentComparison] = []
+        method_name = ours[method_index] if method_index < len(ours) else "The proposed method"
+        baseline_name = baseline[method_index] if method_index < len(baseline) else "the baseline"
+        default_metric = self._table_metric(table, metrics)
         for index, header in enumerate(table.headers):
             if index == method_index:
                 continue
@@ -122,28 +137,81 @@ class ExperimentAnalyzerAgent:
             ours_value = self._numeric_value(ours[index] if index < len(ours) else "")
             if baseline_value is None or ours_value is None:
                 continue
+            dataset, metric = self._column_context(header, default_metric)
             delta = ours_value - baseline_value
-            if self._lower_is_better(header):
+            higher_is_better = not self._lower_is_better(
+                " ".join([header, table.caption]),
+                metric,
+            )
+            if not higher_is_better:
                 improved = delta < 0
                 signed_delta = -delta
             else:
                 improved = delta > 0
                 signed_delta = delta
-            comparisons.append((improved, signed_delta))
+            comparisons.append(
+                ExperimentComparison(
+                    table_caption=table.caption,
+                    dataset=dataset,
+                    metric=metric,
+                    method=method_name,
+                    baseline=baseline_name,
+                    method_value=ours_value,
+                    baseline_value=baseline_value,
+                    signed_improvement=signed_delta,
+                    higher_is_better=higher_is_better,
+                    improved=improved,
+                )
+            )
 
+        if not comparisons:
+            return None
+
+        table_metric = self._dominant_metric(comparisons)
+        return ExperimentTableSummary(
+            caption=table.caption,
+            metric=table_metric,
+            method=method_name,
+            baseline=baseline_name,
+            comparisons=comparisons,
+        )
+
+    def _table_metric(self, table: MarkdownTable, metrics: list[str]) -> str:
+        source = " ".join([table.caption, *table.headers])
+        match = self.METRIC_RE.search(source)
+        if match:
+            return self._normalize_metric(match.group(1))
+        return metrics[0] if metrics else ""
+
+    def _table_result_finding(self, summary: ExperimentTableSummary) -> str:
+        comparisons = summary.comparisons
         if not comparisons:
             return ""
 
-        wins = sum(1 for improved, _ in comparisons if improved)
-        average_delta = sum(delta for _, delta in comparisons) / len(comparisons)
-        ours_name = ours[method_index] if method_index < len(ours) else "The proposed method"
-        baseline_name = baseline[method_index] if method_index < len(baseline) else "the baseline"
+        wins = sum(1 for comparison in comparisons if comparison.improved)
+        average_delta = sum(comparison.signed_improvement for comparison in comparisons) / len(comparisons)
         direction = "improves over" if wins else "does not improve over"
         return (
-            f"{table.caption}: {ours_name} {direction} {baseline_name} on "
+            f"{summary.caption}: {summary.method} {direction} {summary.baseline} on "
             f"{wins}/{len(comparisons)} numeric comparisons "
             f"(average signed improvement {average_delta:+.3f})."
         )
+
+    def _column_context(self, header: str, default_metric: str) -> tuple[str, str]:
+        metric_match = self.METRIC_RE.search(header)
+        metric = self._normalize_metric(metric_match.group(1)) if metric_match else default_metric
+        dataset = header
+        if metric_match:
+            dataset = (header[: metric_match.start()] + header[metric_match.end() :]).strip()
+        dataset = re.sub(r"\b(score|value|mean|std|avg|average)\b", " ", dataset, flags=re.I)
+        dataset = re.sub(r"[^A-Za-z0-9_-]+", " ", dataset).strip()
+        return dataset or header.strip(), metric
+
+    def _dominant_metric(self, comparisons: list[ExperimentComparison]) -> str:
+        metrics = [comparison.metric for comparison in comparisons if comparison.metric]
+        if not metrics:
+            return ""
+        return max(dict.fromkeys(metrics), key=metrics.count)
 
     def _method_column_index(self, headers: list[str]) -> int:
         for index, header in enumerate(headers):
@@ -164,5 +232,11 @@ class ExperimentAnalyzerAgent:
             return None
         return float(match.group(0))
 
-    def _lower_is_better(self, header: str) -> bool:
-        return bool(re.search(r"\b(ibs|brier|mae|rmse|loss|error|time|latency)\b", header, flags=re.I))
+    def _lower_is_better(self, header: str, metric: str = "") -> bool:
+        return bool(
+            re.search(
+                r"\b(ibs|brier|mae|rmse|loss|error|time|latency)\b",
+                f"{header} {metric}",
+                flags=re.I,
+            )
+        )

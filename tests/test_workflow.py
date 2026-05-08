@@ -430,6 +430,15 @@ def test_experiment_analyzer_extracts_tcga_mock_results():
     assert "IBS" in state["experiments"].metrics
     assert not state["experiments"].missing_details
     assert state["artifacts"]["experiment_result_findings"]
+    assert state["experiments"].result_tables
+    first_table = state["experiments"].result_tables[0]
+    assert first_table.method == "Hyper-ProtoSurv ours"
+    assert first_table.baseline == "ProtoSurv baseline"
+    assert first_table.comparisons[0].dataset == "BLCA"
+    assert first_table.comparisons[0].metric == "C-INDEX"
+    assert first_table.comparisons[0].method_value == 0.671
+    assert first_table.comparisons[0].baseline_value == 0.646
+    assert round(first_table.comparisons[0].signed_improvement, 3) == 0.025
     assert "5/5 numeric comparisons" in state["experiments"].observations[0]
     assert "average signed improvement +0.023" in state["experiments"].observations[0]
 
@@ -453,6 +462,90 @@ def test_experiment_analyzer_handles_lower_is_better_metrics():
 
     assert "2/2 numeric comparisons" in state["experiments"].observations[0]
     assert "average signed improvement +0.020" in state["experiments"].observations[0]
+    comparisons = state["experiments"].result_tables[0].comparisons
+    assert all(not item.higher_is_better for item in comparisons)
+    assert round(comparisons[0].signed_improvement, 3) == 0.020
+
+
+def test_experiment_analyzer_uses_nearby_metric_text_for_tables():
+    raw = """
+    ## Main Results
+
+    Metric: C-index, higher is better.
+
+    | Method | BLCA | BRCA |
+    |---|---:|---:|
+    | ProtoSurv baseline | 0.646 | 0.669 |
+    | Hyper-ProtoSurv ours | 0.671 | 0.691 |
+
+    Metric: IBS, lower is better.
+
+    | Method | BLCA | BRCA |
+    |---|---:|---:|
+    | ProtoSurv baseline | 0.184 | 0.171 |
+    | Hyper-ProtoSurv ours | 0.171 | 0.160 |
+    """
+
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    tables = state["experiments"].result_tables
+    assert [table.metric for table in tables] == ["C-INDEX", "IBS"]
+    assert all(item.higher_is_better for item in tables[0].comparisons)
+    assert all(not item.higher_is_better for item in tables[1].comparisons)
+    assert round(tables[1].comparisons[0].signed_improvement, 3) == 0.013
+
+
+def test_section_writer_uses_structured_result_tables():
+    raw = """
+    | Method | BLCA C-index | BRCA C-index |
+    |---|---:|---:|
+    | ProtoSurv baseline | 0.646 | 0.669 |
+    | Hyper-ProtoSurv ours | 0.671 | 0.691 |
+    """
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    sections = SectionWriterAgent()._run_fallback(
+        {
+            "request": PaperRequest(project_name="demo", target_venue="TPAMI"),
+            "experiments": state["experiments"],
+            "innovations": [],
+            "artifacts": {},
+        }
+    )
+
+    assert "0.671 vs 0.646" in sections.experiments
+    assert "average signed improvement of +0.023" in sections.experiments
+    assert "copied from the supplied experiment tables" in sections.experiments
+
+    reviewed = ReviewerAgent().run(
+        {
+            "experiments": state["experiments"],
+            "innovations": [],
+            "sections": DraftSections(experiments=sections.experiments),
+            "artifacts": {},
+        }
+    )
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+    assert consistency["unsupported_experiment_numbers"]["status"] == "ok"
 
 
 def test_zip_latex_project_contains_overleaf_files(tmp_path):
@@ -1584,6 +1677,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
             "related_work_candidates": [{"title": "A"}],
+            "experiment_result_tables": [{"caption": "Main Results"}],
             "latex_table_count": 3,
             "undefined_citation_keys": ["missing"],
             "draft_report_path": str(tmp_path / "latex" / "DRAFT_REPORT.md"),
@@ -1597,6 +1691,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["bibliography_entries"] == 1
     assert summary["reference_unresolved"] == 2
     assert summary["related_work_candidates"] == 1
+    assert summary["experiment_result_tables"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
     assert summary["outputs"]["markdown"].endswith("draft.md")
 

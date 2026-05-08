@@ -354,12 +354,23 @@ class ReviewerAgent:
     def _evidence_text(self, experiments) -> str:
         if not experiments:
             return ""
+        result_values = []
+        for table in experiments.result_tables:
+            for comparison in table.comparisons:
+                result_values.extend(
+                    [
+                        f"{comparison.method_value:.3f}",
+                        f"{comparison.baseline_value:.3f}",
+                        f"{comparison.signed_improvement:+.3f}",
+                    ]
+                )
         return "\n".join(
             [
                 experiments.raw_preview,
                 *experiments.observations,
                 *experiments.datasets,
                 *experiments.metrics,
+                *result_values,
             ]
         )
 
