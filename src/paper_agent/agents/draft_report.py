@@ -84,6 +84,14 @@ class DraftReportAgent:
                 citations = ", ".join(item.get("real_citation_keys") or item.get("citation_keys") or [])
                 lines.append(f"- `{item.get('thread')}`: {status}; citations: {citations or 'none'}")
 
+        consistency = artifacts.get("factual_consistency", [])
+        if consistency:
+            lines.extend(["", "## Factual Consistency", ""])
+            for item in consistency:
+                values = ", ".join(item.get("values", []))
+                detail = f"; values: {values}" if values else ""
+                lines.append(f"- `{item.get('check')}`: {item.get('status')}{detail}")
+
         lines.extend(["", "## Bibliography Verification", ""])
         verification = artifacts.get("reference_verification", {})
         if verification:

@@ -10,6 +10,49 @@ from paper_agent.state import PaperState, ReviewFinding
 class ReviewerAgent:
     """Flags risks before the draft is treated as paper-ready."""
 
+    METRIC_ALIASES = {
+        "ACC": "ACCURACY",
+        "ACCURACY": "ACCURACY",
+        "AUC": "AUC",
+        "BLEU": "BLEU",
+        "BRIER": "BRIER SCORE",
+        "BRIER SCORE": "BRIER SCORE",
+        "C INDEX": "C-INDEX",
+        "C-INDEX": "C-INDEX",
+        "CONCORDANCE": "C-INDEX",
+        "CONCORDANCE INDEX": "C-INDEX",
+        "F1": "F1",
+        "IBS": "IBS",
+        "MAP": "MAP",
+        "MAE": "MAE",
+        "MIOU": "MIOU",
+        "MRR": "MRR",
+        "PSNR": "PSNR",
+        "RMSE": "RMSE",
+        "ROUGE": "ROUGE",
+    }
+    METRIC_PATTERN = (
+        r"\b(c-index|concordance(?: index)?|ibs|brier(?: score)?|acc(?:uracy)?|"
+        r"f1|auc|mrr|map|bleu|rouge|mae|rmse|psnr|miou)\b"
+    )
+    DATASET_STOPWORDS = {
+        "API",
+        "AUC",
+        "BHE",
+        "CLI",
+        "CPU",
+        "GPU",
+        "IBS",
+        "IEEE",
+        "INDEX",
+        "LLM",
+        "OT",
+        "PDF",
+        "TPAMI",
+        "WSI",
+        "WSIS",
+    }
+
     def run(self, state: PaperState) -> PaperState:
         findings: list[ReviewFinding] = []
         experiments = state.get("experiments")
@@ -49,6 +92,27 @@ class ReviewerAgent:
                             + "."
                         ),
                         suggestion="Revise Method so each accepted innovation point has a concrete subsection or paragraph.",
+                    )
+                )
+
+        if sections:
+            consistency = self._factual_consistency_checks(sections, experiments, innovations)
+            state.setdefault("artifacts", {})["factual_consistency"] = consistency
+            consistency_issues = [
+                item
+                for item in consistency
+                if item["status"] == "needs_review"
+            ]
+            if consistency_issues:
+                issue_names = ", ".join(item["check"] for item in consistency_issues[:5])
+                findings.append(
+                    ReviewFinding(
+                        severity="major",
+                        issue=f"Draft contains claims not supported by supplied evidence: {issue_names}.",
+                        suggestion=(
+                            "Revise these claims to match the provided code, innovation list, "
+                            "and experiment tables, or add the missing evidence."
+                        ),
                     )
                 )
 
@@ -244,6 +308,162 @@ class ReviewerAgent:
             if key
         ]
         return list(dict.fromkeys(normalized))
+
+    def _factual_consistency_checks(self, sections, experiments, innovations) -> list[dict[str, object]]:
+        checks: list[dict[str, object]] = []
+        section_values = sections.model_dump()
+        evidence_text = self._evidence_text(experiments)
+        checked_text = "\n".join(
+            section_values.get(name, "")
+            for name in ["abstract", "introduction", "experiments", "conclusion"]
+        )
+
+        checks.append(
+            self._consistency_item(
+                "unsupported_datasets",
+                self._unsupported_datasets(checked_text, experiments),
+            )
+        )
+        checks.append(
+            self._consistency_item(
+                "unsupported_metrics",
+                self._unsupported_metrics(checked_text, experiments),
+            )
+        )
+        checks.append(
+            self._consistency_item(
+                "unsupported_experiment_numbers",
+                self._unsupported_numbers(checked_text, evidence_text),
+            )
+        )
+        checks.append(
+            self._consistency_item(
+                "unsupported_method_threads",
+                self._unsupported_method_threads(sections.method, innovations),
+            )
+        )
+        return checks
+
+    def _consistency_item(self, check: str, values: list[str]) -> dict[str, object]:
+        return {
+            "check": check,
+            "status": "needs_review" if values else "ok",
+            "values": values,
+        }
+
+    def _evidence_text(self, experiments) -> str:
+        if not experiments:
+            return ""
+        return "\n".join(
+            [
+                experiments.raw_preview,
+                *experiments.observations,
+                *experiments.datasets,
+                *experiments.metrics,
+            ]
+        )
+
+    def _unsupported_datasets(self, text: str, experiments) -> list[str]:
+        if not experiments or not experiments.datasets:
+            return []
+        allowed = {dataset.upper() for dataset in experiments.datasets}
+        allowed.update(metric.upper() for metric in experiments.metrics)
+        candidates = set()
+        for match in re.finditer(
+            r"\b(?:on|across|over|using|datasets?|cohorts?)\s+([^.;:\n]+)",
+            text,
+            flags=re.I,
+        ):
+            candidates.update(
+                re.findall(r"\b[A-Z][A-Z0-9_]{1,8}(?:-[A-Z0-9_]{2,8})?\b", match.group(1))
+            )
+        return [
+            candidate
+            for candidate in sorted(candidates)
+            if candidate.upper() not in allowed and candidate.upper() not in self.DATASET_STOPWORDS
+        ]
+
+    def _unsupported_metrics(self, text: str, experiments) -> list[str]:
+        if not experiments or not experiments.metrics:
+            return []
+        allowed = {self._normalize_metric(metric) for metric in experiments.metrics}
+        mentioned = {
+            self._normalize_metric(match.group(1))
+            for match in re.finditer(self.METRIC_PATTERN, text, flags=re.I)
+        }
+        return sorted(metric for metric in mentioned if metric and metric not in allowed)
+
+    def _normalize_metric(self, metric: str) -> str:
+        key = re.sub(r"\s+", " ", metric.strip().upper().replace("-", " "))
+        return self.METRIC_ALIASES.get(key, key)
+
+    def _unsupported_numbers(self, text: str, evidence_text: str) -> list[str]:
+        if not evidence_text.strip():
+            return []
+        evidence_numbers = {
+            self._normalize_number(match.group(0))
+            for match in self._number_matches(evidence_text)
+        }
+        unsupported = []
+        for match in self._number_matches(text):
+            raw = match.group(0)
+            if self._normalize_number(raw) not in evidence_numbers:
+                unsupported.append(raw)
+        return list(dict.fromkeys(unsupported))
+
+    def _number_matches(self, text: str):
+        return re.finditer(r"(?<![A-Za-z0-9])[-+]?(?:0?\.\d+|\d+\.\d+)(?:\s*%)?", text)
+
+    def _normalize_number(self, raw: str) -> str:
+        value = raw.strip().replace(" ", "")
+        suffix = "%" if value.endswith("%") else ""
+        value = value.rstrip("%")
+        try:
+            normalized = f"{float(value):.6g}"
+        except ValueError:
+            normalized = value.lstrip("+")
+        return normalized + suffix
+
+    def _unsupported_method_threads(self, method_text: str, innovations) -> list[str]:
+        if not innovations:
+            return []
+        unsupported = []
+        for heading, body in self._markdown_subsections(method_text):
+            if self._generic_method_heading(heading):
+                continue
+            subsection = f"{heading}\n{body}"
+            if not any(self._innovation_mentioned(subsection, innovation) for innovation in innovations):
+                unsupported.append(heading)
+        return unsupported
+
+    def _markdown_subsections(self, text: str) -> list[tuple[str, str]]:
+        sections: list[tuple[str, str]] = []
+        current_heading = ""
+        current_lines: list[str] = []
+
+        def flush() -> None:
+            if current_heading:
+                sections.append((current_heading, "\n".join(current_lines).strip()))
+
+        for line in text.splitlines():
+            if line.startswith("### "):
+                flush()
+                current_heading = line[4:].strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        flush()
+        return sections
+
+    def _generic_method_heading(self, heading: str) -> bool:
+        normalized = re.sub(r"[^a-z]+", " ", heading.lower()).strip()
+        return normalized in {
+            "overview",
+            "method overview",
+            "implementation details",
+            "training details",
+            "optimization",
+        }
 
     def _thread_requires_citation(self, thread: str) -> bool:
         lowered = thread.lower()

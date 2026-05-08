@@ -37,6 +37,8 @@ The current scaffold supports:
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
 - Related Work citation coverage checks for research-thread subsections.
+- Factual consistency checks for unsupported datasets, metrics, experiment numbers,
+  and Method subsections not tied to accepted innovation points.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 

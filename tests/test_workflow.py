@@ -852,6 +852,104 @@ def test_reviewer_flags_related_work_threads_without_real_citations():
     assert not relation["requires_citation"]
 
 
+def test_reviewer_flags_unsupported_experiment_facts():
+    state = {
+        "experiments": ExperimentSummary(
+            raw_preview=(
+                "| Method | BLCA C-index | BRCA C-index |\n"
+                "|---|---:|---:|\n"
+                "| ProtoSurv baseline | 0.646 | 0.669 |\n"
+                "| Ours | 0.671 | 0.691 |\n"
+            ),
+            datasets=["BLCA", "BRCA"],
+            metrics=["C-INDEX"],
+            observations=["Ours improves over baseline with average signed improvement +0.023."],
+            missing_details=[],
+        ),
+        "innovations": [],
+        "sections": DraftSections(
+            experiments=(
+                "We evaluate on BLCA, BRCA, and XYZ using C-index and AUC. "
+                "The proposed method obtains 0.999 on XYZ."
+            )
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+
+    assert "XYZ" in consistency["unsupported_datasets"]["values"]
+    assert "AUC" in consistency["unsupported_metrics"]["values"]
+    assert "0.999" in consistency["unsupported_experiment_numbers"]["values"]
+    assert any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
+
+
+def test_reviewer_accepts_supported_experiment_facts():
+    state = {
+        "experiments": ExperimentSummary(
+            raw_preview=(
+                "| Method | BLCA C-index | BRCA C-index |\n"
+                "|---|---:|---:|\n"
+                "| ProtoSurv baseline | 0.646 | 0.669 |\n"
+                "| Ours | 0.671 | 0.691 |\n"
+            ),
+            datasets=["BLCA", "BRCA"],
+            metrics=["C-INDEX"],
+            observations=["Ours improves over baseline with average signed improvement +0.023."],
+            missing_details=[],
+        ),
+        "innovations": [],
+        "sections": DraftSections(
+            experiments="We evaluate on BLCA and BRCA using C-index and obtain 0.671 on BLCA."
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    assert all(
+        item["status"] == "ok"
+        for item in reviewed["artifacts"]["factual_consistency"]
+    )
+    assert not any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
+
+
+def test_reviewer_flags_method_threads_without_innovation_support():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype calibration",
+                motivation="The baseline uses static prototypes.",
+                technical_idea="Calibrate prototypes with uncertainty-aware adaptation.",
+                evidence=["Method notes mention adaptive prototype calibration."],
+            )
+        ],
+        "sections": DraftSections(
+            method=(
+                "### Adaptive prototype calibration\n"
+                "We calibrate prototypes before prediction.\n\n"
+                "### Contrastive memory bank\n"
+                "We add a memory bank that is not present in the accepted innovations."
+            )
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+
+    assert consistency["unsupported_method_threads"]["values"] == ["Contrastive memory bank"]
+    assert any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
+
+
 def test_reviewer_flags_outline_language():
     state = {
         "experiments": ExperimentSummary(),
@@ -899,6 +997,26 @@ def test_draft_report_includes_related_work_citation_coverage(tmp_path):
     assert "## Related Work Citation Coverage" in report
     assert "`Classic Thread`: missing real citation" in report
     assert "`Recent Thread`: covered; citations: resolved" in report
+
+
+def test_draft_report_includes_factual_consistency(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="consistency-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "factual_consistency": [
+                {"check": "unsupported_datasets", "status": "needs_review", "values": ["XYZ"]},
+                {"check": "unsupported_metrics", "status": "ok", "values": []},
+            ]
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Factual Consistency" in report
+    assert "`unsupported_datasets`: needs_review; values: XYZ" in report
+    assert "`unsupported_metrics`: ok" in report
 
 
 def test_reviewer_flags_method_missing_innovation():
