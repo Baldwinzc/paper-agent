@@ -36,6 +36,7 @@ The current scaffold supports:
   raw `Innovation 1` citation keys.
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
+- Related Work citation coverage checks for research-thread subsections.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 

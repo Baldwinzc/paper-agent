@@ -71,6 +71,19 @@ class DraftReportAgent:
                     f"cited by {candidate.get('cited_by_count', 0)})"
                 )
 
+        citation_coverage = artifacts.get("related_work_citation_coverage", [])
+        if citation_coverage:
+            lines.extend(["", "## Related Work Citation Coverage", ""])
+            for item in citation_coverage:
+                if not item.get("requires_citation", True):
+                    status = "not required"
+                elif item.get("covered_by_real_citation"):
+                    status = "covered"
+                else:
+                    status = "missing real citation"
+                citations = ", ".join(item.get("real_citation_keys") or item.get("citation_keys") or [])
+                lines.append(f"- `{item.get('thread')}`: {status}; citations: {citations or 'none'}")
+
         lines.extend(["", "## Bibliography Verification", ""])
         verification = artifacts.get("reference_verification", {})
         if verification:

@@ -806,6 +806,52 @@ def test_reviewer_flags_only_unresolved_bibliography_seeds():
     assert issue.endswith("entries: seed.")
 
 
+def test_reviewer_flags_related_work_threads_without_real_citations():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [],
+        "sections": DraftSections(
+            related_work=(
+                "### Classic Thread\n"
+                "This thread discusses prior survival prediction without a citation.\n\n"
+                "### Recent Thread\n"
+                "Recent work is cited with a resolved entry \\cite{resolved}.\n\n"
+                "### Seed Thread\n"
+                "This thread cites an unresolved generated seed \\cite{seed}.\n\n"
+                "### Relation to the Proposed Method\n"
+                "This positioning paragraph compares the proposed method to the cited threads."
+            )
+        ),
+        "bibliography": [
+            CitationEntry(
+                key="resolved",
+                title="Resolved Paper",
+                authors=["Ada Lovelace"],
+                year="2024",
+                doi="10.1234/resolved",
+            ),
+            CitationEntry(
+                key="seed",
+                title="Representative work on whole slide images",
+                authors=["Related work authors"],
+                note="Seed related-work entry generated from project keywords.",
+            ),
+        ],
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    coverage = reviewed["artifacts"]["related_work_citation_coverage"]
+
+    assert any("Related Work threads lack real citation coverage" in f.issue for f in reviewed["review_findings"])
+    assert [item["thread"] for item in coverage if not item["covered_by_real_citation"]] == [
+        "Classic Thread",
+        "Seed Thread",
+    ]
+    relation = next(item for item in coverage if item["thread"] == "Relation to the Proposed Method")
+    assert not relation["requires_citation"]
+
+
 def test_reviewer_flags_outline_language():
     state = {
         "experiments": ExperimentSummary(),
@@ -821,6 +867,38 @@ def test_reviewer_flags_outline_language():
 
     assert any("outline or procedural language" in finding.issue for finding in reviewed["review_findings"])
     assert reviewed["artifacts"]["outline_language_hits"] == ["introduction", "experiments"]
+
+
+def test_draft_report_includes_related_work_citation_coverage(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="coverage-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "related_work_citation_coverage": [
+                {
+                    "thread": "Classic Thread",
+                    "requires_citation": True,
+                    "citation_keys": [],
+                    "real_citation_keys": [],
+                    "covered_by_real_citation": False,
+                },
+                {
+                    "thread": "Recent Thread",
+                    "requires_citation": True,
+                    "citation_keys": ["resolved"],
+                    "real_citation_keys": ["resolved"],
+                    "covered_by_real_citation": True,
+                },
+            ]
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Related Work Citation Coverage" in report
+    assert "`Classic Thread`: missing real citation" in report
+    assert "`Recent Thread`: covered; citations: resolved" in report
 
 
 def test_reviewer_flags_method_missing_innovation():

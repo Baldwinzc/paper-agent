@@ -61,6 +61,8 @@ entries are separated from unresolved seed entries, and the draft report keeps b
 counts visible so the author can finish reference cleanup before submission.
 When bibliography seeds come from innovation points, the system extracts concise
 technical search phrases instead of using raw innovation labels as citation queries.
+Related Work subsections are checked for real citation coverage so unsupported
+research-thread paragraphs are visible in the draft report.
 
 ## Phases
 

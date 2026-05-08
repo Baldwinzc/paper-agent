@@ -84,6 +84,30 @@ class ReviewerAgent:
                 )
 
         if sections:
+            coverage = self._related_work_citation_coverage(
+                sections.related_work,
+                state.get("bibliography", []),
+                state.get("artifacts", {}).get("citation_key_aliases", {}),
+            )
+            state.setdefault("artifacts", {})["related_work_citation_coverage"] = coverage
+            missing_coverage = [
+                item
+                for item in coverage
+                if item["requires_citation"] and not item["covered_by_real_citation"]
+            ]
+            if missing_coverage:
+                threads = ", ".join(item["thread"] for item in missing_coverage[:5])
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue=f"Related Work threads lack real citation coverage: {threads}.",
+                        suggestion=(
+                            "Add verified citations to each research-thread subsection or remove "
+                            "unsupported related-work claims."
+                        ),
+                    )
+                )
+
             placeholder_hits = self._placeholder_hits(sections.model_dump())
             if placeholder_hits:
                 findings.append(
@@ -151,6 +175,86 @@ class ReviewerAgent:
             entry.authors
             and not any(author.lower() in placeholder_authors for author in entry.authors)
         )
+
+    def _related_work_citation_coverage(
+        self,
+        related_work: str,
+        bibliography,
+        citation_aliases: dict[str, str],
+    ) -> list[dict[str, object]]:
+        if not related_work.strip():
+            return []
+
+        real_keys = {
+            entry.key
+            for entry in bibliography
+            if not self._unresolved_seed_entry(entry)
+        }
+        coverage = []
+        for thread, body in self._related_work_threads(related_work):
+            citation_keys = self._citation_keys(body, citation_aliases)
+            real_citation_keys = [key for key in citation_keys if key in real_keys]
+            requires_citation = self._thread_requires_citation(thread)
+            coverage.append(
+                {
+                    "thread": thread,
+                    "requires_citation": requires_citation,
+                    "citation_keys": citation_keys,
+                    "real_citation_keys": real_citation_keys,
+                    "covered_by_real_citation": bool(real_citation_keys) or not requires_citation,
+                }
+            )
+        return coverage
+
+    def _related_work_threads(self, related_work: str) -> list[tuple[str, str]]:
+        threads: list[tuple[str, str]] = []
+        current_heading = "Related Work"
+        current_lines: list[str] = []
+
+        def flush() -> None:
+            body = "\n".join(current_lines).strip()
+            if body:
+                threads.append((current_heading, body))
+
+        for line in related_work.splitlines():
+            if line.startswith("### "):
+                flush()
+                current_heading = line[4:].strip() or "Related Work"
+                current_lines = []
+            else:
+                current_lines.append(line)
+        flush()
+        return threads
+
+    def _citation_keys(self, text: str, citation_aliases: dict[str, str]) -> list[str]:
+        raw_keys: list[str] = []
+        raw_keys.extend(
+            key.strip()
+            for match in re.finditer(r"\\cite\{([A-Za-z0-9_,\s-]+)\}", text)
+            for key in match.group(1).split(",")
+        )
+        raw_keys.extend(
+            key.strip()
+            for match in re.finditer(r"\[([A-Za-z0-9_,\s-]+)\]", text)
+            for key in match.group(1).split(",")
+        )
+        normalized = [
+            citation_aliases.get(key, key)
+            for key in raw_keys
+            if key
+        ]
+        return list(dict.fromkeys(normalized))
+
+    def _thread_requires_citation(self, thread: str) -> bool:
+        lowered = thread.lower()
+        optional_markers = {
+            "relation to the proposed method",
+            "relation to proposed method",
+            "proposed method",
+            "our method",
+            "contribution positioning",
+        }
+        return not any(marker in lowered for marker in optional_markers)
 
     def _outline_language_hits(self, section_values: dict[str, str]) -> list[str]:
         patterns = [
