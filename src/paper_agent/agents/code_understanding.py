@@ -14,6 +14,7 @@ class CodeUnderstandingAgent:
 
     METHOD_HINTS = ("model", "module", "loss", "train", "trainer", "network", "attention", "encoder")
     IMPLEMENTATION_PATTERNS = (
+        ("cross-cluster cost mask", r"class penalty|labels differ|mask = \(y_col != p_row\)|C\[mask\]|cross-cluster"),
         ("OT/Wasserstein hypergraph construction", r"free_support_barycenter|ot\.emd|compute_cost_matrix|cross-cluster|M_OT"),
         ("prototype source", r"data\.prototypes|proto_query_source|prototype-query|prototype bank"),
         ("BHE/HCoN module", r"\bHCoN\b|self\.hcon|ablate_bidirectional|hyperedge-side"),

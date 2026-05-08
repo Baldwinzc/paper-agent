@@ -11,24 +11,62 @@ from paper_agent.state import BaselineSummary, PaperRequest, PaperState
 class BaselineReaderAgent:
     """Extracts a coarse baseline-paper summary from a PDF or text fallback."""
 
+    SECTION_ALIASES = {
+        "abstract": {"abstract", "summary"},
+        "introduction": {"introduction"},
+        "related_work": {
+            "related work",
+            "background",
+            "literature review",
+        },
+        "method": {
+            "method",
+            "methods",
+            "methodology",
+            "approach",
+            "proposed method",
+            "model",
+            "framework",
+            "preliminaries",
+        },
+        "experiments": {
+            "experiment",
+            "experiments",
+            "experimental setup",
+            "experimental results",
+            "results",
+            "evaluation",
+        },
+        "conclusion": {
+            "conclusion",
+            "conclusions",
+            "discussion",
+            "limitations",
+            "future work",
+        },
+    }
+    SECTION_ORDER = ("abstract", "introduction", "related_work", "method", "experiments", "conclusion")
+
     def run(self, state: PaperState) -> PaperState:
         request: PaperRequest = state["request"]
         raw_text = self._extract_text(request.baseline_pdf_path)
         text = self._clean_extracted_text(raw_text)
+        structured_sections = self._extract_structured_sections(raw_text)
+        section_text = self._merged_section_text(structured_sections, text)
         preview = self._compact(text)
-        limitations = self._guess_limitations(text, request.method_notes)
-        terms = self._guess_terms(text, request.keywords)
+        limitations = self._guess_limitations(section_text, request.method_notes)
+        terms = self._guess_terms(section_text, request.keywords)
         path_title = self._guess_title_from_path(request.baseline_pdf_path)
         text_title = self._guess_title(raw_text)
 
         state["baseline"] = BaselineSummary(
             title=self._best_title(text_title, path_title) or "Baseline Paper",
-            problem=self._guess_sentence(text, ["problem", "challenge", "task"]) or "To be refined.",
-            method=self._guess_sentence(text, ["method", "framework", "model"]) or "To be refined.",
-            experiments=self._guess_sentence(text, ["experiment", "dataset", "evaluation"])
-            or "To be refined.",
+            problem=self._baseline_problem(structured_sections, text),
+            method=self._baseline_method(structured_sections, text),
+            experiments=self._baseline_experiments(structured_sections, text),
             limitations=limitations,
             related_terms=terms,
+            structured_sections=structured_sections,
             extracted_text_preview=preview,
         )
         return state
@@ -79,7 +117,138 @@ class BaselineReaderAgent:
         return lowered in {"cn", "com", "edu", "org"} or bool(re.fullmatch(r"\d+", lowered))
 
     def _compact(self, text: str, limit: int = 2500) -> str:
+        text = re.sub(r"(?<=\w)-\s+(?=\w)", "", text)
         return " ".join(text.split())[:limit]
+
+    def _extract_structured_sections(self, raw_text: str) -> dict[str, str]:
+        lines = self._normalized_lines(raw_text)
+        sections: dict[str, list[str]] = {}
+        current = ""
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            heading = self._section_key(line)
+            if not heading and re.fullmatch(r"\d+(?:\.\d+)*", line) and index + 1 < len(lines):
+                heading = self._section_key(lines[index + 1])
+                if heading:
+                    index += 1
+            if heading:
+                current = heading
+                sections.setdefault(current, [])
+                index += 1
+                continue
+            if current:
+                sections.setdefault(current, []).append(line)
+            index += 1
+
+        compacted = {
+            key: self._compact(" ".join(values), limit=1800)
+            for key, values in sections.items()
+            if values
+        }
+        return {key: compacted[key] for key in self.SECTION_ORDER if key in compacted}
+
+    def _normalized_lines(self, text: str) -> list[str]:
+        lines = []
+        for raw in text.splitlines():
+            clean = " ".join(raw.split()).strip()
+            if not clean or self._is_pdf_noise_line(clean):
+                continue
+            if self._looks_like_author_line(clean) or self._looks_like_affiliation_line(clean):
+                continue
+            lines.append(clean)
+        return lines
+
+    def _section_key(self, line: str) -> str:
+        normalized = self._normalize_heading(line)
+        for section, aliases in self.SECTION_ALIASES.items():
+            if normalized in aliases:
+                return section
+        return ""
+
+    def _normalize_heading(self, line: str) -> str:
+        heading = line.strip()
+        heading = re.sub(r"^\d+(?:\.\d+)*\s*", "", heading)
+        heading = re.sub(r"^[ivxlcdm]+\.\s*", "", heading, flags=re.I)
+        heading = re.sub(r"[^A-Za-z ]+", " ", heading)
+        heading = re.sub(r"\s+", " ", heading).strip().lower()
+        return heading
+
+    def _looks_like_affiliation_line(self, text: str) -> bool:
+        lowered = text.lower()
+        affiliation_markers = [
+            "university",
+            "institute",
+            "laboratory",
+            "school of",
+            "department of",
+            "academy of",
+            "ministry of",
+            "equal contribution",
+            "corresponding author",
+            "conference on",
+        ]
+        return any(marker in lowered for marker in affiliation_markers)
+
+    def _merged_section_text(self, sections: dict[str, str], fallback_text: str) -> str:
+        if not sections:
+            return fallback_text
+        return "\n".join(sections.get(key, "") for key in self.SECTION_ORDER if sections.get(key))
+
+    def _baseline_problem(self, sections: dict[str, str], text: str) -> str:
+        source = " ".join(
+            part for part in [sections.get("abstract", ""), sections.get("introduction", "")] if part
+        ) or text
+        return self._best_keyword_sentence(
+            source,
+            ["challenge", "problem", "task", "however", "neglect", "limitation"],
+        ) or "To be refined."
+
+    def _baseline_method(self, sections: dict[str, str], text: str) -> str:
+        source = " ".join(
+            part
+            for part in [
+                sections.get("abstract", ""),
+                sections.get("introduction", ""),
+                sections.get("method", ""),
+            ]
+            if part
+        ) or text
+        return self._best_keyword_sentence(
+            source,
+            [
+                "propose",
+                "proposed",
+                "method",
+                "framework",
+                "model",
+                "prototype",
+                "heterogeneous graph",
+            ],
+        ) or "To be refined."
+
+    def _baseline_experiments(self, sections: dict[str, str], text: str) -> str:
+        source = " ".join(
+            part
+            for part in [
+                sections.get("abstract", ""),
+                sections.get("introduction", ""),
+                sections.get("experiments", ""),
+            ]
+            if part
+        ) or text
+        return self._best_keyword_sentence(
+            source,
+            [
+                "validate",
+                "evaluated",
+                "evaluation",
+                "experiment",
+                "dataset",
+                "tcga",
+                "benchmark",
+            ],
+        ) or "To be refined."
 
     def _guess_title(self, text: str) -> str:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -131,9 +300,29 @@ class BaselineReaderAgent:
         lowered = text.lower()
         if "@" in text or "university" in lowered or "institute" in lowered:
             return True
-        return text.count(",") >= 2 and not any(
-            keyword in lowered for keyword in ["learning", "prediction", "representation", "survival"]
-        )
+        if text.count(",") < 2 or text.endswith((".", ":", ";")):
+            return False
+        scientific_markers = [
+            "learning",
+            "prediction",
+            "representation",
+            "survival",
+            "dataset",
+            "benchmark",
+            "experiment",
+            "evaluation",
+            "tcga",
+            "model",
+            "method",
+            "prognosis",
+            "tissue",
+            "graph",
+            "prototype",
+        ]
+        if any(keyword in lowered for keyword in scientific_markers):
+            return False
+        parts = [part.strip() for part in text.split(",") if part.strip()]
+        return len(parts) >= 3 and all(len(part.split()) <= 4 for part in parts[:5])
 
     def _title_case(self, text: str) -> str:
         small_words = {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with"}
@@ -159,8 +348,49 @@ class BaselineReaderAgent:
                 return sentence.strip() + "."
         return ""
 
+    def _best_keyword_sentence(self, text: str, keywords: list[str]) -> str:
+        sentences = self._sentences(text)
+        scored = []
+        for index, sentence in enumerate(sentences):
+            lowered = sentence.lower()
+            hits = sum(1 for keyword in keywords if keyword in lowered)
+            if not hits or len(sentence) < 45:
+                continue
+            score = hits * 10 - index
+            if any(marker in lowered for marker in ["we propose", "in this paper", "we validate"]):
+                score += 8
+            if any(marker in lowered for marker in ["however", "neglect", "struggle"]):
+                score += 5
+            scored.append((score, sentence))
+        if not scored:
+            return ""
+        return max(scored, key=lambda item: item[0])[1].rstrip(".") + "."
+
+    def _sentences(self, text: str) -> list[str]:
+        joined = re.sub(r"(?<=\w)-\s+(?=\w)", "", text)
+        joined = re.sub(r"\s+", " ", joined).strip()
+        return [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", joined)
+            if sentence.strip()
+        ]
+
     def _guess_limitations(self, text: str, method_notes: str) -> list[str]:
         candidates = []
+        direct = self._best_keyword_sentence(
+            text,
+            [
+                "however",
+                "neglect",
+                "struggle",
+                "limitation",
+                "lack",
+                "do not",
+                "does not",
+            ],
+        )
+        if direct:
+            candidates.append(direct)
         haystack = f"{text}\n{method_notes}".lower()
         if "efficien" in haystack or "cost" in haystack:
             candidates.append("Efficiency or computational cost appears to be a possible limitation.")
@@ -172,7 +402,23 @@ class BaselineReaderAgent:
 
     def _guess_terms(self, text: str, keywords: list[str]) -> list[str]:
         terms = list(dict.fromkeys(keywords))
-        for token in ["representation", "attention", "optimization", "adaptation", "retrieval"]:
-            if token in text.lower() and token not in terms:
+        lowered = text.lower()
+        for token in [
+            "representation",
+            "attention",
+            "optimization",
+            "adaptation",
+            "retrieval",
+            "heterogeneous graph",
+            "prototype learning",
+            "weakly supervised learning",
+            "survival prediction",
+            "whole slide images",
+        ]:
+            if token in lowered and token not in terms:
                 terms.append(token)
+        if "prototype" in lowered and "prototype learning" not in terms:
+            terms.append("prototype learning")
+        if ("wsi" in lowered or "whole-slide" in lowered) and "whole slide images" not in terms:
+            terms.append("whole slide images")
         return terms[:8]

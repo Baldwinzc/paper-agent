@@ -436,6 +436,8 @@ class SectionWriterAgent:
             "If details are missing, write a precise placeholder instead of fabricating.",
             "For Related Work, write actual comparative paragraphs from "
             "related_work_discovery rather than instructions.",
+            "Use only allowed_citation_keys for citations. Do not copy numeric citations like [5] "
+            "or [18, 19] from baseline text.",
             "Return only the requested section text.",
             "Do not wrap the answer in JSON or Markdown code fences.",
         ]
@@ -600,9 +602,14 @@ class SectionWriterAgent:
             text = re.sub(r"^```(?:\w+)?\s*", "", text)
             text = re.sub(r"\s*```$", "", text)
         text = self._drop_repeated_section_heading(section_name, text)
+        text = self._remove_numeric_citations(text)
         if not text:
             raise ValueError("LLM section response is empty.")
         return text.strip()
+
+    def _remove_numeric_citations(self, text: str) -> str:
+        text = re.sub(r"\s*\[(?:\d+\s*(?:,\s*\d+\s*)*)\]", "", text)
+        return re.sub(r"\s+([,.;:])", r"\1", text)
 
     def _drop_repeated_section_heading(self, section_name: str, text: str) -> str:
         lines = text.splitlines()

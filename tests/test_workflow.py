@@ -103,6 +103,52 @@ def test_baseline_reader_strips_pdf_section_prefix_noise():
     assert problem.startswith("Survival prediction")
 
 
+def test_baseline_reader_extracts_structured_sections(tmp_path):
+    baseline_text = tmp_path / "baseline.txt"
+    baseline_text.write_text(
+        "ProtoSurv: Heterogeneous Graph Survival Prediction\n"
+        "Abstract\n"
+        "Survival prediction is a significant challenge in cancer management. "
+        "However, current methods often neglect the fact that the contribution to prognosis differs with tissue types. "
+        "In this paper, we propose ProtoSurv, a novel heterogeneous graph model for WSI survival prediction. "
+        "We validate ProtoSurv across five different cancer types from TCGA.\n"
+        "1\n"
+        "Introduction\n"
+        "Most current works are based on Multiple Instance Learning and lose structural information across tissues. "
+        "Therefore, these methods struggle on prognostic prediction tasks.\n"
+        "3\n"
+        "Method\n"
+        "The heterogeneous graph introduces a tissue category attribute to each node. "
+        "The Structure View uses neighbor message passing, and the Histology View extracts prototypes from global features.\n"
+        "4\n"
+        "Experiments\n"
+        "We conducted comprehensive evaluations on five public benchmark datasets: BRCA, LGG, LUAD, COAD and PAAD.\n",
+        encoding="utf-8",
+    )
+
+    state = BaselineReaderAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="baseline-structure-demo",
+                target_venue="TPAMI",
+                baseline_pdf_path=str(baseline_text),
+            )
+        }
+    )
+
+    baseline = state["baseline"]
+    assert "abstract" in baseline.structured_sections
+    assert "introduction" in baseline.structured_sections
+    assert "method" in baseline.structured_sections
+    assert "experiments" in baseline.structured_sections
+    assert "neglect" in baseline.problem.lower()
+    assert "heterogeneous graph model" in baseline.method.lower()
+    assert "TCGA" in baseline.experiments or "benchmark datasets" in baseline.experiments
+    assert any("neglect" in limitation.lower() for limitation in baseline.limitations)
+    assert "heterogeneous graph" in baseline.related_terms
+    assert "prototype learning" in baseline.related_terms
+
+
 def test_innovation_name_uses_readable_hypergraph_title():
     name = InnovationAnalyzerAgent()._innovation_name(
         "Hyper-ProtoSurv explores adaptive hypergraph prototype learning, "
@@ -144,6 +190,8 @@ def test_code_understanding_extracts_implementation_evidence(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "data_preparation" / "hypergraph_construction_wb.py").write_text(
+        "mask = (y_col != p_row)\n"
+        "C[mask] *= np.exp(self.alpha)\n"
         "X_bar = ot.lp.free_support_barycenter(measures_locations, measures_weights, X_init)\n",
         encoding="utf-8",
     )
@@ -163,6 +211,7 @@ def test_code_understanding_extracts_implementation_evidence(tmp_path):
     assert any("(cross-attention fusion)" in item and "CrossAttention" in item for item in evidence)
     assert any("(reconstruction objective)" in item and "hcon_rec_loss" in item for item in evidence)
     assert any("(OT/Wasserstein hypergraph construction)" in item for item in evidence)
+    assert any("(cross-cluster cost mask)" in item for item in evidence)
     assert "implementation evidence snippets" in state["code"].summary
 
 
@@ -1207,6 +1256,31 @@ def test_draft_report_includes_factual_consistency(tmp_path):
     assert "`unsupported_metrics`: ok" in report
 
 
+def test_draft_report_includes_baseline_evidence(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="baseline-report-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(
+            title="ProtoSurv",
+            problem="Current methods neglect tissue-type contributions.",
+            method="ProtoSurv is a heterogeneous graph model.",
+            experiments="Evaluated on TCGA cohorts.",
+            limitations=["Current methods neglect tissue-type contributions."],
+            structured_sections={"abstract": "A", "method": "M", "experiments": "E"},
+        ),
+        "latex_project_dir": tmp_path,
+        "artifacts": {},
+        "bibliography": [],
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Baseline Evidence" in report
+    assert "- Title: ProtoSurv" in report
+    assert "- Method: ProtoSurv is a heterogeneous graph model." in report
+    assert "- Structured sections: abstract, method, experiments" in report
+
+
 def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
     client = FakeLLMClient(
@@ -1240,6 +1314,8 @@ def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
     assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
     assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
     assert client.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
+    payload = json.loads(client.calls[0]["messages"][1].content)
+    assert any("draft datasets" in rule for rule in payload["hard_rules"])
 
 
 def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
@@ -1257,7 +1333,7 @@ def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
             },
             {
               "section": "abstract",
-              "claim": "Quantitative evaluation remains pending and will be reported once full results are available.",
+              "claim": "Quantitative evaluation is pending and will be reported once full results are available.",
               "reason": "This is a placeholder statement, not a factual claim.",
               "evidence_needed": "Complete experimental results.",
               "severity": "minor"
@@ -1502,7 +1578,19 @@ def test_llm_section_prompt_blocks_performance_claims_when_results_missing(monke
     joined_rules = " ".join(payload["hard_rules"])
     assert "experiment evidence is incomplete" in joined_rules
     assert "Do not mention C-index" in joined_rules
+    assert "Do not copy numeric citations" in joined_rules
     assert payload["missing_experiment_details"] == ["Evaluation metrics are not explicit."]
+
+
+def test_llm_section_cleaner_removes_numeric_citations_only():
+    text = SectionWriterAgent()._clean_section_text(
+        "related_work",
+        "Related Work\nGraph MIL methods [5, 18, 20] motivate this line [baseline].",
+    )
+
+    assert "[5" not in text
+    assert "[baseline]" in text
+    assert text.startswith("Graph MIL")
 
 
 def test_llm_sections_fall_back_on_empirical_overclaim_when_results_missing():

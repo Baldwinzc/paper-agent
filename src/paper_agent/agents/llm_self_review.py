@@ -92,6 +92,9 @@ class LLMSelfReviewAgent:
                 "Do not require ablations or metrics to support a method implementation "
                 "claim when the code evidence contains that component; require experiments "
                 "only for effectiveness, improvement, or performance claims.",
+                "Current experiment evidence defines the draft datasets even when they differ "
+                "from the baseline paper's datasets; do not flag cohort names solely because "
+                "they are not baseline cohorts.",
                 "Return at most five unsupported_claims.",
                 "Keep every JSON string under 160 characters.",
                 "Return JSON only.",
@@ -265,6 +268,10 @@ class LLMSelfReviewAgent:
             "remain pending",
             "remains pending",
             "pending evaluation",
+            "evaluation is pending",
+            "evaluations are pending",
+            "is pending",
+            "are pending",
             "future experimental",
             "future experiment",
             "will be reported once",

@@ -21,6 +21,7 @@ class DraftReportAgent:
         request = state["request"]
         artifacts = state.get("artifacts", {})
         review_findings = state.get("review_findings", [])
+        baseline = state.get("baseline")
         experiments = state.get("experiments")
         bibliography = state.get("bibliography", [])
 
@@ -43,6 +44,20 @@ class DraftReportAgent:
                 lines.append(f"- [{finding.severity}] {finding.issue} Suggestion: {finding.suggestion}")
         else:
             lines.append("- No reviewer findings recorded.")
+
+        if baseline:
+            lines.extend(["", "## Baseline Evidence", ""])
+            lines.append(f"- Title: {baseline.title or 'not detected'}")
+            lines.append(f"- Problem: {self._clip(baseline.problem)}")
+            lines.append(f"- Method: {self._clip(baseline.method)}")
+            lines.append(f"- Experiments: {self._clip(baseline.experiments)}")
+            if baseline.limitations:
+                lines.append("- Limitations:")
+                for limitation in baseline.limitations[:3]:
+                    lines.append(f"  - {self._clip(limitation)}")
+            if baseline.structured_sections:
+                section_names = ", ".join(baseline.structured_sections.keys())
+                lines.append(f"- Structured sections: {section_names}")
 
         lines.extend(["", "## Missing Experiment Details", ""])
         if experiments and experiments.missing_details:
@@ -185,3 +200,9 @@ class DraftReportAgent:
             ]
         )
         return "\n".join(lines)
+
+    def _clip(self, text: str, limit: int = 280) -> str:
+        compact = " ".join((text or "").split())
+        if len(compact) <= limit:
+            return compact or "not detected"
+        return compact[: limit - 3].rstrip() + "..."

@@ -30,6 +30,7 @@ class BaselineSummary(BaseModel):
     experiments: str = ""
     limitations: list[str] = Field(default_factory=list)
     related_terms: list[str] = Field(default_factory=list)
+    structured_sections: dict[str, str] = Field(default_factory=dict)
     extracted_text_preview: str = ""
 
 
