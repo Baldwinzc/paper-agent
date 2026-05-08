@@ -17,6 +17,7 @@ from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
+from paper_agent.agents.paper_planner import PaperPlannerAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
@@ -206,6 +207,7 @@ def test_acceptance_flow_inputs_code_baseline_venue_outputs_paper(tmp_path):
     assert summary["inputs"]["baseline_pdf_path"] == str(baseline_pdf)
     assert summary["inputs"]["target_venue"] == "TPAMI"
     assert summary["inputs"]["experiment_results_provided"]
+    assert summary["inputs"]["experiment_results_source"] == "provided"
     assert summary["outputs"]["markdown"] == str(markdown_path)
 
 
@@ -1280,18 +1282,153 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["bibliography_entries"] == 1
     assert summary["reference_unresolved"] == 2
     assert summary["related_work_candidates"] == 1
+    assert summary["inputs"]["experiment_results_source"] == "none"
     assert summary["outputs"]["markdown"].endswith("draft.md")
+
+
+def test_tcga_cohort_summary_uses_dataset_csv_without_performance_claims(tmp_path):
+    dataset_dir = tmp_path / "dataset_csv"
+    dataset_dir.mkdir()
+    (dataset_dir / "BLCA.csv").write_text(
+        ",case_id,slide_id,survival_months,censorship\n"
+        "0,TCGA-AA-0001-01Z-00-DX1.A,TCGA-AA-0001-01Z-00-DX1.A.svs,12.0,0\n"
+        "1,TCGA-AA-0001-01Z-00-DX2.B,TCGA-AA-0001-01Z-00-DX2.B.svs,12.0,0\n"
+        "2,TCGA-AA-0002-01Z-00-DX1.C,TCGA-AA-0002-01Z-00-DX1.C.svs,24.0,1\n",
+        encoding="utf-8",
+    )
+
+    summary = cli_module._build_tcga_cohort_summary(dataset_dir)
+
+    assert "TCGA Cohort Data Summary" in summary
+    assert "| BLCA | 2 | 3 | 2 | 1 | 12.00 | 12.00 | 24.00 |" in summary
+    assert "not a model-performance result file" in summary
+    assert "Add real trained-model performance tables" in summary
+    assert "improvement" not in summary.lower()
+    assert "ablation" not in summary.lower()
+    assert "baseline" not in summary.lower()
+    assert "C-index" not in summary
+    assert "IBS" not in summary
+
+
+def test_planner_reserves_improvement_claim_when_experiments_incomplete():
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive hypergraph prototype learning",
+                motivation="Robustness",
+                technical_idea="Use adaptive hyperedges.",
+            )
+        ],
+        "experiments": ExperimentSummary(
+            datasets=["BLCA", "BRCA"],
+            missing_details=["Evaluation metrics are not explicit."],
+        ),
+    }
+
+    planned = PaperPlannerAgent().run(state)
+
+    assert "reserving empirical improvement claims" in planned["outline"].central_claim
+    assert "This paper improves" not in planned["outline"].central_claim
+
+
+def test_fallback_conclusion_avoids_guard_trigger_when_results_missing():
+    sections = SectionWriterAgent()._run_fallback(
+        {
+            "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+            "experiments": ExperimentSummary(
+                datasets=["BLCA"],
+                missing_details=["Evaluation metrics are not explicit."],
+            ),
+            "innovations": [
+                InnovationPoint(
+                    name="Innovation 1: Adaptive hypergraph prototype learning",
+                    motivation="Robustness",
+                    technical_idea="Use adaptive hyperedges.",
+                )
+            ],
+            "outline": PaperOutline(
+                central_claim=(
+                    "This paper addresses the baseline setting through adaptive hyperedges, "
+                    "while reserving empirical improvement claims for verified result tables."
+                )
+            ),
+            "artifacts": {},
+        }
+    )
+
+    assert "empirical section remains incomplete" in sections.conclusion
+    assert "empirical validation" not in sections.conclusion.lower()
+    assert "improving the baseline setting" not in sections.conclusion
+
+
+def test_llm_section_prompt_blocks_performance_claims_when_results_missing(monkeypatch):
+    client = FakeLLMClient("A cautious section.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Evaluation metrics are not explicit."],
+        ),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client)._run_llm_section(state, "abstract")
+
+    payload = json.loads(client.calls[0]["messages"][1].content)
+    joined_rules = " ".join(payload["hard_rules"])
+    assert "experiment evidence is incomplete" in joined_rules
+    assert "Do not mention C-index" in joined_rules
+    assert payload["missing_experiment_details"] == ["Evaluation metrics are not explicit."]
+
+
+def test_llm_sections_fall_back_on_empirical_overclaim_when_results_missing():
+    client = FakeLLMClient("We report C-index after five-fold cross-validation and ablation studies.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Evaluation metrics are not explicit."],
+        ),
+        "innovations": [],
+        "outline": PaperOutline(
+            central_claim=(
+                "This paper addresses the baseline setting while reserving empirical improvement claims "
+                "for verified result tables."
+            )
+        ),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client).run(state)
+
+    assert state["artifacts"]["section_writer_mode"] == "partial_llm"
+    assert "unsupported empirical language" in state["artifacts"]["section_writer_section_errors"]["experiments"]
+    assert "C-index" not in state["sections"].experiments
+    assert "five-fold" not in state["sections"].experiments
+    assert "structured numeric result table" in state["sections"].experiments
 
 
 def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path):
     example_root = tmp_path / "example"
     baseline_dir = example_root / "baseline"
     code_dir = example_root / "code" / "hyper-protosurv"
+    dataset_dir = code_dir / "dataset_csv"
     baseline_dir.mkdir(parents=True)
-    code_dir.mkdir(parents=True)
+    dataset_dir.mkdir(parents=True)
     (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
-    experiment_path = tmp_path / "experiments.md"
-    experiment_path.write_text("| Method | BLCA |\n|---|---:|\n| ours | 0.67 |\n", encoding="utf-8")
+    (dataset_dir / "BLCA.csv").write_text(
+        ",case_id,slide_id,survival_months,censorship\n"
+        "0,TCGA-AA-0001-01Z-00-DX1.A,TCGA-AA-0001-01Z-00-DX1.A.svs,12.0,0\n",
+        encoding="utf-8",
+    )
     latex_dir = tmp_path / "latex"
     latex_dir.mkdir()
     (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
@@ -1326,8 +1463,6 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
             "sample-hyper-protosurv",
             "--example-root",
             str(example_root),
-            "--experiment-results",
-            str(experiment_path),
             "--output-dir",
             str(output_dir),
             "--zip",
@@ -1343,7 +1478,11 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     assert captured["request"].project_name == output_dir.name
     assert captured["request"].baseline_pdf_path.endswith("baseline.pdf")
     assert captured["request"].code_path.endswith("hyper-protosurv")
+    assert "TCGA Cohort Data Summary" in captured["request"].experiment_results
+    assert "not a model-performance result file" in captured["request"].experiment_results
     assert captured["request"].skip_llm_self_review
+    assert summary["inputs"]["experiment_results_source"] == "tcga_cohort_csv"
+    assert summary["inputs"]["experiment_results_path"].endswith("dataset_csv")
     assert summary["llm_self_review_mode"] == "disabled"
 
 
@@ -1423,6 +1562,21 @@ def test_draft_report_includes_llm_self_review(tmp_path):
     assert "## LLM Self Review" in report
     assert "experiments: The method obtains 0.999 on XYZ." in report
     assert "Evidence needed: Add the missing experiment result." in report
+
+
+def test_draft_report_submission_reminder_asks_for_real_performance_tables(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="tcga-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {},
+        "bibliography": [],
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "Add real trained-model performance tables" in report
+    assert "synthetic or mock" not in report
 
 
 def test_reviewer_flags_method_missing_innovation():

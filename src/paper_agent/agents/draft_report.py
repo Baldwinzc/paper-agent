@@ -178,7 +178,7 @@ class DraftReportAgent:
                 "",
                 "## Submission Reminder",
                 "",
-                "- Replace synthetic or mock experiment results with real measured results.",
+                "- Add real trained-model performance tables before making empirical comparison claims.",
                 "- Verify every bibliography entry against the actual paper.",
                 "- Confirm the venue template and author instructions before submission.",
                 "",

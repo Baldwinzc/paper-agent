@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
+import statistics
 from pathlib import Path
 
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
@@ -60,8 +62,11 @@ def main() -> None:
     sample.add_argument("--zip", default="outputs/hyper-protosurv-sample-overleaf.zip")
     sample.add_argument(
         "--experiment-results",
-        default="examples/hyper_protosurv_mock_experiments.md",
-        help="Experiment table file; relative paths are resolved from the project root.",
+        default="",
+        help=(
+            "Optional experiment table file. If omitted, the sample builds a TCGA cohort-data "
+            "summary from code_path/dataset_csv/*.csv without fabricating performance scores."
+        ),
     )
     sample.add_argument(
         "--online",
@@ -99,6 +104,7 @@ def main() -> None:
             skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
+        state.setdefault("artifacts", {})["experiment_results_source"] = "inline_demo"
         output = Path(args.output)
         output.mkdir(parents=True, exist_ok=True)
         markdown_path = output / "draft.md"
@@ -131,6 +137,8 @@ def main() -> None:
             skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
+        state.setdefault("artifacts", {})["experiment_results_source"] = "file"
+        state["artifacts"]["experiment_results_path"] = str(Path(args.experiment_results))
         markdown_path = None
         if args.output:
             output_path = Path(args.output)
@@ -207,9 +215,18 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     if not code_path.is_dir():
         raise SystemExit(f"Hyper-ProtoSurv code directory not found: {code_path}")
 
-    experiment_path = _resolve_project_relative_path(args.experiment_results)
-    if not experiment_path.is_file():
-        raise SystemExit(f"Experiment results file not found: {experiment_path}")
+    if args.experiment_results:
+        experiment_path = _resolve_project_relative_path(args.experiment_results)
+        if not experiment_path.is_file():
+            raise SystemExit(f"Experiment results file not found: {experiment_path}")
+        experiment_results = experiment_path.read_text(encoding="utf-8")
+        experiment_results_source = "file"
+        experiment_results_path = str(experiment_path)
+    else:
+        dataset_csv_dir = code_path / "dataset_csv"
+        experiment_results = _build_tcga_cohort_summary(dataset_csv_dir)
+        experiment_results_source = "tcga_cohort_csv"
+        experiment_results_path = str(dataset_csv_dir)
 
     output_dir = Path(args.output_dir)
     project_name = args.project_name or output_dir.name
@@ -221,9 +238,9 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         method_notes=(
             "Hyper-ProtoSurv explores adaptive hypergraph prototype learning, "
             "bidirectional hyperedge updates, cross-attention fusion, and reconstruction "
-            "regularization as reflected by the code structure and mock ablation table."
+            "regularization as reflected by the code structure and available TCGA cohort metadata."
         ),
-        experiment_results=experiment_path.read_text(encoding="utf-8"),
+        experiment_results=experiment_results,
         keywords=[
             "whole-slide images",
             "survival prediction",
@@ -233,6 +250,8 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         skip_llm_self_review=not args.allow_llm,
     )
     state = PaperWorkflow().run(request)
+    state.setdefault("artifacts", {})["experiment_results_source"] = experiment_results_source
+    state["artifacts"]["experiment_results_path"] = experiment_results_path
 
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = output_dir / "draft.md"
@@ -259,6 +278,101 @@ def _resolve_project_relative_path(path_value: str) -> Path:
     return _project_root() / path
 
 
+def _build_tcga_cohort_summary(dataset_csv_dir: Path) -> str:
+    csv_paths = sorted(dataset_csv_dir.glob("*.csv"))
+    if not csv_paths:
+        raise SystemExit(f"No TCGA cohort CSV files found at {dataset_csv_dir}")
+
+    rows = []
+    total_patients = 0
+    total_slides = 0
+    for csv_path in csv_paths:
+        stats = _tcga_csv_stats(csv_path)
+        total_patients += stats["patients"]
+        total_slides += stats["slides"]
+        rows.append(stats)
+
+    lines = [
+        "# TCGA Cohort Data Summary for Hyper-ProtoSurv",
+        "",
+        "This file is generated from the local `dataset_csv/*.csv` files in the "
+        "Hyper-ProtoSurv code directory. It contains real TCGA cohort metadata "
+        "available in the provided repository: patient identifiers, WSI slide identifiers, "
+        "`survival_months`, and `censorship` values.",
+        "",
+        "This is not a model-performance result file. It does not contain comparative "
+        "evaluation metrics, trained-model scores, statistical tests, or component-study results. "
+        "The generated paper must therefore describe dataset construction and reserve "
+        "performance tables for real experiment outputs.",
+        "",
+        f"Total unique TCGA patients across cohorts: {total_patients}.",
+        f"Total WSI slide rows across cohorts: {total_slides}.",
+        "",
+        "| Cohort | Unique patients | Slide rows | Censorship=0 | Censorship=1 | Median survival months | Min survival months | Max survival months |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for item in rows:
+        lines.append(
+            "| {cohort} | {patients} | {slides} | {censor_0} | {censor_1} | "
+            "{median_survival:.2f} | {min_survival:.2f} | {max_survival:.2f} |".format(**item)
+        )
+    lines.extend(
+        [
+            "",
+            "## Completion Notes",
+            "",
+            "- Add real trained-model performance tables before making comparative performance claims.",
+            "- Add reference-method comparison rows only after running the same evaluation protocol.",
+            "- Add component-study rows, implementation settings, cross-validation protocol details, "
+            "and statistical tests before submission.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _tcga_csv_stats(csv_path: Path) -> dict[str, object]:
+    patients = set()
+    slides = 0
+    censor_0 = 0
+    censor_1 = 0
+    survival_months: list[float] = []
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            slides += 1
+            case_id = row.get("case_id", "")
+            patients.add(_tcga_patient_id(case_id))
+            censorship = str(row.get("censorship", "")).strip()
+            if censorship == "0":
+                censor_0 += 1
+            elif censorship == "1":
+                censor_1 += 1
+            try:
+                survival_months.append(float(str(row.get("survival_months", "")).strip()))
+            except ValueError:
+                continue
+
+    if not survival_months:
+        survival_months = [0.0]
+    return {
+        "cohort": csv_path.stem.upper(),
+        "patients": len(patients),
+        "slides": slides,
+        "censor_0": censor_0,
+        "censor_1": censor_1,
+        "median_survival": statistics.median(survival_months),
+        "min_survival": min(survival_months),
+        "max_survival": max(survival_months),
+    }
+
+
+def _tcga_patient_id(case_id: str) -> str:
+    parts = str(case_id).split("-")
+    if len(parts) >= 3 and parts[0].upper() == "TCGA":
+        return "-".join(parts[:3]).upper()
+    return str(case_id).split(".", 1)[0]
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -278,6 +392,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     llm_review = artifacts.get("llm_self_review", {})
     reference_verification = artifacts.get("reference_verification", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
+    experiment_results_present = bool(experiment_results.strip())
+    experiment_results_source = artifacts.get(
+        "experiment_results_source", "provided" if experiment_results_present else "none"
+    )
     return {
         "project_name": getattr(request, "project_name", ""),
         "target_venue": getattr(request, "target_venue", ""),
@@ -285,7 +403,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "code_path": getattr(request, "code_path", "") or "",
             "baseline_pdf_path": getattr(request, "baseline_pdf_path", "") or "",
             "target_venue": getattr(request, "target_venue", ""),
-            "experiment_results_provided": bool(experiment_results.strip()),
+            "experiment_results_provided": experiment_results_present,
+            "experiment_results_source": experiment_results_source,
+            "experiment_results_path": artifacts.get("experiment_results_path", ""),
             "keywords": list(getattr(request, "keywords", []) or []),
             "template_zip_path": getattr(request, "template_zip_path", "") or "",
             "template_dir_path": getattr(request, "template_dir_path", "") or "",

@@ -11,12 +11,20 @@ class PaperPlannerAgent:
     def run(self, state: PaperState) -> PaperState:
         request: PaperRequest = state["request"]
         innovations = state.get("innovations", [])
+        experiments = state.get("experiments")
         topic = request.project_name.replace("-", " ").title()
         contribution_names = [item.name for item in innovations]
-        central_claim = (
-            f"This paper improves the baseline setting through "
-            f"{'; '.join(contribution_names) or 'a targeted method improvement'}."
-        )
+        contribution_text = "; ".join(contribution_names) or "a targeted method study"
+        if experiments and experiments.missing_details:
+            central_claim = (
+                f"This paper addresses the baseline setting through {contribution_text}, "
+                "while reserving empirical improvement claims for verified result tables."
+            )
+        else:
+            central_claim = (
+                f"This paper improves the baseline setting through "
+                f"{'; '.join(contribution_names) or 'a targeted method improvement'}."
+            )
         state["outline"] = PaperOutline(
             title_candidates=[
                 f"{topic}: A Venue-Ready Method Improvement Study",
@@ -49,4 +57,3 @@ class PaperPlannerAgent:
             },
         )
         return state
-

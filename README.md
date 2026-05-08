@@ -138,17 +138,22 @@ Draft from local materials:
 
 ```powershell
 python -m paper_agent.cli draft `
-  --project-name hyper-protosurv-mock `
+  --project-name hyper-protosurv-tcga `
   --target-venue TPAMI `
   --baseline D:\code\agent\example\baseline `
   --code-path D:\code\agent\example\code\hyper-protosurv `
-  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
   --keyword "whole-slide images" `
   --keyword "survival prediction" `
-  --output outputs\hyper-protosurv-mock\draft.md `
-  --zip outputs\hyper-protosurv-mock-overleaf.zip `
-  --summary outputs\hyper-protosurv-mock\RUN_SUMMARY.json
+  --output outputs\hyper-protosurv-tcga\draft.md `
+  --zip outputs\hyper-protosurv-tcga-overleaf.zip `
+  --summary outputs\hyper-protosurv-tcga\RUN_SUMMARY.json
 ```
+
+For the lower-level `draft` command, `--experiment-results` should point to a
+real result or cohort summary file supplied by the user. If you only want to run
+the built-in local TCGA showcase, use `sample-hyper-protosurv`; it reads
+`dataset_csv/*.csv` directly.
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
 the final second-pass reviewer to call the configured model. The CLI maps this
@@ -161,13 +166,13 @@ Use a manually downloaded official template when automatic fetching is blocked:
 
 ```powershell
 python -m paper_agent.cli draft `
-  --project-name hyper-protosurv-mock `
+  --project-name hyper-protosurv-tcga `
   --target-venue TPAMI `
   --baseline D:\code\agent\example\baseline `
   --code-path D:\code\agent\example\code\hyper-protosurv `
-  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
   --template-zip D:\path\to\official-template.zip `
-  --zip outputs\hyper-protosurv-mock-overleaf.zip
+  --zip outputs\hyper-protosurv-tcga-overleaf.zip
 ```
 
 `--template-dir D:\path\to\official-template-folder` is also supported. If the
@@ -182,16 +187,20 @@ python -m paper_agent.cli sample-hyper-protosurv
 
 This reads `D:\code\agent\example`, writes `outputs\hyper-protosurv-sample\draft.md`,
 creates `outputs\hyper-protosurv-sample\RUN_SUMMARY.json`, and packages an
-Overleaf zip. Add `--allow-llm` to spend configured model calls, and `--online`
-to allow remote template/reference lookups.
+Overleaf zip. By default, this sample builds its experiment input from the real
+TCGA cohort CSV files under `D:\code\agent\example\code\hyper-protosurv\dataset_csv`
+and does not fabricate performance scores. Add `--experiment-results <file>` only
+when you have real trained-model result tables to use instead. Add `--allow-llm`
+to spend configured model calls, and `--online` to allow remote template/reference
+lookups.
 
 For a free Overleaf account, upload the generated zip through
 `New Project > Upload Project`. The zip contains `main.tex`, `references.bib`, and
 upload notes; add real BibTeX entries before submission.
 
-The bundled `examples/hyper_protosurv_mock_experiments.md` file contains synthetic
-mock numbers for pipeline testing only. Replace it with real experiment tables before
-using generated text in a paper.
+The bundled `examples/hyper_protosurv_mock_experiments.md` file contains legacy
+synthetic mock numbers for parser testing only. Do not pass it to the sample command
+unless you are deliberately testing mock-result behavior.
 
 ## Design Principles
 

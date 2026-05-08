@@ -13,6 +13,18 @@ from paper_agent.state import DraftSections, PaperState
 class SectionWriterAgent:
     """Writes first-pass paper sections from the paper plan and innovation points."""
 
+    MISSING_RESULT_FORBIDDEN_PATTERNS = [
+        ("C-index", r"\bC[-\s]?index\b|\bconcordance index\b"),
+        ("IBS", r"\bIBS\b|\bintegrated brier\b"),
+        ("AUC", r"\btime[-\s]?dependent AUC\b|\bAUC\b"),
+        ("ablation", r"\bablation(?:s| studies)?\b"),
+        ("statistical testing", r"\bWilcoxon\b|\bp[-\s]?value\b|\bstatistical significance\b"),
+        ("cross-validation protocol", r"\bfive[-\s]?fold\b|\bcross[-\s]?validation\b"),
+        ("percentage results", r"\b\d+(?:\.\d+)?\s*%"),
+        ("empirical superiority", r"\boutperform(?:s|ed)?\b|\bimproves?\b|\bgains?\b|state-of-the-art|competitive"),
+        ("completed evaluation", r"\bevaluated on\b|\bvalidated\b|\bbenchmarked\b"),
+    ]
+
     SECTION_SPECS = {
         "abstract": {
             "max_tokens": 450,
@@ -187,24 +199,33 @@ class SectionWriterAgent:
                 "formatting still require manual verification before submission."
             )
 
-        return (
-            "### Experimental Setup\n"
-            f"The evaluation is organized around {datasets} and reports {metrics}. The comparison "
-            "centers on the provided baseline family and the proposed method, with ablations and "
-            "qualitative analysis added when the supplied evidence supports them.\n\n"
-            f"{main_results}\n\n"
-            f"{completion}"
-        )
+        if missing:
+            setup = (
+                "### Experimental Setup\n"
+                f"The empirical section is organized around {datasets}. The supplied materials currently "
+                "support dataset and cohort description only; metric definitions, comparison rows, training "
+                "settings, and additional analyses should be added after real runs are available."
+            )
+        else:
+            setup = (
+                "### Experimental Setup\n"
+                f"The evaluation is organized around {datasets} and reports {metrics}. The comparison "
+                "centers on the provided baseline family and the proposed method, with additional analyses "
+                "added when the supplied evidence supports them."
+            )
+
+        return f"{setup}\n\n{main_results}\n\n{completion}"
 
     def _conclusion_text(self, innovations, experiments, result_summary: str) -> str:
         innovation_names = self._innovation_name_list(innovations)
+        has_missing_empirical_details = bool(experiments and experiments.missing_details)
         if result_summary:
             evidence_sentence = (
                 f"The supplied experiment tables provide preliminary evidence summarized as: {result_summary}"
             )
         elif experiments and experiments.missing_details:
             evidence_sentence = (
-                "The empirical validation remains incomplete because several protocol or result details "
+                "The empirical section remains incomplete because several protocol or result details "
                 "are still missing from the supplied materials."
             )
         else:
@@ -212,10 +233,15 @@ class SectionWriterAgent:
                 "The empirical discussion remains intentionally cautious until the final verified result "
                 "tables are inserted."
             )
+        contribution_frame = (
+            "as the main contribution set for studying the baseline setting"
+            if has_missing_empirical_details
+            else "as the main contribution set for improving the baseline setting"
+        )
 
         return (
-            f"This paper frames {innovation_names} as the main contribution set for improving the "
-            f"baseline setting. The study separates the proposed technical ideas from the code-level "
+            f"This paper frames {innovation_names} {contribution_frame}. "
+            f"The study separates the proposed technical ideas from the code-level "
             f"evidence used to support them, which keeps the method narrative centered on the analyzed "
             f"innovations. {evidence_sentence} Before submission, the author still needs to verify "
             f"bibliography metadata, final experiment details, and the strength of each novelty claim."
@@ -340,25 +366,18 @@ class SectionWriterAgent:
         venue = state.get("venue_template")
         bibliography = state.get("bibliography", [])
         spec = self.SECTION_SPECS[section_name]
+        missing_experiment_details = experiments.missing_details if experiments else []
 
         prompt = {
             "task": f"Draft the {section_name} section for a CS research paper.",
-            "hard_rules": [
-                "Write the Method section from innovation points, not raw code diffs.",
-                "Use code and baseline only as evidence.",
-                "Do not invent experiment numbers.",
-                "If details are missing, write a precise placeholder instead of fabricating.",
-                "For Related Work, write actual comparative paragraphs from "
-                "related_work_discovery rather than instructions.",
-                "Return only the requested section text.",
-                "Do not wrap the answer in JSON or Markdown code fences.",
-            ],
+            "hard_rules": self._llm_hard_rules(missing_experiment_details),
             "project_name": request.project_name,
             "target_venue": request.target_venue,
             "venue_template_family": venue.family if venue else "generic",
             "baseline": baseline.model_dump() if baseline else {},
             "code_summary": code.model_dump() if code else {},
             "experiment_summary": experiments.model_dump() if experiments else {},
+            "missing_experiment_details": missing_experiment_details,
             "innovations": [item.model_dump() for item in innovations],
             "bibliography": [entry.model_dump() for entry in bibliography],
             "related_work_discovery": state.get("artifacts", {}).get("related_work_candidates", []),
@@ -383,7 +402,55 @@ class SectionWriterAgent:
             temperature=0.25,
             max_tokens=spec["max_tokens"],
         )
-        return self._clean_section_text(section_name, result.content)
+        section_text = self._clean_section_text(section_name, result.content)
+        self._raise_if_missing_results_overclaimed(
+            section_text, section_name, missing_experiment_details
+        )
+        return section_text
+
+    def _raise_if_missing_results_overclaimed(
+        self,
+        section_text: str,
+        section_name: str,
+        missing_experiment_details: list[str],
+    ) -> None:
+        if not missing_experiment_details:
+            return
+        matched = [
+            label
+            for label, pattern in self.MISSING_RESULT_FORBIDDEN_PATTERNS
+            if re.search(pattern, section_text, flags=re.I)
+        ]
+        if not matched:
+            return
+        raise ValueError(
+            f"LLM {section_name} section included unsupported empirical language while "
+            f"experiment details are missing: {', '.join(matched)}"
+        )
+
+    def _llm_hard_rules(self, missing_experiment_details: list[str]) -> list[str]:
+        rules = [
+            "Write the Method section from innovation points, not raw code diffs.",
+            "Use code and baseline only as evidence.",
+            "Do not invent experiment numbers.",
+            "If details are missing, write a precise placeholder instead of fabricating.",
+            "For Related Work, write actual comparative paragraphs from "
+            "related_work_discovery rather than instructions.",
+            "Return only the requested section text.",
+            "Do not wrap the answer in JSON or Markdown code fences.",
+        ]
+        if missing_experiment_details:
+            rules.extend(
+                [
+                    "The experiment evidence is incomplete. Do not claim that the method is evaluated, "
+                    "validated, compared, competitive, state-of-the-art, or effective.",
+                    "Do not mention C-index, IBS, ablation, sensitivity, p-values, results, gains, "
+                    "or performance unless those exact values are present in the supplied experiment data.",
+                    "When writing Abstract, Introduction, Experiments, or Conclusion, describe only the "
+                    "available dataset/cohort summary and mark performance evaluation as pending.",
+                ]
+            )
+        return rules
 
     def _citation_hint(self, citation_keys: list[str]) -> str:
         if not citation_keys:
