@@ -59,6 +59,16 @@ class FakeSequenceLLMClient:
         return SimpleNamespace(content=self.contents.pop(0), model="fake", usage={}, raw={})
 
 
+def _write_pdf(path: Path, text: str) -> None:
+    import fitz  # type: ignore
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    doc.save(path)
+    doc.close()
+
+
 def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
     reader = BaselineReaderAgent()
     text_title = "Leveraging Tumor Heterogeneity: Heterogeneous"
@@ -139,6 +149,64 @@ def test_workflow_generates_latex_and_sections():
     report = state["latex_project_dir"] / "DRAFT_REPORT.md"
     assert report.exists()
     assert "Draft Report" in report.read_text(encoding="utf-8")
+
+
+def test_acceptance_flow_inputs_code_baseline_venue_outputs_paper(tmp_path):
+    baseline_pdf = tmp_path / "Baseline-Survival-Prediction-with-Prototype-Graphs.pdf"
+    _write_pdf(
+        baseline_pdf,
+        (
+            "Prototype Graphs for Survival Prediction\n"
+            "Abstract Survival prediction is a significant challenge in computational pathology.\n"
+            "The method uses graph prototypes for whole-slide image representation learning.\n"
+            "Experiments evaluate C-index on TCGA cohorts.\n"
+        ),
+    )
+    code_dir = tmp_path / "code"
+    code_dir.mkdir()
+    (code_dir / "train.py").write_text(
+        "class AdaptivePrototypeSurvivalModel:\n"
+        "    def forward(self, graph):\n"
+        "        return self.hypergraph_attention(graph)\n",
+        encoding="utf-8",
+    )
+    request = PaperRequest(
+        project_name="acceptance-flow-demo",
+        target_venue="TPAMI",
+        baseline_pdf_path=str(baseline_pdf),
+        code_path=str(code_dir),
+        method_notes="Adaptive prototype calibration for survival prediction",
+        experiment_results=(
+            "| Method | TCGA C-index |\n"
+            "|---|---:|\n"
+            "| baseline | 0.62 |\n"
+            "| ours | 0.66 |\n"
+        ),
+        keywords=["whole-slide images", "survival prediction"],
+        skip_llm_self_review=True,
+    )
+
+    state = PaperWorkflow().run(request)
+    markdown_path = tmp_path / "draft.md"
+    markdown_path.write_text(state["final_markdown"], encoding="utf-8")
+    summary_path = cli_module._write_run_summary(state, tmp_path / "RUN_SUMMARY.json", markdown_path)
+
+    assert state["baseline"].title == "Prototype Graphs for Survival Prediction"
+    assert "train.py" in state["code"].likely_entrypoints
+    assert state["venue_template"].family == "ieee_journal"
+    assert state["sections"].abstract
+    assert state["sections"].method
+    assert state["sections"].experiments
+    assert state["latex_output_path"].exists()
+    assert (state["latex_project_dir"] / "DRAFT_REPORT.md").exists()
+    assert (state["latex_project_dir"] / "references.bib").exists()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["inputs"]["code_path"] == str(code_dir)
+    assert summary["inputs"]["baseline_pdf_path"] == str(baseline_pdf)
+    assert summary["inputs"]["target_venue"] == "TPAMI"
+    assert summary["inputs"]["experiment_results_provided"]
+    assert summary["outputs"]["markdown"] == str(markdown_path)
 
 
 def test_tpami_uses_ieee_journal_template():

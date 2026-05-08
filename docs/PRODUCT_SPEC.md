@@ -13,6 +13,10 @@ venue-ready paper scaffold.
 - Experiment results in Markdown, CSV, or pasted text.
 - Optional human notes about the method and contribution.
 
+The canonical acceptance flow is: code + baseline paper + target venue +
+experiment results -> paper draft. Smaller checks can validate individual agents,
+but release-quality testing must cover this full path.
+
 ## Outputs
 
 - Title candidates.

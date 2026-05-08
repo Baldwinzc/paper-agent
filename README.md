@@ -120,6 +120,20 @@ The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.
 
+## Acceptance Flow
+
+Every meaningful paper-agent test should exercise the full paper-writing path:
+
+1. Input our code path.
+2. Input one baseline paper PDF.
+3. Input the target journal or conference.
+4. Input experiment results when the draft needs result claims.
+5. Output a paper draft, LaTeX project, quality report, run summary, and optional
+   Overleaf zip.
+
+Module-level tests are still useful for debugging, but they do not count as a
+paper-generation acceptance test unless this input-output contract is covered.
+
 Draft from local materials:
 
 ```powershell

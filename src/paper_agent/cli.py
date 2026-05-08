@@ -277,9 +277,19 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     request = state.get("request")
     llm_review = artifacts.get("llm_self_review", {})
     reference_verification = artifacts.get("reference_verification", {})
+    experiment_results = getattr(request, "experiment_results", "") or ""
     return {
         "project_name": getattr(request, "project_name", ""),
         "target_venue": getattr(request, "target_venue", ""),
+        "inputs": {
+            "code_path": getattr(request, "code_path", "") or "",
+            "baseline_pdf_path": getattr(request, "baseline_pdf_path", "") or "",
+            "target_venue": getattr(request, "target_venue", ""),
+            "experiment_results_provided": bool(experiment_results.strip()),
+            "keywords": list(getattr(request, "keywords", []) or []),
+            "template_zip_path": getattr(request, "template_zip_path", "") or "",
+            "template_dir_path": getattr(request, "template_dir_path", "") or "",
+        },
         "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
         "llm_self_review_mode": llm_review.get("mode", "not run"),
         "llm_unsupported_claims": len(llm_review.get("unsupported_claims", [])),
