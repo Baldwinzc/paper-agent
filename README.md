@@ -39,6 +39,8 @@ The current scaffold supports:
 - Related Work citation coverage checks for research-thread subsections.
 - Factual consistency checks for unsupported datasets, metrics, experiment numbers,
   and Method subsections not tied to accepted innovation points.
+- Optional LLM self-review that reads the evidence bundle and flags unsupported
+  factual claims without mutating the draft.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 
@@ -77,6 +79,8 @@ client compatible with the current section-writing pipeline.
 Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not call
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
+Set `PAPER_AGENT_DISABLE_LLM_SELF_REVIEW=1` to keep LLM section drafting enabled
+while skipping the final LLM reviewer pass.
 Set `PAPER_AGENT_DISABLE_REFERENCE_RESOLVE=1` to skip scholarly metadata lookup.
 Set `PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY=1` to skip related-work expansion
 from OpenAlex. Related-work discovery is also skipped when reference resolution is

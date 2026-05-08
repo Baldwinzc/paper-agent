@@ -42,6 +42,7 @@ InputCollector
   -> EvidenceGuard
   -> LatexComposer
   -> Reviewer
+  -> LLMSelfReview
   -> DraftReport
 ```
 
@@ -65,6 +66,8 @@ Related Work subsections are checked for real citation coverage so unsupported
 research-thread paragraphs are visible in the draft report.
 Generated sections are also checked against supplied experiments and innovation
 points to flag unsupported datasets, metrics, numeric results, or Method subsections.
+When an LLM client is configured, a final LLM self-review pass checks the draft
+against the same evidence bundle and records unsupported claims without editing text.
 
 ## Phases
 

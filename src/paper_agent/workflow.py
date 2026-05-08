@@ -10,6 +10,7 @@ from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
+from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.paper_planner import PaperPlannerAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
@@ -43,6 +44,7 @@ class PaperWorkflow:
             EvidenceGuardAgent(),
             LatexComposerAgent(),
             ReviewerAgent(),
+            LLMSelfReviewAgent(llm_client=llm_client),
             DraftReportAgent(),
         ]
 

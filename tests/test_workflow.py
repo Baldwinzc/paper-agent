@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
@@ -11,6 +12,7 @@ from paper_agent.agents.bibliography import BibliographyAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
+from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
@@ -23,6 +25,20 @@ os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_LLM", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", "1")
+
+
+class FakeLLMClient:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.calls = []
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def chat(self, messages, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return SimpleNamespace(content=self.content, model="fake", usage={}, raw={})
 
 
 def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
@@ -1017,6 +1033,84 @@ def test_draft_report_includes_factual_consistency(tmp_path):
     assert "## Factual Consistency" in report
     assert "`unsupported_datasets`: needs_review; values: XYZ" in report
     assert "`unsupported_metrics`: ok" in report
+
+
+def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    client = FakeLLMClient(
+        """
+        {
+          "unsupported_claims": [
+            {
+              "section": "experiments",
+              "claim": "The method obtains 0.999 on XYZ.",
+              "reason": "XYZ and 0.999 are absent from the supplied experiment table.",
+              "evidence_needed": "Add an experiment row for XYZ with this value.",
+              "severity": "major"
+            }
+          ],
+          "section_quality_notes": ["Experiments contain a likely hallucinated number."]
+        }
+        """
+    )
+    state = {
+        "request": PaperRequest(project_name="llm-review-demo", target_venue="TPAMI"),
+        "sections": DraftSections(experiments="The method obtains 0.999 on XYZ."),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+
+    assert reviewed["artifacts"]["llm_self_review"]["mode"] == "llm"
+    assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
+    assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
+    assert client.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
+
+
+def test_llm_self_review_records_bad_json_error(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    state = {
+        "request": PaperRequest(project_name="llm-review-error-demo", target_venue="TPAMI"),
+        "sections": DraftSections(abstract="A draft."),
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=FakeLLMClient("not json")).run(state)
+
+    assert reviewed["artifacts"]["llm_self_review"]["mode"] == "error"
+    assert "review_findings" not in reviewed
+
+
+def test_draft_report_includes_llm_self_review(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="llm-review-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "llm_self_review": {
+                "mode": "llm",
+                "unsupported_claims": [
+                    {
+                        "section": "experiments",
+                        "claim": "The method obtains 0.999 on XYZ.",
+                        "reason": "No such dataset or value was supplied.",
+                        "evidence_needed": "Add the missing experiment result.",
+                        "severity": "major",
+                    }
+                ],
+                "section_quality_notes": ["Check experiment claims."],
+            }
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## LLM Self Review" in report
+    assert "experiments: The method obtains 0.999 on XYZ." in report
+    assert "Evidence needed: Add the missing experiment result." in report
 
 
 def test_reviewer_flags_method_missing_innovation():

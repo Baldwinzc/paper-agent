@@ -149,6 +149,30 @@ class DraftReportAgent:
             for section, error in section_errors.items():
                 lines.append(f"- {section}: {error}")
 
+        llm_review = artifacts.get("llm_self_review", {})
+        if llm_review:
+            lines.extend(["", "## LLM Self Review", ""])
+            lines.append(f"- Mode: {llm_review.get('mode', 'unknown')}")
+            if llm_review.get("error"):
+                lines.append(f"- Error: {llm_review.get('error')}")
+            claims = llm_review.get("unsupported_claims", [])
+            if claims:
+                for claim in claims:
+                    lines.append(
+                        "- "
+                        f"[{claim.get('severity', 'major')}] "
+                        f"{claim.get('section', 'unknown')}: {claim.get('claim', '')}"
+                    )
+                    if claim.get("reason"):
+                        lines.append(f"  Reason: {claim.get('reason')}")
+                    if claim.get("evidence_needed"):
+                        lines.append(f"  Evidence needed: {claim.get('evidence_needed')}")
+            elif llm_review.get("mode") == "llm":
+                lines.append("- No unsupported claims returned by LLM self-review.")
+            notes = llm_review.get("section_quality_notes", [])
+            for note in notes:
+                lines.append(f"- Note: {note}")
+
         lines.extend(
             [
                 "",
