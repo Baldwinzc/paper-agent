@@ -32,6 +32,8 @@ The current scaffold supports:
 - Seed BibTeX generation with explicit reviewer warnings for unresolved references.
 - Optional OpenAlex/Semantic Scholar metadata resolution with resolved/unresolved
   bibliography verification counts.
+- Technical-query extraction for innovation-derived bibliography seeds, avoiding
+  raw `Innovation 1` citation keys.
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.

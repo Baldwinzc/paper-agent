@@ -7,6 +7,7 @@ from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, PaperRequest, VenueTemplate
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
+from paper_agent.agents.bibliography import BibliographyAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
@@ -337,6 +338,44 @@ def test_bibliography_seeds_are_written_to_markdown_and_bibtex():
         "Bibliography contains" in finding.issue and "unresolved seed" in finding.issue
         for finding in state["review_findings"]
     )
+
+
+def test_bibliography_uses_technical_queries_for_innovation_threads():
+    state = {
+        "request": PaperRequest(
+            project_name="citation-demo",
+            target_venue="TPAMI",
+            keywords=["whole-slide images", "survival prediction"],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: OT-driven adaptive hyperedges with bidirectional hyperedge convolution",
+                technical_idea="Build OT-driven adaptive hyperedges for survival prediction.",
+                motivation="The baseline uses static prototypes.",
+            ),
+            InnovationPoint(
+                name="Innovation 2: Wasserstein-barycenter prototype geometry",
+                technical_idea="Use Wasserstein-barycenter prototype geometry.",
+                motivation="The baseline uses static prototypes.",
+            ),
+            InnovationPoint(
+                name="Innovation 3: Minimal survival-reconstruction training objective",
+                technical_idea="Use a survival-reconstruction objective for representation learning.",
+                motivation="The baseline objective is incomplete.",
+            ),
+        ],
+        "artifacts": {},
+    }
+
+    state = BibliographyAgent().run(state)
+
+    queries = {entry.query for entry in state["bibliography"]}
+    keys = {entry.key for entry in state["bibliography"]}
+    assert any("optimal transport hypergraph learning" in query for query in queries)
+    assert any("prototype learning" in query for query in queries)
+    assert any("survival prediction representation learning" in query for query in queries)
+    assert not any(key.startswith("innovation") for key in keys)
+    assert not any("Innovation 1" in entry.title for entry in state["bibliography"])
 
 
 def test_reference_resolver_enriches_seed_entry(monkeypatch):

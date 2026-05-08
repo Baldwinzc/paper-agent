@@ -12,6 +12,34 @@ class BibliographyAgent:
     """Builds seed BibTeX entries and citation keys from local evidence."""
 
     BROAD_TERMS = {"representation", "attention", "optimization", "adaptation", "retrieval"}
+    TECH_STOPWORDS = {
+        "addresses",
+        "adaptive",
+        "analysis",
+        "baseline",
+        "confirmed",
+        "contribution",
+        "driven",
+        "feature",
+        "framework",
+        "improvement",
+        "innovation",
+        "method",
+        "minimal",
+        "model",
+        "notes",
+        "online",
+        "offline",
+        "proposed",
+        "regularization",
+        "replacing",
+        "setting",
+        "static",
+        "targeted",
+        "training",
+        "uses",
+        "with",
+    }
 
     def run(self, state: PaperState) -> PaperState:
         entries: OrderedDict[str, CitationEntry] = OrderedDict()
@@ -72,7 +100,7 @@ class BibliographyAgent:
         if baseline:
             terms.extend(baseline.related_terms)
         for innovation in innovations:
-            terms.append(innovation.name)
+            terms.extend(self._innovation_research_terms(innovation))
         filtered = []
         for term in terms:
             normalized = self._normalize_term(term)
@@ -82,6 +110,61 @@ class BibliographyAgent:
                 continue
             filtered.append(normalized)
         return list(dict.fromkeys(filtered))[:8]
+
+    def _innovation_research_terms(self, innovation) -> list[str]:
+        text = self._strip_innovation_prefix(
+            f"{innovation.name} {innovation.technical_idea}"
+        )
+        known_phrase = self._known_technical_phrase(text)
+        if known_phrase:
+            return [known_phrase]
+
+        keyword_phrase = self._keyword_phrase(text)
+        return [keyword_phrase] if keyword_phrase else []
+
+    def _strip_innovation_prefix(self, text: str) -> str:
+        return re.sub(r"\binnovation\s+\d+\s*:?", " ", text, flags=re.I)
+
+    def _known_technical_phrase(self, text: str) -> str:
+        lowered = text.lower()
+        has_hypergraph = bool(re.search(r"\bhyper(?:edge|edges|graph|graphs)\b", lowered))
+        has_ot = bool(re.search(r"\b(?:ot|optimal transport)\b", lowered))
+        has_prototype = "prototype" in lowered
+        has_reconstruction = "reconstruction" in lowered
+        has_survival = "survival" in lowered
+
+        if has_survival and has_reconstruction:
+            return "survival prediction representation learning"
+        if has_prototype and not has_hypergraph:
+            return "prototype learning"
+
+        terms: list[str] = []
+        if has_ot:
+            terms.append("optimal transport")
+        if "wasserstein" in lowered and "barycenter" in lowered:
+            terms.append("wasserstein barycenter")
+        if has_hypergraph:
+            terms.append("hypergraph learning")
+        if has_prototype:
+            terms.append("prototype learning")
+        if has_survival:
+            terms.append("survival prediction")
+        if "cross-cluster" in lowered or "cross cluster" in lowered:
+            terms.append("prototype clustering")
+
+        deduped = list(dict.fromkeys(terms))
+        return " ".join(deduped[:3])
+
+    def _keyword_phrase(self, text: str) -> str:
+        tokens = [
+            token.lower()
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", text)
+            if token.lower() not in self.TECH_STOPWORDS
+        ]
+        deduped = list(dict.fromkeys(tokens))
+        if len(deduped) < 2:
+            return ""
+        return " ".join(deduped[:4])
 
     def _contextual_query(self, term: str, state: PaperState) -> str:
         request = state["request"]

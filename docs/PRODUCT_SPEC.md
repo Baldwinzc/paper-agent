@@ -59,6 +59,8 @@ baseline, influential field papers, and recent field papers before drafting.
 Bibliography metadata is treated as evidence with status. Automatically resolved
 entries are separated from unresolved seed entries, and the draft report keeps both
 counts visible so the author can finish reference cleanup before submission.
+When bibliography seeds come from innovation points, the system extracts concise
+technical search phrases instead of using raw innovation labels as citation queries.
 
 ## Phases
 
