@@ -1258,6 +1258,7 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
     assert (output_dir / "draft.md").read_text(encoding="utf-8") == "# Draft"
     assert zip_path.exists()
+    assert captured["request"].project_name == output_dir.name
     assert captured["request"].baseline_pdf_path.endswith("baseline.pdf")
     assert captured["request"].code_path.endswith("hyper-protosurv")
     assert captured["request"].skip_llm_self_review

@@ -50,6 +50,11 @@ def main() -> None:
         "sample-hyper-protosurv",
         help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
     )
+    sample.add_argument(
+        "--project-name",
+        default="",
+        help="Project name for generated LaTeX artifacts. Defaults to the output directory name.",
+    )
     sample.add_argument("--example-root", default=r"D:\code\agent\example")
     sample.add_argument("--output-dir", default="outputs/hyper-protosurv-sample")
     sample.add_argument("--zip", default="outputs/hyper-protosurv-sample-overleaf.zip")
@@ -206,8 +211,10 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     if not experiment_path.is_file():
         raise SystemExit(f"Experiment results file not found: {experiment_path}")
 
+    output_dir = Path(args.output_dir)
+    project_name = args.project_name or output_dir.name
     request = PaperRequest(
-        project_name="hyper-protosurv-sample",
+        project_name=project_name,
         target_venue="TPAMI",
         baseline_pdf_path=str(baseline_pdf),
         code_path=str(code_path),
@@ -227,7 +234,6 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     )
     state = PaperWorkflow().run(request)
 
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = output_dir / "draft.md"
     markdown_path.write_text(state["final_markdown"], encoding="utf-8")
