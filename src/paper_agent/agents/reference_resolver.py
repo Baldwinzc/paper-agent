@@ -37,8 +37,11 @@ class ReferenceResolverAgent:
         resolved = self._deduplicate_by_doi(resolved, state)
         state["bibliography"] = resolved
         artifacts = state.setdefault("artifacts", {})
+        verification = self._verification_summary(resolved)
         artifacts["reference_resolver_mode"] = "openalex"
-        artifacts["reference_resolver_resolved"] = sum(1 for entry in resolved if entry.year or entry.doi)
+        artifacts["reference_resolver_resolved"] = verification["resolved_count"]
+        artifacts["reference_resolver_unresolved"] = verification["unresolved_count"]
+        artifacts["reference_verification"] = verification
         artifacts["citation_keys"] = [entry.key for entry in resolved]
         if errors:
             artifacts["reference_resolver_errors"] = errors
@@ -62,8 +65,8 @@ class ReferenceResolverAgent:
                 f"{entry.note} OpenAlex returned no candidates for query: {query}.",
             )
 
-        work = results[0]
-        if not self._confident_match(query, str(work.get("title") or "")):
+        work = self._best_openalex_work(query, results)
+        if not work:
             return self._resolve_entry_with_semantic_scholar(
                 entry,
                 query,
@@ -77,7 +80,7 @@ class ReferenceResolverAgent:
     def _query_openalex(self, query: str) -> dict[str, Any]:
         params: dict[str, str | int] = {
             "search": query,
-            "per-page": 1,
+            "per-page": 5,
             "select": "doi,title,publication_year,authorships,primary_location,ids",
         }
         mailto = os.getenv("OPENALEX_MAILTO", "").strip()
@@ -86,6 +89,22 @@ class ReferenceResolverAgent:
         response = httpx.get(self.OPENALEX_WORKS_URL, params=params, timeout=15)
         response.raise_for_status()
         return response.json()
+
+    def _best_openalex_work(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        candidates = [
+            (self._match_score(query, str(work.get("title") or "")), index, work)
+            for index, work in enumerate(results)
+            if isinstance(work, dict)
+        ]
+        confident = [candidate for candidate in candidates if candidate[0] >= 2.0]
+        if not confident:
+            return None
+        confident.sort(key=lambda item: (-item[0], item[1]))
+        return confident[0][2]
 
     def _resolve_entry_with_semantic_scholar(
         self,
@@ -245,11 +264,62 @@ class ReferenceResolverAgent:
             state.setdefault("artifacts", {})["citation_key_aliases"] = aliases
         return deduped
 
+    def _verification_summary(self, entries: list[CitationEntry]) -> dict[str, object]:
+        resolved_keys = []
+        unresolved_seed_keys = []
+        needs_manual_check_keys = []
+        for entry in entries:
+            if self._is_resolved(entry):
+                resolved_keys.append(entry.key)
+                needs_manual_check_keys.append(entry.key)
+            elif self._is_seed_entry(entry):
+                unresolved_seed_keys.append(entry.key)
+            else:
+                needs_manual_check_keys.append(entry.key)
+        return {
+            "resolved_count": len(resolved_keys),
+            "unresolved_count": len(unresolved_seed_keys),
+            "resolved_keys": resolved_keys,
+            "unresolved_seed_keys": unresolved_seed_keys,
+            "needs_manual_check_keys": needs_manual_check_keys,
+        }
+
+    def _is_resolved(self, entry: CitationEntry) -> bool:
+        has_metadata = bool(entry.year and entry.year != "TODO")
+        has_real_authors = bool(
+            entry.authors
+            and not any(
+                self._is_placeholder_author(author)
+                for author in entry.authors
+            )
+        )
+        return bool(entry.doi or (has_metadata and has_real_authors))
+
+    def _is_seed_entry(self, entry: CitationEntry) -> bool:
+        note = entry.note.lower()
+        return (
+            "seed" in note
+            or "placeholder" in note
+            or "replace with real" in note
+            or any(self._is_placeholder_author(author) for author in entry.authors)
+        )
+
+    def _is_placeholder_author(self, author: str) -> bool:
+        lowered = author.lower()
+        return lowered in {
+            "baseline authors",
+            "related work authors",
+            "to be completed",
+        }
+
     def _confident_match(self, query: str, title: str) -> bool:
+        return self._match_score(query, title) >= 2.0
+
+    def _match_score(self, query: str, title: str) -> float:
         query_tokens = self._tokens(query)
         title_tokens = self._tokens(title)
         if not query_tokens or not title_tokens:
-            return False
+            return 0.0
         overlap = query_tokens & title_tokens
         specific_tokens = {
             token
@@ -270,9 +340,16 @@ class ReferenceResolverAgent:
                 "study",
             }
         }
+        score = float(len(overlap))
+        if specific_tokens & title_tokens:
+            score += 0.5
+        if len(overlap) >= max(2, len(specific_tokens) // 2):
+            score += 0.5
         if len(overlap) >= 3:
-            return True
-        return bool(specific_tokens & title_tokens) and len(overlap) >= 2
+            return score
+        if bool(specific_tokens & title_tokens) and len(overlap) >= 2:
+            return score
+        return 0.0
 
     def _tokens(self, text: str) -> set[str]:
         return {

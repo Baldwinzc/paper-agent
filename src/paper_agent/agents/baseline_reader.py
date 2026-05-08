@@ -13,12 +13,13 @@ class BaselineReaderAgent:
 
     def run(self, state: PaperState) -> PaperState:
         request: PaperRequest = state["request"]
-        text = self._extract_text(request.baseline_pdf_path)
+        raw_text = self._extract_text(request.baseline_pdf_path)
+        text = self._clean_extracted_text(raw_text)
         preview = self._compact(text)
         limitations = self._guess_limitations(text, request.method_notes)
         terms = self._guess_terms(text, request.keywords)
         path_title = self._guess_title_from_path(request.baseline_pdf_path)
-        text_title = self._guess_title(text)
+        text_title = self._guess_title(raw_text)
 
         state["baseline"] = BaselineSummary(
             title=self._best_title(text_title, path_title) or "Baseline Paper",
@@ -49,6 +50,34 @@ class BaselineReaderAgent:
         except Exception:
             return ""
 
+    def _clean_extracted_text(self, text: str) -> str:
+        lines = []
+        for line in text.splitlines():
+            clean = " ".join(line.split()).strip()
+            if not clean or self._is_pdf_noise_line(clean):
+                continue
+            clean = self._strip_section_prefix(clean)
+            if clean:
+                lines.append(clean)
+        return "\n".join(lines)
+
+    def _strip_section_prefix(self, text: str) -> str:
+        pattern = re.compile(
+            r"^(?:[a-z]{2}\s+)?(?:abstract|summary|introduction|keywords|index terms)"
+            r"\b[:.\-\s]*",
+            flags=re.I,
+        )
+        stripped = pattern.sub("", text, count=1).strip()
+        if stripped == text:
+            return text
+        return stripped
+
+    def _is_pdf_noise_line(self, text: str) -> bool:
+        lowered = text.lower()
+        if "@" in lowered:
+            return True
+        return lowered in {"cn", "com", "edu", "org"} or bool(re.fullmatch(r"\d+", lowered))
+
     def _compact(self, text: str, limit: int = 2500) -> str:
         return " ".join(text.split())[:limit]
 
@@ -57,7 +86,7 @@ class BaselineReaderAgent:
         for index, line in enumerate(lines[:12]):
             clean = line.strip()
             lowered = clean.lower()
-            if lowered.startswith(("abstract", "introduction", "proceedings", "published as")):
+            if self._is_section_or_metadata_line(lowered):
                 continue
             if 8 <= len(clean) <= 180 and not self._looks_like_author_line(clean):
                 return clean
@@ -66,6 +95,12 @@ class BaselineReaderAgent:
                 if 20 <= len(combined) <= 220 and not self._looks_like_author_line(combined):
                     return combined
         return ""
+
+    def _is_section_or_metadata_line(self, lowered: str) -> bool:
+        return bool(
+            re.match(r"^(?:[a-z]{2}\s+)?(?:abstract|introduction|keywords|index terms)\b", lowered)
+            or lowered.startswith(("proceedings", "published as"))
+        )
 
     def _guess_title_from_path(self, pdf_path: str | None) -> str:
         if not pdf_path:
@@ -117,7 +152,8 @@ class BaselineReaderAgent:
         return {token for token in re.findall(r"[a-zA-Z0-9]+", text.lower()) if len(token) > 2}
 
     def _guess_sentence(self, text: str, keywords: list[str]) -> str:
-        for sentence in text.replace("\n", " ").split("."):
+        sentence_text = re.sub(r"\n+", ". ", text)
+        for sentence in sentence_text.split("."):
             lowered = sentence.lower()
             if any(keyword in lowered for keyword in keywords) and len(sentence.strip()) > 40:
                 return sentence.strip() + "."

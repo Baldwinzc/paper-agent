@@ -62,20 +62,24 @@ class ReviewerAgent:
             )
 
         if state.get("bibliography"):
-            unverified = [
+            unresolved = [
                 entry
                 for entry in state["bibliography"]
-                if "Seed" in entry.note
-                or "replace" in entry.note.lower()
-                or "verify" in entry.note.lower()
-                or not entry.year
+                if self._unresolved_seed_entry(entry)
             ]
-            if unverified:
+            if unresolved:
+                keys = ", ".join(entry.key for entry in unresolved[:5])
                 findings.append(
                     ReviewFinding(
                         severity="minor",
-                        issue="Bibliography contains seed entries that are not submission-ready.",
-                        suggestion="Replace generated seed BibTeX entries with verified metadata from real papers.",
+                        issue=(
+                            f"Bibliography contains {len(unresolved)} unresolved seed "
+                            f"entries: {keys}."
+                        ),
+                        suggestion=(
+                            "Resolve these generated seeds to real paper metadata or remove them "
+                            "before treating the bibliography as submission-ready."
+                        ),
                     )
                 )
 
@@ -124,6 +128,29 @@ class ReviewerAgent:
                     hits.append(section)
                     break
         return hits
+
+    def _unresolved_seed_entry(self, entry) -> bool:
+        if entry.doi or (entry.year and entry.year != "TODO" and self._has_real_author(entry)):
+            return False
+        note = entry.note.lower()
+        return (
+            "seed" in note
+            or "placeholder" in note
+            or "replace with real" in note
+            or not entry.year
+            or not self._has_real_author(entry)
+        )
+
+    def _has_real_author(self, entry) -> bool:
+        placeholder_authors = {
+            "baseline authors",
+            "related work authors",
+            "to be completed",
+        }
+        return bool(
+            entry.authors
+            and not any(author.lower() in placeholder_authors for author in entry.authors)
+        )
 
     def _outline_language_hits(self, section_values: dict[str, str]) -> list[str]:
         patterns = [

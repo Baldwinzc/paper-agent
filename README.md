@@ -29,8 +29,9 @@ The current scaffold supports:
 - LaTeX composition using a built-in template fallback.
 - Overleaf-ready zip export for free Overleaf upload workflows.
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
-- Seed BibTeX generation with explicit reviewer warnings for unverified references.
-- Optional OpenAlex metadata resolution for bibliography seeds.
+- Seed BibTeX generation with explicit reviewer warnings for unresolved references.
+- Optional OpenAlex/Semantic Scholar metadata resolution with resolved/unresolved
+  bibliography verification counts.
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.

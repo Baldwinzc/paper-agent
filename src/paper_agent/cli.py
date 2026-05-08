@@ -60,7 +60,7 @@ def main() -> None:
         (output / "draft.md").write_text(state["final_markdown"], encoding="utf-8")
         print(f"Draft written to {output / 'draft.md'}")
         print(f"Template source: {state['venue_template'].template_source}")
-        print(f"Bibliography seeds: {len(state.get('bibliography', []))}")
+        print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
@@ -94,7 +94,7 @@ def main() -> None:
         print(f"Evidence guard findings: {len(guard_findings)}")
         print(f"Review findings: {len(state.get('review_findings', []))}")
         print(f"Template source: {state['venue_template'].template_source}")
-        print(f"Bibliography seeds: {len(state.get('bibliography', []))}")
+        print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:

@@ -56,6 +56,10 @@ The Related Work section should not depend only on the user-provided baseline PD
 The workflow expands it by retrieving the baseline's references, papers that cite the
 baseline, influential field papers, and recent field papers before drafting.
 
+Bibliography metadata is treated as evidence with status. Automatically resolved
+entries are separated from unresolved seed entries, and the draft report keeps both
+counts visible so the author can finish reference cleanup before submission.
+
 ## Phases
 
 ### Phase 1

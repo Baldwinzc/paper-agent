@@ -38,6 +38,24 @@ def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
     assert reader._best_title(text_title, path_title) == path_title
 
 
+def test_baseline_reader_strips_pdf_section_prefix_noise():
+    reader = BaselineReaderAgent()
+    text = (
+        "author@example.edu.cn\n"
+        "cn\n"
+        "Abstract\n"
+        "Survival prediction is a significant challenge in cancer management.\n"
+        "Introduction The method section describes the proposed framework."
+    )
+
+    cleaned = reader._clean_extracted_text(text)
+    problem = reader._guess_sentence(cleaned, ["challenge"])
+
+    assert "Abstract" not in cleaned
+    assert not cleaned.startswith("cn")
+    assert problem.startswith("Survival prediction")
+
+
 def test_workflow_generates_latex_and_sections():
     request = PaperRequest(
         project_name="demo-paper",
@@ -315,7 +333,10 @@ def test_bibliography_seeds_are_written_to_markdown_and_bibtex():
     assert "## Reference Seeds" in markdown
     assert "@misc{" in bibtex
     assert "Verify metadata before submission" in bibtex
-    assert any("Bibliography contains seed entries" in finding.issue for finding in state["review_findings"])
+    assert any(
+        "Bibliography contains" in finding.issue and "unresolved seed" in finding.issue
+        for finding in state["review_findings"]
+    )
 
 
 def test_reference_resolver_enriches_seed_entry(monkeypatch):
@@ -353,6 +374,42 @@ def test_reference_resolver_enriches_seed_entry(monkeypatch):
     assert "doi = {10.1234/example}" in bibtex
     assert "journal = {IEEE Transactions}" in bibtex
     assert state["artifacts"]["reference_resolver_resolved"] >= 1
+    assert state["artifacts"]["reference_verification"]["resolved_count"] >= 1
+
+
+def test_reference_resolver_selects_best_openalex_candidate(monkeypatch):
+    def fake_query(self, query):
+        return {
+            "results": [
+                {
+                    "title": "Unrelated work on software maintenance",
+                    "doi": "https://doi.org/10.1234/unrelated",
+                    "publication_year": 2024,
+                    "authorships": [],
+                },
+                {
+                    "title": "Whole slide image survival prediction with hypergraph learning",
+                    "doi": "https://doi.org/10.1234/relevant",
+                    "publication_year": 2025,
+                    "primary_location": {"source": {"display_name": "Medical Image Analysis"}},
+                    "authorships": [{"author": {"display_name": "Ada Lovelace"}}],
+                },
+            ]
+        }
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setattr(ReferenceResolverAgent, "_query_openalex", fake_query)
+
+    entry = ReferenceResolverAgent()._resolve_entry(
+        CitationEntry(
+            key="x",
+            title="Representative work on hypergraph learning",
+            query="whole slide image survival prediction hypergraph learning",
+        )
+    )
+
+    assert entry.doi == "10.1234/relevant"
+    assert entry.title == "Whole slide image survival prediction with hypergraph learning"
 
 
 def test_reference_resolver_rejects_low_confidence_match(monkeypatch):
@@ -677,6 +734,37 @@ def test_reviewer_flags_placeholders():
     reviewed = ReviewerAgent().run(state)
 
     assert any("placeholders" in finding.issue for finding in reviewed["review_findings"])
+
+
+def test_reviewer_flags_only_unresolved_bibliography_seeds():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [],
+        "sections": DraftSections(),
+        "bibliography": [
+            CitationEntry(
+                key="resolved",
+                title="Resolved Paper",
+                authors=["Ada Lovelace"],
+                year="2024",
+                doi="10.1234/resolved",
+                note="Resolved by OpenAlex. Verify relevance before submission.",
+            ),
+            CitationEntry(
+                key="seed",
+                title="Representative work on whole slide images",
+                authors=["Related work authors"],
+                note="Seed related-work entry generated from project keywords.",
+            ),
+        ],
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    issue = next(finding.issue for finding in reviewed["review_findings"] if "Bibliography" in finding.issue)
+    assert "1 unresolved seed" in issue
+    assert issue.endswith("entries: seed.")
 
 
 def test_reviewer_flags_outline_language():

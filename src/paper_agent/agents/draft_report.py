@@ -72,18 +72,43 @@ class DraftReportAgent:
                 )
 
         lines.extend(["", "## Bibliography Verification", ""])
-        unverified = [
+        verification = artifacts.get("reference_verification", {})
+        if verification:
+            lines.extend(
+                [
+                    f"- Auto-resolved entries: {verification.get('resolved_count', 0)}",
+                    f"- Unresolved seed entries: {verification.get('unresolved_count', 0)}",
+                    "- Auto-resolved metadata still requires manual relevance checking.",
+                    "",
+                ]
+            )
+
+        unresolved_keys = set(verification.get("unresolved_seed_keys", [])) if verification else set()
+        resolved_keys = set(verification.get("resolved_keys", [])) if verification else set()
+        unresolved = [
             entry
             for entry in bibliography
-            if "verify" in entry.note.lower() or "seed" in entry.note.lower() or entry.year == "TODO"
+            if entry.key in unresolved_keys
+            or (
+                not verification
+                and ("seed" in entry.note.lower() or "placeholder" in entry.note.lower())
+            )
         ]
-        if unverified:
-            for entry in unverified:
-                status = "resolved" if entry.doi or (entry.year and entry.year != "TODO") else "seed"
-                lines.append(f"- `{entry.key}` ({status}): {entry.title}")
+        if unresolved:
+            lines.append("Unresolved entries:")
+            for entry in unresolved:
+                lines.append(f"- `{entry.key}` (seed): {entry.title}")
                 lines.append(f"  Note: {entry.note}")
         else:
-            lines.append("- All bibliography entries appear resolved; still verify manually before submission.")
+            lines.append("- No unresolved seed entries detected.")
+
+        resolved = [entry for entry in bibliography if entry.key in resolved_keys]
+        if resolved:
+            lines.extend(["", "Auto-resolved entries:"])
+            for entry in resolved:
+                venue = f", {entry.venue}" if entry.venue else ""
+                year = f", {entry.year}" if entry.year else ""
+                lines.append(f"- `{entry.key}`: {entry.title}{year}{venue}")
 
         aliases = artifacts.get("citation_key_aliases", {})
         if aliases:
