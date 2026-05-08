@@ -50,6 +50,15 @@ class DraftReportAgent:
         else:
             lines.append("- No missing experiment details detected by the analyzer.")
 
+        traceability = artifacts.get("innovation_traceability", [])
+        if traceability:
+            lines.extend(["", "## Innovation Traceability", ""])
+            for item in traceability:
+                status = "covered" if item.get("mentioned_in_method") else "missing from Method"
+                lines.append(f"- `{item.get('name')}`: {status}; evidence items: {item.get('evidence_count', 0)}")
+                for evidence in item.get("evidence_preview", [])[:2]:
+                    lines.append(f"  Evidence: {evidence}")
+
         lines.extend(["", "## Bibliography Verification", ""])
         unverified = [
             entry

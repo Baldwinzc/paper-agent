@@ -4,7 +4,7 @@ from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
-from paper_agent.state import CitationEntry, PaperOutline, PaperRequest, VenueTemplate
+from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, PaperRequest, VenueTemplate
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
@@ -520,6 +520,64 @@ def test_reviewer_flags_placeholders():
     reviewed = ReviewerAgent().run(state)
 
     assert any("placeholders" in finding.issue for finding in reviewed["review_findings"])
+
+
+def test_reviewer_flags_method_missing_innovation():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype calibration",
+                motivation="The baseline uses static prototypes.",
+                technical_idea="Calibrate prototypes with uncertainty-aware adaptation.",
+                evidence=["Method notes mention adaptive prototype calibration."],
+            ),
+            InnovationPoint(
+                name="Innovation 2: Survival-aware objective",
+                motivation="The baseline objective is incomplete.",
+                technical_idea="Use a Cox survival term with reconstruction regularization.",
+                evidence=["Repository exposes L_surv and L_rec."],
+            ),
+        ],
+        "sections": DraftSections(method="### Adaptive prototype calibration\nWe calibrate prototypes before prediction."),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    assert any("omits innovation points" in finding.issue for finding in reviewed["review_findings"])
+    assert reviewed["artifacts"]["innovation_traceability"][0]["mentioned_in_method"]
+    assert not reviewed["artifacts"]["innovation_traceability"][1]["mentioned_in_method"]
+
+
+def test_draft_report_includes_innovation_traceability(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="traceability-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "innovation_traceability": [
+                {
+                    "name": "Innovation 1: Adaptive prototype calibration",
+                    "mentioned_in_method": True,
+                    "evidence_count": 1,
+                    "evidence_preview": ["Method notes mention adaptive prototype calibration."],
+                },
+                {
+                    "name": "Innovation 2: Survival-aware objective",
+                    "mentioned_in_method": False,
+                    "evidence_count": 1,
+                    "evidence_preview": ["Repository exposes L_surv and L_rec."],
+                },
+            ]
+        },
+    }
+
+    state = DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Innovation Traceability" in report
+    assert "missing from Method" in report
+    assert "Repository exposes L_surv and L_rec." in report
 
 
 def test_citation_aliases_convert_to_retained_key():

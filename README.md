@@ -32,6 +32,7 @@ The current scaffold supports:
 - Seed BibTeX generation with explicit reviewer warnings for unverified references.
 - Optional OpenAlex metadata resolution for bibliography seeds.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
+- Innovation traceability checks to confirm Method covers accepted contribution points.
 
 ## Run Locally
 
