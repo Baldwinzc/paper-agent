@@ -3,8 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
 
-from paper_agent.export import zip_latex_project
+from paper_agent import api as api_module
 from paper_agent import cli as cli_module
+from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, PaperRequest, VenueTemplate
 from paper_agent.workflow import PaperWorkflow
@@ -1082,12 +1083,69 @@ def test_cli_llm_self_review_smoke_reports_unavailable_without_llm(monkeypatch, 
     assert "Unsupported claims: 0" in output
 
 
-def test_cli_skip_llm_self_review_sets_run_env(monkeypatch):
+def test_llm_self_review_can_be_skipped_per_request(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    client = FakeLLMClient('{"unsupported_claims": [], "section_quality_notes": []}')
+    state = {
+        "request": PaperRequest(
+            project_name="llm-review-skip-demo",
+            target_venue="TPAMI",
+            skip_llm_self_review=True,
+        ),
+        "sections": DraftSections(abstract="A draft."),
+        "artifacts": {},
+    }
 
-    cli_module._disable_llm_self_review_for_run()
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
 
-    assert os.environ["PAPER_AGENT_DISABLE_LLM_SELF_REVIEW"] == "1"
+    assert reviewed["artifacts"]["llm_self_review"]["mode"] == "disabled"
+    assert client.calls == []
+
+
+def test_cli_skip_llm_self_review_sets_request_flag(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeWorkflow:
+        def run(self, request):
+            captured["skip_llm_self_review"] = request.skip_llm_self_review
+            return {
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI"),
+                "bibliography": [],
+                "artifacts": {"llm_self_review": {"mode": "disabled"}},
+                "latex_output_path": tmp_path / "main.tex",
+                "latex_project_dir": tmp_path,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["paper-agent", "demo", "--output", str(tmp_path / "out"), "--skip-llm-self-review"],
+    )
+
+    cli_module.main()
+
+    assert captured["skip_llm_self_review"]
+
+
+def test_api_returns_llm_self_review_summary(monkeypatch):
+    class FakeWorkflow:
+        def run(self, request):
+            assert request.skip_llm_self_review
+            return {
+                "artifacts": {"llm_self_review": {"mode": "disabled"}},
+                "review_findings": [],
+                "final_markdown": "# Draft",
+            }
+
+    monkeypatch.setattr(api_module, "PaperWorkflow", FakeWorkflow)
+
+    response = api_module.draft_paper(
+        PaperRequest(project_name="api-demo", target_venue="TPAMI", skip_llm_self_review=True)
+    )
+
+    assert response["llm_self_review"] == {"mode": "disabled"}
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

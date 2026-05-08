@@ -135,9 +135,11 @@ python -m paper_agent.cli draft `
 ```
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
-the final second-pass reviewer to call the configured model. The CLI prints
+the final second-pass reviewer to call the configured model. The CLI maps this
+to the request-level `skip_llm_self_review` flag, so API callers can pass the
+same boolean in `/api/papers/draft` JSON payloads. The CLI prints
 `LLM self-review: llm`, `unavailable`, `disabled`, or `error` after each draft
-run so provider/configuration problems are visible immediately.
+run, and the API returns the same summary under `llm_self_review`.
 
 Use a manually downloaded official template when automatic fetching is blocked:
 

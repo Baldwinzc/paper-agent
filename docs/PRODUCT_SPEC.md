@@ -71,6 +71,9 @@ against the same evidence bundle and records unsupported claims without editing 
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command
 exercises the configured provider on a tiny evidence bundle before spending a full
 draft-generation call.
+The same skip control is represented on `PaperRequest`, so API integrations can
+disable only the final reviewer call without changing process-wide environment
+variables.
 
 ## Phases
 

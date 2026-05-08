@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
@@ -48,8 +47,6 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "demo":
-        if args.skip_llm_self_review:
-            _disable_llm_self_review_for_run()
         request = PaperRequest(
             project_name="adaptive-baseline-improvement",
             target_venue="IEEE Conference",
@@ -68,6 +65,7 @@ def main() -> None:
             keywords=["representation", "uncertainty", "efficient inference"],
             template_zip_path=args.template_zip or None,
             template_dir_path=args.template_dir or None,
+            skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
         output = Path(args.output)
@@ -84,8 +82,6 @@ def main() -> None:
             state["latex_zip_path"] = zip_path
             print(f"Overleaf zip written to {zip_path}")
     elif args.command == "draft":
-        if args.skip_llm_self_review:
-            _disable_llm_self_review_for_run()
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
         request = PaperRequest(
@@ -97,6 +93,7 @@ def main() -> None:
             template_dir_path=args.template_dir or None,
             experiment_results=experiment_results,
             keywords=args.keyword,
+            skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
         if args.output:
@@ -148,10 +145,6 @@ def _resolve_baseline_pdf(path_value: str) -> Path:
         if pdfs:
             return pdfs[0]
     raise SystemExit(f"No baseline PDF found at {path}")
-
-
-def _disable_llm_self_review_for_run() -> None:
-    os.environ["PAPER_AGENT_DISABLE_LLM_SELF_REVIEW"] = "1"
 
 
 def _llm_self_review_mode(state: dict) -> str:

@@ -25,6 +25,7 @@ def draft_paper(request: PaperRequest):
         "innovations": state.get("innovations"),
         "venue_template": state.get("venue_template"),
         "artifacts": state.get("artifacts", {}),
+        "llm_self_review": state.get("artifacts", {}).get("llm_self_review", {}),
         "latex_output_path": str(state.get("latex_output_path", "")),
         "review_findings": state.get("review_findings", []),
         "final_markdown": state.get("final_markdown", ""),

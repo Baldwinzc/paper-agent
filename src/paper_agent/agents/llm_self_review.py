@@ -19,7 +19,7 @@ class LLMSelfReviewAgent:
 
     def run(self, state: PaperState) -> PaperState:
         artifacts = state.setdefault("artifacts", {})
-        if self._disabled():
+        if self._disabled(state):
             artifacts["llm_self_review"] = {"mode": "disabled"}
             return state
         if not self.llm_client or not self.llm_client.available:
@@ -68,7 +68,10 @@ class LLMSelfReviewAgent:
             ]
         return state
 
-    def _disabled(self) -> bool:
+    def _disabled(self, state: PaperState) -> bool:
+        request = state.get("request")
+        if request and request.skip_llm_self_review:
+            return True
         value = os.getenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", "").strip().lower()
         return value in {"1", "true", "yes", "on"}
 

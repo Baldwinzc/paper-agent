@@ -20,6 +20,7 @@ class PaperRequest(BaseModel):
     method_notes: str = ""
     experiment_results: str = ""
     keywords: list[str] = Field(default_factory=list)
+    skip_llm_self_review: bool = False
 
 
 class BaselineSummary(BaseModel):
