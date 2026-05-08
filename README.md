@@ -31,6 +31,8 @@ The current scaffold supports:
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
 - Seed BibTeX generation with explicit reviewer warnings for unverified references.
 - Optional OpenAlex metadata resolution for bibliography seeds.
+- Optional OpenAlex related-work discovery from baseline references, papers citing
+  the baseline, influential field papers, and recent field papers.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 
@@ -70,6 +72,9 @@ Set `PAPER_AGENT_DISABLE_LLM=1` for deterministic local tests that should not ca
 the configured model. Set `PAPER_AGENT_DISABLE_TEMPLATE_FETCH=1` to skip remote
 template downloads during tests or offline runs.
 Set `PAPER_AGENT_DISABLE_REFERENCE_RESOLVE=1` to skip scholarly metadata lookup.
+Set `PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY=1` to skip related-work expansion
+from OpenAlex. Related-work discovery is also skipped when reference resolution is
+disabled.
 Set `OPENALEX_MAILTO=you@example.com` to identify your OpenAlex API traffic.
 `SEMANTIC_SCHOLAR_API_KEY` is optional and only raises Semantic Scholar rate limits.
 

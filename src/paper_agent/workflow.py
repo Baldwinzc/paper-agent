@@ -12,6 +12,7 @@ from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.paper_planner import PaperPlannerAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
+from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.agents.section_writer import SectionWriterAgent
 from paper_agent.agents.venue_template import VenueTemplateAgent
@@ -37,6 +38,7 @@ class PaperWorkflow:
             PaperPlannerAgent(),
             BibliographyAgent(),
             ReferenceResolverAgent(),
+            RelatedWorkDiscoveryAgent(),
             SectionWriterAgent(llm_client=llm_client),
             EvidenceGuardAgent(),
             LatexComposerAgent(),

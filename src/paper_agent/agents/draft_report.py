@@ -59,6 +59,18 @@ class DraftReportAgent:
                 for evidence in item.get("evidence_preview", [])[:2]:
                     lines.append(f"  Evidence: {evidence}")
 
+        related_candidates = artifacts.get("related_work_candidates", [])
+        if related_candidates:
+            lines.extend(["", "## Related Work Discovery", ""])
+            for candidate in related_candidates:
+                lines.append(
+                    "- "
+                    f"[{candidate.get('category', 'unknown')}] "
+                    f"`{candidate.get('key')}`: {candidate.get('title')} "
+                    f"({candidate.get('year') or 'year unknown'}, "
+                    f"cited by {candidate.get('cited_by_count', 0)})"
+                )
+
         lines.extend(["", "## Bibliography Verification", ""])
         unverified = [
             entry

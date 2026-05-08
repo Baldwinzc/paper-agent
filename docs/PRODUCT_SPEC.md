@@ -35,9 +35,14 @@ InputCollector
   -> InnovationAnalyzer
   -> VenueTemplate
   -> PaperPlanner
+  -> Bibliography
+  -> ReferenceResolver
+  -> RelatedWorkDiscovery
   -> SectionWriter
+  -> EvidenceGuard
   -> LatexComposer
   -> Reviewer
+  -> DraftReport
 ```
 
 ## Key Rule
@@ -46,6 +51,10 @@ The Method section is not written from "code differences". Code is evidence. Bas
 analysis is evidence. Experiment results are evidence. The Method section is written
 from explicit innovation points inferred from those evidence sources and confirmed by
 the user when needed.
+
+The Related Work section should not depend only on the user-provided baseline PDF.
+The workflow expands it by retrieving the baseline's references, papers that cite the
+baseline, influential field papers, and recent field papers before drafting.
 
 ## Phases
 
@@ -65,4 +74,3 @@ centered on innovation points.
 ### Phase 4
 
 Add rebuttal, revision history, and venue-specific submission checks.
-

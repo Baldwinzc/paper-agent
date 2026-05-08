@@ -76,6 +76,8 @@ class SectionWriterAgent:
         )
         citation_keys = state.setdefault("artifacts", {}).get("citation_keys", [])
         citation_hint = self._citation_hint(citation_keys)
+        related_work_discovery = state.get("artifacts", {}).get("related_work_candidates", [])
+        related_work_guidance = self._related_work_guidance(related_work_discovery, citation_hint)
         abstract_result_summary = self._result_summary(experiments, limit=1)
         experiment_result_summary = self._result_summary(experiments, limit=2)
         missing_details = (
@@ -102,9 +104,8 @@ class SectionWriterAgent:
             ),
             related_work=(
                 "Related work should be organized by research threads rather than as a flat list. "
-                f"First, discuss the direct baseline family {citation_hint}. "
-                "Second, discuss methods related to each proposed innovation point. "
-                "Third, clarify how the proposed work differs in motivation, mechanism, or evidence. "
+                f"{related_work_guidance} "
+                "Finally, clarify how the proposed work differs in motivation, mechanism, or evidence. "
                 "All generated citation metadata must be verified before submission."
             ),
             method=(
@@ -181,6 +182,7 @@ class SectionWriterAgent:
             "experiment_summary": experiments.model_dump() if experiments else {},
             "innovations": [item.model_dump() for item in innovations],
             "bibliography": [entry.model_dump() for entry in bibliography],
+            "related_work_discovery": state.get("artifacts", {}).get("related_work_candidates", []),
             "allowed_citation_keys": [entry.key for entry in bibliography],
             "outline": outline.model_dump() if outline else {},
             "section_name": section_name,
@@ -209,6 +211,34 @@ class SectionWriterAgent:
             return "with citation keys to be added"
         return "using seed citations such as " + ", ".join(
             rf"\cite{{{key}}}" for key in citation_keys[:3]
+        )
+
+    def _related_work_guidance(self, candidates: list[dict[str, Any]], citation_hint: str) -> str:
+        if not candidates:
+            return (
+                f"First, discuss the direct baseline family {citation_hint}. "
+                "Second, discuss methods related to each proposed innovation point."
+            )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for candidate in candidates:
+            grouped.setdefault(str(candidate.get("category", "unknown")), []).append(candidate)
+        parts = []
+        labels = {
+            "baseline_reference": "Baseline lineage",
+            "baseline_citing": "Recent papers citing the baseline",
+            "influential": "Influential field papers",
+            "recent": "Recent field papers",
+        }
+        for category in ["baseline_reference", "influential", "baseline_citing", "recent"]:
+            items = grouped.get(category, [])
+            if not items:
+                continue
+            cites = ", ".join(rf"\cite{{{item['key']}}}" for item in items[:3] if item.get("key"))
+            if cites:
+                parts.append(f"{labels[category]} should be discussed with {cites}.")
+        return " ".join(parts) or (
+            f"First, discuss the direct baseline family {citation_hint}. "
+            "Second, discuss methods related to each proposed innovation point."
         )
 
     def _result_summary(self, experiments, limit: int) -> str:

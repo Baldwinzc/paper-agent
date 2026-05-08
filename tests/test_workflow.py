@@ -12,13 +12,16 @@ from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
+from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
-from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
+from paper_agent.agents.section_writer import SectionWriterAgent
+from paper_agent.state import BaselineSummary, CodeSummary, DraftSections, ExperimentSummary
 
 
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_LLM", "1")
 os.environ.setdefault("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "1")
+os.environ.setdefault("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", "1")
 
 
 def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
@@ -460,6 +463,109 @@ def test_reference_resolver_deduplicates_repeated_dois(monkeypatch):
     dois = [entry.doi for entry in state["bibliography"] if entry.doi]
     assert dois == ["10.1234/shared"]
     assert state["artifacts"]["citation_key_aliases"]
+
+
+def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
+    def work(title, identifier, year, cited_by_count, referenced_works=None):
+        return {
+            "id": f"https://openalex.org/{identifier}",
+            "title": title,
+            "doi": f"https://doi.org/10.1234/{identifier.lower()}",
+            "publication_year": year,
+            "authorships": [{"author": {"display_name": "Ada Lovelace"}}],
+            "primary_location": {"source": {"display_name": "IEEE Transactions"}},
+            "ids": {"openalex": f"https://openalex.org/{identifier}"},
+            "referenced_works": referenced_works or [],
+            "cited_by_count": cited_by_count,
+        }
+
+    def fake_query(self, params):
+        if params.get("search") == "Baseline Survival Paper":
+            return {
+                "results": [
+                    work(
+                        "Baseline Survival Paper",
+                        "WBASE",
+                        2024,
+                        42,
+                        referenced_works=["https://openalex.org/WCLASSIC"],
+                    )
+                ]
+            }
+        if str(params.get("filter", "")).startswith("openalex_id:"):
+            return {"results": [work("Classic survival analysis for whole-slide images", "WCLASSIC", 2018, 500)]}
+        if str(params.get("filter", "")).startswith("cites:"):
+            return {"results": [work("Recent extension that cites the baseline", "WFOLLOW", 2026, 7)]}
+        if params.get("sort") == "cited_by_count:desc":
+            return {"results": [work("Influential computational pathology survey", "WINFLUENTIAL", 2020, 900)]}
+        if params.get("sort") == "publication_date:desc":
+            return {
+                "results": [
+                    work("New whole-slide survival prediction model", "WRECENT", 2026, 3),
+                    work("New whole-slide survival prediction model", "WRECENTDUP", 2026, 3),
+                ]
+            }
+        return {"results": []}
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", "0")
+    monkeypatch.setattr(RelatedWorkDiscoveryAgent, "_query_openalex", fake_query)
+    state = {
+        "request": PaperRequest(
+            project_name="discovery-demo",
+            target_venue="TPAMI",
+            keywords=["whole-slide images", "survival prediction"],
+        ),
+        "baseline": BaselineSummary(
+            title="Baseline Survival Paper",
+            related_terms=["computational pathology"],
+        ),
+        "bibliography": [
+            CitationEntry(
+                key="baseline",
+                title="Baseline Survival Paper",
+                query="Baseline Survival Paper",
+            )
+        ],
+        "artifacts": {},
+    }
+
+    state = RelatedWorkDiscoveryAgent().run(state)
+
+    categories = {item["category"] for item in state["artifacts"]["related_work_candidates"]}
+    titles = [item["title"] for item in state["artifacts"]["related_work_candidates"]]
+    assert {"baseline_reference", "baseline_citing", "influential", "recent"} <= categories
+    assert titles.count("New whole-slide survival prediction model") == 1
+    assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
+    assert state["artifacts"]["citation_keys"]
+
+
+def test_section_writer_uses_related_work_discovery_in_fallback():
+    state = {
+        "request": PaperRequest(project_name="related-work-demo", target_venue="TPAMI"),
+        "sections": DraftSections(),
+        "innovations": [],
+        "artifacts": {
+            "citation_keys": ["baseline"],
+            "related_work_candidates": [
+                {
+                    "key": "classicpaper",
+                    "category": "baseline_reference",
+                    "title": "Classic paper",
+                },
+                {
+                    "key": "recentpaper",
+                    "category": "recent",
+                    "title": "Recent paper",
+                },
+            ],
+        },
+    }
+
+    sections = SectionWriterAgent()._run_fallback(state)
+
+    assert r"\cite{classicpaper}" in sections.related_work
+    assert r"\cite{recentpaper}" in sections.related_work
 
 
 def test_known_markdown_citations_convert_to_latex_cite():
