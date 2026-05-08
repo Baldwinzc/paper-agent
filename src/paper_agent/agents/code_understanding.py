@@ -18,6 +18,9 @@ class CodeUnderstandingAgent:
         ("OT/Wasserstein hypergraph construction", r"free_support_barycenter|ot\.emd|compute_cost_matrix|cross-cluster|M_OT"),
         ("prototype source", r"data\.prototypes|proto_query_source|prototype-query|prototype bank"),
         ("BHE/HCoN module", r"\bHCoN\b|self\.hcon|ablate_bidirectional|hyperedge-side"),
+        ("incidence reconstruction", r"BCEWithLogitsLoss|binary reconstruction|reconstructed hyperedge|H_recon|target_H|binary_cross_entropy"),
+        ("mean-pool fusion head", r"mean_pool_fusion_proj|mean-pool|node_mean|proto_mean|torch\.mean\(prototypes_q"),
+        ("survival risk head", r"risk_prediction_layer|survival head|scalar survival risk|S = self\.risk_prediction_layer"),
         ("cross-attention fusion", r"proto_fusion|CrossAttention|cross-attention|prototypes_q"),
         ("reconstruction objective", r"L_rec|hcon_rec_loss|binary_cross_entropy|lambda_rec|hcon_beta"),
         ("survival objective", r"loss_surv|L_surv|Cox PH|partial likelihood"),
@@ -203,13 +206,13 @@ class CodeUnderstandingAgent:
                 continue
             selected.append(item)
             labels.add(label)
-            if len(selected) >= 6:
+            if len(selected) >= 8:
                 return selected
         for item in sorted_matches:
             if item in selected:
                 continue
             selected.append(item)
-            if len(selected) >= 6:
+            if len(selected) >= 8:
                 break
         return selected
 
@@ -283,6 +286,12 @@ class CodeUnderstandingAgent:
             token in cleaned_line
             for token in [
                 "self.hcon",
+                "self.proto_fusion_to_p",
+                "proto_conv",
+                "cross-attention",
+                "risk_prediction_layer",
+                "mean_pool_fusion_proj",
+                "BCEWithLogitsLoss",
                 "binary_cross_entropy",
                 "free_support_barycenter",
                 "loss =",

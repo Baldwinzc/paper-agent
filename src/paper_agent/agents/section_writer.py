@@ -23,6 +23,24 @@ class SectionWriterAgent:
         ("percentage results", r"\b\d+(?:\.\d+)?\s*%"),
         ("empirical superiority", r"\boutperform(?:s|ed)?\b|\bimproves?\b|\bgains?\b|state-of-the-art|competitive"),
         ("completed evaluation", r"\bevaluated on\b|\bvalidated\b|\bbenchmarked\b"),
+        ("final dataset claim", r"\bdataset used in this study comprises\b|\bthe complete dataset\b"),
+    ]
+    MISSING_RESULT_METHOD_FORBIDDEN_PATTERNS = [
+        (
+            "unsupported method outcome",
+            r"\b(?:allows?|enables?)\s+(?:the\s+)?model\s+to\s+(?:capture|learn|improve|outperform)\b",
+        ),
+        (
+            "unsupported mechanism effect",
+            r"\bsubstantially\s+(?:simplif(?:y|ies|ying)|improv(?:e|es|ing)|enhanc(?:e|es|ing))\b",
+        ),
+    ]
+    MISSING_RESULT_RELATED_WORK_FORBIDDEN_PATTERNS = [
+        (
+            "unsupported related-work method effect",
+            r"\b(?:preserving|enabling|removing\s+the\s+need|suffices?|learns\s+soft|"
+            r"unlike\s+prior|unlike\s+previous)\b",
+        ),
     ]
 
     SECTION_SPECS = {
@@ -202,7 +220,7 @@ class SectionWriterAgent:
         if missing:
             setup = (
                 "### Experimental Setup\n"
-                f"The empirical section is organized around {datasets}. The supplied materials currently "
+                f"The planned evaluation section is organized around {datasets}. The supplied materials currently "
                 "support dataset and cohort description only; metric definitions, comparison rows, training "
                 "settings, and additional analyses should be added after real runs are available."
             )
@@ -255,7 +273,10 @@ class SectionWriterAgent:
             if experiments and experiments.datasets
             else "the target datasets"
         )
-        return f"Preliminary experiments motivate a structured evaluation over {datasets}."
+        return (
+            f"Available cohort metadata supports a structured evaluation plan over {datasets}; "
+            "performance evaluation remains pending."
+        )
 
     def _problem_sentence(self, request, baseline) -> str:
         if baseline and baseline.problem:
@@ -293,7 +314,24 @@ class SectionWriterAgent:
         cleaned = [self._paper_prose(item).rstrip(".") for item in evidence if item.strip()]
         if not cleaned:
             return "Evidence remains to be supplied."
-        return "; ".join(cleaned[:3]) + "."
+        selected: list[str] = []
+        seen_labels: set[str] = set()
+        generic: list[str] = []
+        for item in cleaned:
+            if item.lower().startswith("scanned "):
+                generic.append(item)
+                continue
+            label_match = re.search(r"\(([^)]+)\)", item)
+            label = label_match.group(1).lower() if label_match else item[:60].lower()
+            if label in seen_labels:
+                continue
+            selected.append(item)
+            seen_labels.add(label)
+            if len(selected) >= 5:
+                break
+        if len(selected) < 3:
+            selected.extend(item for item in generic if item not in selected)
+        return "; ".join(selected[:5]) + "."
 
     def _risk_text(self, risk: str) -> str:
         text = self._paper_prose(risk).strip()
@@ -421,6 +459,18 @@ class SectionWriterAgent:
             for label, pattern in self.MISSING_RESULT_FORBIDDEN_PATTERNS
             if re.search(pattern, section_text, flags=re.I)
         ]
+        if section_name == "method":
+            matched.extend(
+                label
+                for label, pattern in self.MISSING_RESULT_METHOD_FORBIDDEN_PATTERNS
+                if re.search(pattern, section_text, flags=re.I)
+            )
+        if section_name == "related_work":
+            matched.extend(
+                label
+                for label, pattern in self.MISSING_RESULT_RELATED_WORK_FORBIDDEN_PATTERNS
+                if re.search(pattern, section_text, flags=re.I)
+            )
         if not matched:
             return
         raise ValueError(
@@ -450,6 +500,12 @@ class SectionWriterAgent:
                     "or performance unless those exact values are present in the supplied experiment data.",
                     "When writing Abstract, Introduction, Experiments, or Conclusion, describe only the "
                     "available dataset/cohort summary and mark performance evaluation as pending.",
+                    "When writing Method, describe intended computation and implementation evidence only; "
+                    "avoid outcome language such as allows the model to capture, enables improvement, "
+                    "or substantially improves unless supported by supplied ablation evidence.",
+                    "When writing Related Work, focus on prior work and cautious positioning; do not claim "
+                    "the proposed method preserves structure, removes the need for prior mechanisms, learns "
+                    "better weights, or differs from all prior work without explicit evidence.",
                 ]
             )
         return rules

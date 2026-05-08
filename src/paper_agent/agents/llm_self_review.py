@@ -95,6 +95,8 @@ class LLMSelfReviewAgent:
                 "Current experiment evidence defines the draft datasets even when they differ "
                 "from the baseline paper's datasets; do not flag cohort names solely because "
                 "they are not baseline cohorts.",
+                "Do not flag cohort counts, slide counts, or planned-evaluation cohort lists when "
+                "they appear in the experiment evidence; only flag performance or protocol claims.",
                 "Return at most five unsupported_claims.",
                 "Keep every JSON string under 160 characters.",
                 "Return JSON only.",
@@ -115,7 +117,7 @@ class LLMSelfReviewAgent:
             "target_venue": request.target_venue,
             "evidence": {
                 "baseline": self._truncate(baseline.model_dump() if baseline else {}, 3500),
-                "code": self._truncate(code.model_dump() if code else {}, 3500),
+                "code": self._truncate(code.model_dump() if code else {}, 7000),
                 "experiments": self._truncate(experiments.model_dump() if experiments else {}, 3500),
                 "innovations": self._truncate(
                     [item.model_dump() for item in state.get("innovations", [])],
@@ -234,7 +236,13 @@ class LLMSelfReviewAgent:
         evidence_needed = re.sub(r"[^a-z0-9]+", "", claim.get("evidence_needed", "").lower())
         if evidence_needed in {"na", "n/a", "none", "notneeded", "notapplicable"}:
             return True
+        if evidence_needed.startswith("noevidenceneeded"):
+            return True
         if "not an unsupported factual claim" in reason:
+            return True
+        if "not an unsupported claim" in reason:
+            return True
+        if "evidence shows" in reason and "clarif" in claim.get("evidence_needed", "").lower():
             return True
         if self._claim_is_pending_placeholder(claim):
             return True
@@ -268,6 +276,8 @@ class LLMSelfReviewAgent:
             "remain pending",
             "remains pending",
             "pending evaluation",
+            "planned evaluation",
+            "planned-evaluation",
             "evaluation is pending",
             "evaluations are pending",
             "is pending",

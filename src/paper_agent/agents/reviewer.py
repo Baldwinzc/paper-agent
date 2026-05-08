@@ -368,9 +368,17 @@ class ReviewerAgent:
             return []
         allowed = {dataset.upper() for dataset in experiments.datasets}
         allowed.update(metric.upper() for metric in experiments.metrics)
+        evidence_text = self._evidence_text(experiments)
+        allowed.update(
+            candidate.upper()
+            for candidate in re.findall(r"\b[A-Z][A-Z0-9_]{1,8}(?:-[A-Z0-9_]{2,8})?\b", evidence_text)
+            if candidate.upper() not in self.DATASET_STOPWORDS
+        )
         candidates = set()
         for match in re.finditer(
-            r"\b(?:on|across|over|using|datasets?|cohorts?)\s+([^.;:\n]+)",
+            r"\b(?:across|over|using|datasets?|cohorts?|evaluat(?:e|ed|ing)\s+on|"
+            r"train(?:ed|ing)?\s+on|test(?:ed|ing)?\s+on|validat(?:e|ed|ing)\s+on|"
+            r"benchmark(?:ed|ing)?\s+on)\s+([^.;:\n]+)",
             text,
             flags=re.I,
         ):

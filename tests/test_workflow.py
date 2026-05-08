@@ -194,9 +194,14 @@ def test_code_understanding_extracts_implementation_evidence(tmp_path):
         "    def __init__(self):\n"
         "        self.hcon = HCoN(input_feat_x_dim=512)\n"
         "        self.proto_fusion_to_p = CrossAttention()\n"
+        "        self.mean_pool_fusion_proj = nn.Linear(dim_proto * 2, dim_proto, bias=False)\n"
+        "        self.risk_prediction_layer = nn.Linear(dim_proto, 1, bias=False)\n"
         "    def forward(self, data):\n"
         "        M_OT = data.prototypes\n"
         "        x_emb, m_emb = self.hcon(hx1, hx2, x0, hy1, hy2, M_OT, alpha=0.5, beta=0.5)\n"
+        "        node_mean = torch.mean(x_context_batched, dim=1)\n"
+        "        proto_mean = torch.mean(prototypes_q, dim=1)\n"
+        "        S = self.risk_prediction_layer(h)\n"
         "        rec_loss = F.binary_cross_entropy_with_logits(logits, target_H)\n",
         encoding="utf-8",
     )
@@ -224,6 +229,9 @@ def test_code_understanding_extracts_implementation_evidence(tmp_path):
     evidence = state["code"].implementation_evidence
     assert any("(BHE/HCoN module)" in item and "self.hcon" in item for item in evidence)
     assert any("(cross-attention fusion)" in item and "CrossAttention" in item for item in evidence)
+    assert any("(mean-pool fusion head)" in item and "mean_pool_fusion_proj" in item for item in evidence)
+    assert any("(survival risk head)" in item and "risk_prediction_layer" in item for item in evidence)
+    assert any("(incidence reconstruction)" in item and "target_H" in item for item in evidence)
     assert any("(reconstruction objective)" in item and "hcon_rec_loss" in item for item in evidence)
     assert any("(OT/Wasserstein hypergraph construction)" in item for item in evidence)
     assert any("(cross-cluster cost mask)" in item for item in evidence)
@@ -1024,6 +1032,25 @@ def test_section_writer_fallback_uses_paper_prose_for_core_sections():
     assert "final conclusion should" not in combined
 
 
+def test_section_writer_evidence_text_prefers_diverse_implementation_labels():
+    evidence_text = SectionWriterAgent()._evidence_text(
+        [
+            "Scanned 62 files. Likely method-bearing files: train.py.",
+            "data_preparation/hypergraph.py:10 (OT/Wasserstein hypergraph construction) X_bar = ...",
+            "data_preparation/hypergraph.py:12 (OT/Wasserstein hypergraph construction) C = ...",
+            "models/HCoN/model.py:8 (BHE/HCoN module) class HCoN(nn.Module)",
+            "models/model.py:185 (cross-attention fusion) self.proto_fusion_to_p = ProtoFusion(...)",
+            "models/model.py:192 (survival risk head) self.risk_prediction_layer = nn.Linear(...)",
+        ]
+    )
+
+    assert "Scanned 62 files" not in evidence_text
+    assert "OT/Wasserstein" in evidence_text
+    assert "BHE/HCoN" in evidence_text
+    assert "cross-attention fusion" in evidence_text
+    assert "survival risk head" in evidence_text
+
+
 def test_known_markdown_citations_convert_to_latex_cite():
     request = PaperRequest(
         project_name="citation-conversion-demo",
@@ -1411,6 +1438,27 @@ def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
               "severity": "minor"
             },
             {
+              "section": "introduction",
+              "claim": "The central claim reserves empirical improvement claims for verified result tables.",
+              "reason": "This is a cautious reservation, not an unsupported claim.",
+              "evidence_needed": "No evidence needed; this is a statement of intent.",
+              "severity": "minor"
+            },
+            {
+              "section": "abstract",
+              "claim": "The available dataset summary covers five TCGA cohorts totaling 2,586 patients.",
+              "reason": "The evidence shows 2,586 patients and the listed cohorts.",
+              "evidence_needed": "Clarify these numbers are from the supplied CSV files.",
+              "severity": "minor"
+            },
+            {
+              "section": "experiments",
+              "claim": "The planned evaluation section is organized around BLCA and BRCA.",
+              "reason": "The evidence lists these cohorts but does not include protocol details.",
+              "evidence_needed": "Experimental protocol using these cohorts.",
+              "severity": "minor"
+            },
+            {
               "section": "method",
               "claim": "The model builds prototypes with a Wasserstein hypergraph and reconstruction loss.",
               "reason": "No ablation studies are provided to validate that these components function as claimed.",
@@ -1693,6 +1741,104 @@ def test_llm_sections_fall_back_on_empirical_overclaim_when_results_missing():
     assert "C-index" not in state["sections"].experiments
     assert "five-fold" not in state["sections"].experiments
     assert "structured numeric result table" in state["sections"].experiments
+
+
+def test_llm_method_rejects_unsupported_mechanistic_outcome_when_results_missing():
+    client = FakeLLMClient(
+        "### Bidirectional Hyperedge Convolution\n"
+        "This bidirectional scheme allows the model to capture both local tissue composition "
+        "and global context shared across hyperedges."
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Ablation rows are not explicit."],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive hypergraph prototype learning",
+                motivation="Prototype learning needs evidence.",
+                technical_idea="Use bidirectional hyperedge convolution.",
+                evidence=["models/HCoN/model.py:42 (BHE/HCoN)"],
+            )
+        ],
+        "outline": PaperOutline(),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "method")
+    except ValueError as exc:
+        assert "unsupported method outcome" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported method outcome to be rejected")
+
+
+def test_llm_related_work_rejects_method_effect_claims_when_results_missing():
+    client = FakeLLMClient(
+        "The proposed method preserves class-specific geometric structure, removes the need "
+        "for online losses, and learns soft hyperedge weights unlike prior hypergraph models."
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Baseline comparison rows are not explicit."],
+        ),
+        "innovations": [],
+        "outline": PaperOutline(),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "related_work")
+    except ValueError as exc:
+        assert "unsupported related-work method effect" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported related-work method effect to be rejected")
+
+
+def test_llm_abstract_rejects_final_dataset_claim_when_results_missing():
+    client = FakeLLMClient("The dataset used in this study comprises five TCGA cohorts.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Evaluation metrics are not explicit."],
+        ),
+        "innovations": [],
+        "outline": PaperOutline(),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "abstract")
+    except ValueError as exc:
+        assert "final dataset claim" in str(exc)
+    else:
+        raise AssertionError("Expected final dataset claim to be rejected")
+
+
+def test_reviewer_accepts_dataset_tokens_present_in_experiment_evidence():
+    experiments = ExperimentSummary(
+        raw_preview="TCGA cohort summary built from BLCA and BRCA CSV files.",
+        datasets=["BLCA", "BRCA"],
+    )
+    text = "The available cohort summary is organized around TCGA, BLCA, and BRCA cases."
+
+    unsupported = ReviewerAgent()._unsupported_datasets(text, experiments)
+
+    assert unsupported == []
 
 
 def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path):
