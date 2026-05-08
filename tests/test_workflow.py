@@ -573,6 +573,52 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
     assert "should be positioned" not in sections.related_work
 
 
+def test_section_writer_fallback_uses_paper_prose_for_core_sections():
+    state = {
+        "request": PaperRequest(project_name="prose-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(
+            title="Baseline Survival Paper",
+            problem="Whole-slide survival prediction estimates patient risk from pathology images.",
+            limitations=["The baseline uses static prototypes."],
+        ),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA", "BRCA"],
+            metrics=["C-INDEX"],
+            observations=[
+                "Table 1: Hyper-ProtoSurv ours improves over ProtoSurv baseline on 2/2 numeric comparisons (average signed improvement +0.020)."
+            ],
+            missing_details=[],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype calibration",
+                motivation="The baseline uses static prototypes.",
+                technical_idea="Calibrate prototypes with uncertainty-aware adaptation.",
+                evidence=["Repository exposes adaptive prototype code."],
+                risk="Inferred from repository text; user should confirm novelty and wording.",
+            )
+        ],
+        "outline": PaperOutline(
+            central_claim="This paper improves the baseline setting through adaptive prototype calibration."
+        ),
+        "artifacts": {},
+    }
+
+    sections = SectionWriterAgent()._run_fallback(state)
+    combined = "\n".join([sections.introduction, sections.experiments, sections.conclusion, sections.method])
+
+    assert "### Experimental Setup" in sections.experiments
+    assert "### Main Results" in sections.experiments
+    assert "The contributions are organized as follows" in sections.introduction
+    assert "Validation note" in sections.method
+    assert "user should confirm" not in combined
+    assert "The introduction should" not in combined
+    assert "The experiments section should" not in combined
+    assert "Current missing details" not in combined
+    assert "to be refined" not in combined
+    assert "final conclusion should" not in combined
+
+
 def test_known_markdown_citations_convert_to_latex_cite():
     request = PaperRequest(
         project_name="citation-conversion-demo",
@@ -631,6 +677,23 @@ def test_reviewer_flags_placeholders():
     reviewed = ReviewerAgent().run(state)
 
     assert any("placeholders" in finding.issue for finding in reviewed["review_findings"])
+
+
+def test_reviewer_flags_outline_language():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [],
+        "sections": DraftSections(
+            introduction="The introduction should open with the research problem.",
+            experiments="Current missing details: dataset names are not explicit.",
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    assert any("outline or procedural language" in finding.issue for finding in reviewed["review_findings"])
+    assert reviewed["artifacts"]["outline_language_hits"] == ["introduction", "experiments"]
 
 
 def test_reviewer_flags_method_missing_innovation():

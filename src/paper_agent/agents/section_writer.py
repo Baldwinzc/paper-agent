@@ -67,10 +67,6 @@ class SectionWriterAgent:
         innovations = state.get("innovations", [])
         outline = state.get("outline")
 
-        innovation_text = "\n".join(
-            f"- {item.name}: {item.technical_idea} Evidence: {'; '.join(item.evidence)}"
-            for item in innovations
-        )
         method_subsections = "\n\n".join(
             self._method_subsection(index, item) for index, item in enumerate(innovations, start=1)
         )
@@ -85,28 +81,18 @@ class SectionWriterAgent:
         )
         abstract_result_summary = self._result_summary(experiments, limit=1)
         experiment_result_summary = self._result_summary(experiments, limit=2)
-        missing_details = (
-            ", ".join(experiments.missing_details)
-            if experiments and experiments.missing_details
-            else "No missing experiment details detected by the analyzer"
-        )
+        missing_details = experiments.missing_details if experiments else []
+        abstract_evidence = self._abstract_evidence_text(experiments, abstract_result_summary)
 
         return DraftSections(
             abstract=(
                 f"We study {request.project_name}, targeting {request.target_venue}. "
                 f"Starting from the baseline paper, we identify a set of method-level "
                 f"opportunities and propose an innovation-centered framework. "
-                f"Our current draft centers on: {', '.join(item.name for item in innovations)}. "
-                f"{abstract_result_summary or 'Preliminary experiments suggest the need for a structured evaluation over ' + (', '.join(experiments.datasets) if experiments and experiments.datasets else 'the target datasets') + '.'}"
+                f"The proposed study centers on: {self._innovation_name_list(innovations)}. "
+                f"{abstract_evidence}"
             ),
-            introduction=(
-                "The introduction should open with the research problem and its importance. "
-                f"The baseline work, {baseline.title if baseline else 'the baseline paper'}, provides a strong "
-                "starting point but leaves room for improvement. "
-                f"Our central claim is: {outline.central_claim if outline else 'to be refined.'}\n\n"
-                "The paper makes the following contributions:\n"
-                f"{innovation_text}"
-            ),
+            introduction=self._introduction_text(request, baseline, outline, innovations),
             related_work=related_work_text,
             method=(
                 "We describe the proposed method by following the innovation points established during "
@@ -114,28 +100,219 @@ class SectionWriterAgent:
                 "as the paper narrative itself.\n\n"
                 f"{method_subsections}"
             ),
-            experiments=(
-                "The experiments section should include: (1) datasets and preprocessing; "
-                "(2) baseline methods; (3) evaluation metrics; (4) implementation details; "
-                "(5) main comparison; (6) ablation studies; and (7) qualitative analysis. "
-                f"{'Current parsed result summary: ' + experiment_result_summary + ' ' if experiment_result_summary else ''}"
-                f"Current missing details: {missing_details}."
+            experiments=self._experiments_text(
+                experiments,
+                experiment_result_summary,
+                missing_details,
             ),
-            conclusion=(
-                "This paper presents an innovation-centered improvement over the baseline setting. "
-                "The final conclusion should restate the validated contributions, summarize the main "
-                "empirical findings, and honestly acknowledge limitations."
-            ),
+            conclusion=self._conclusion_text(innovations, experiments, experiment_result_summary),
         )
 
     def _method_subsection(self, index, innovation) -> str:
         return (
             f"### {index}. {innovation.name}\n"
-            f"Motivation. {innovation.motivation}\n\n"
-            f"Design. {innovation.technical_idea}\n\n"
-            f"Evidence. {'; '.join(innovation.evidence)}\n\n"
-            f"Risk control. {innovation.risk}"
+            f"Motivation. {self._paper_prose(innovation.motivation)}\n\n"
+            f"Design. {self._paper_prose(innovation.technical_idea)}\n\n"
+            f"Evidence. {self._evidence_text(innovation.evidence)}\n\n"
+            f"Validation note. {self._risk_text(innovation.risk)}"
         )
+
+    def _introduction_text(self, request, baseline, outline, innovations) -> str:
+        baseline_title = baseline.title if baseline and baseline.title else "the supplied baseline"
+        problem_sentence = self._problem_sentence(request, baseline)
+        limitation_sentence = self._limitation_sentence(baseline)
+        central_claim = (
+            self._paper_prose(outline.central_claim)
+            if outline and outline.central_claim
+            else f"{request.project_name} can be improved through the proposed innovation set."
+        )
+        claim_text = (
+            self._lower_initial(central_claim)
+            if central_claim
+            else "the proposed method addresses the identified gap."
+        )
+
+        return (
+            f"{problem_sentence} The baseline work, {baseline_title}, establishes the immediate "
+            f"starting point for this study. {limitation_sentence} "
+            f"The central claim of this study is that {claim_text}\n\n"
+            "The contributions are organized as follows:\n"
+            f"{self._contribution_text(innovations)}"
+        )
+
+    def _experiments_text(
+        self,
+        experiments,
+        result_summary: str,
+        missing_details: list[str],
+    ) -> str:
+        datasets = self._list_phrase(
+            experiments.datasets if experiments else [],
+            "the datasets supplied by the author",
+        )
+        metrics = self._list_phrase(
+            experiments.metrics if experiments else [],
+            "the evaluation metrics supplied by the author",
+        )
+        missing = [self._paper_prose(item).rstrip(".") for item in missing_details]
+
+        if result_summary:
+            main_results = (
+                "### Main Results\n"
+                f"The parsed result tables report the following evidence: {result_summary} "
+                "These statements come directly from the supplied experiment file and remain bounded "
+                "to the reported tables."
+            )
+        else:
+            main_results = (
+                "### Main Results\n"
+                "The supplied materials do not yet contain a structured numeric result table. The draft "
+                "therefore records the evaluation protocol and leaves performance claims for the final "
+                "author-verified results."
+            )
+
+        if missing:
+            completion = (
+                "### Completion Items\n"
+                "The remaining experiment details are "
+                + "; ".join(missing)
+                + ". These items mark the places where the author must add concrete protocol or result "
+                "information before finalizing empirical conclusions."
+            )
+        else:
+            completion = (
+                "### Completion Items\n"
+                "The analyzer found explicit dataset names, metric names, and baseline comparison rows "
+                "in the supplied notes. Implementation settings, statistical testing, and final table "
+                "formatting still require manual verification before submission."
+            )
+
+        return (
+            "### Experimental Setup\n"
+            f"The evaluation is organized around {datasets} and reports {metrics}. The comparison "
+            "centers on the provided baseline family and the proposed method, with ablations and "
+            "qualitative analysis added when the supplied evidence supports them.\n\n"
+            f"{main_results}\n\n"
+            f"{completion}"
+        )
+
+    def _conclusion_text(self, innovations, experiments, result_summary: str) -> str:
+        innovation_names = self._innovation_name_list(innovations)
+        if result_summary:
+            evidence_sentence = (
+                f"The supplied experiment tables provide preliminary evidence summarized as: {result_summary}"
+            )
+        elif experiments and experiments.missing_details:
+            evidence_sentence = (
+                "The empirical validation remains incomplete because several protocol or result details "
+                "are still missing from the supplied materials."
+            )
+        else:
+            evidence_sentence = (
+                "The empirical discussion remains intentionally cautious until the final verified result "
+                "tables are inserted."
+            )
+
+        return (
+            f"This paper frames {innovation_names} as the main contribution set for improving the "
+            f"baseline setting. The study separates the proposed technical ideas from the code-level "
+            f"evidence used to support them, which keeps the method narrative centered on the analyzed "
+            f"innovations. {evidence_sentence} Before submission, the author still needs to verify "
+            f"bibliography metadata, final experiment details, and the strength of each novelty claim."
+        )
+
+    def _abstract_evidence_text(self, experiments, result_summary: str) -> str:
+        if result_summary:
+            return result_summary
+        datasets = (
+            ", ".join(experiments.datasets)
+            if experiments and experiments.datasets
+            else "the target datasets"
+        )
+        return f"Preliminary experiments motivate a structured evaluation over {datasets}."
+
+    def _problem_sentence(self, request, baseline) -> str:
+        if baseline and baseline.problem:
+            return self._paper_prose(baseline.problem).rstrip(".") + "."
+        return (
+            f"{request.project_name} focuses on a research problem targeted at "
+            f"{request.target_venue}, where a baseline method is extended through the supplied code "
+            "and experiment evidence."
+        )
+
+    def _limitation_sentence(self, baseline) -> str:
+        if baseline and baseline.limitations:
+            limitation = self._paper_prose(baseline.limitations[0]).rstrip(".")
+            return f"The key limitation carried into this draft is: {limitation}."
+        return (
+            "The limitation analysis is conservative because it is derived only from the provided "
+            "baseline, code, and experiment artifacts."
+        )
+
+    def _contribution_text(self, innovations) -> str:
+        if not innovations:
+            return (
+                "- The draft identifies the baseline setting and reserves the technical "
+                "contribution for author-supplied method notes."
+            )
+        bullets = []
+        for innovation in innovations:
+            name = self._paper_prose(innovation.name)
+            idea = self._paper_prose(innovation.technical_idea).rstrip(".")
+            evidence = self._evidence_text(innovation.evidence)
+            bullets.append(f"- {name}. {idea}. Supporting evidence: {evidence}")
+        return "\n".join(bullets)
+
+    def _evidence_text(self, evidence: list[str]) -> str:
+        cleaned = [self._paper_prose(item).rstrip(".") for item in evidence if item.strip()]
+        if not cleaned:
+            return "Evidence remains to be supplied."
+        return "; ".join(cleaned[:3]) + "."
+
+    def _risk_text(self, risk: str) -> str:
+        text = self._paper_prose(risk).strip()
+        if not text:
+            return "Novelty, wording, and empirical support require manual verification before submission."
+        return text
+
+    def _innovation_name_list(self, innovations) -> str:
+        if not innovations:
+            return "a targeted method contribution to be finalized by the author"
+        return ", ".join(item.name for item in innovations[:4])
+
+    def _list_phrase(self, values: list[str], fallback: str) -> str:
+        cleaned = [value for value in values if value]
+        if not cleaned:
+            return fallback
+        if len(cleaned) == 1:
+            return cleaned[0]
+        if len(cleaned) == 2:
+            return " and ".join(cleaned)
+        return ", ".join(cleaned[:-1]) + ", and " + cleaned[-1]
+
+    def _lower_initial(self, text: str) -> str:
+        return text[:1].lower() + text[1:] if text else text
+
+    def _paper_prose(self, text: str) -> str:
+        replacements = {
+            r"\bUser should provide the core technical change in method notes\.?": (
+                "The core technical change remains to be specified in the method notes."
+            ),
+            r"\buser should confirm novelty and wording\.?": (
+                "novelty and wording require manual confirmation."
+            ),
+            r"\bthis point should not be treated as final\.?": "this point remains provisional.",
+            r"\bBaseline comparison rows should be made explicit\.?": (
+                "Baseline comparison rows are not yet explicit."
+            ),
+            r"\bDataset names are not explicit\.?": "Dataset names are not yet explicit.",
+            r"\bEvaluation metrics are not explicit\.?": "Evaluation metrics are not yet explicit.",
+        }
+        cleaned = text.strip()
+        for pattern, replacement in replacements.items():
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.I)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
 
     def _run_llm(self, state: PaperState) -> DraftSections:
         fallback = self._run_fallback(state)

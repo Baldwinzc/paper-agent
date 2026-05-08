@@ -39,6 +39,7 @@ def test_payload_uses_messages_and_model():
 
 
 def test_config_defaults_to_deepseek_v4_pro(monkeypatch):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
     monkeypatch.delenv("TEXT_MODEL", raising=False)
@@ -55,6 +56,7 @@ def test_config_defaults_to_deepseek_v4_pro(monkeypatch):
 
 
 def test_config_accepts_deepseek_base_alias(monkeypatch):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
     monkeypatch.setenv("OPENAI_API_BASE", "https://example.invalid")

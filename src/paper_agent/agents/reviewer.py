@@ -90,6 +90,21 @@ class ReviewerAgent:
                     )
                 )
 
+            outline_hits = self._outline_language_hits(sections.model_dump())
+            state.setdefault("artifacts", {})["outline_language_hits"] = outline_hits
+            if outline_hits:
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue=(
+                            "Draft still contains outline or procedural language in "
+                            + ", ".join(outline_hits[:5])
+                            + "."
+                        ),
+                        suggestion="Rewrite these passages as paper prose rather than instructions to the writer.",
+                    )
+                )
+
         state["review_findings"] = [*state.get("review_findings", []), *findings]
         return state
 
@@ -101,6 +116,24 @@ class ReviewerAgent:
             r"Table\s+[XY]",
             r"Fig\.\s*\[",
             r"\[.*?to be (?:added|filled|completed|refined).*?\]",
+        ]
+        hits = []
+        for section, text in section_values.items():
+            for pattern in patterns:
+                if re.search(pattern, text, flags=re.I):
+                    hits.append(section)
+                    break
+        return hits
+
+    def _outline_language_hits(self, section_values: dict[str, str]) -> list[str]:
+        patterns = [
+            r"\b(?:introduction|related work|experiments?|conclusion|method)\s+section\s+should\b",
+            r"\bshould\s+(?:open|include|discuss|state|restate|summarize|explain)\b",
+            r"\bshould\s+be\s+(?:made|treated|discussed|positioned|resolved|filled|refined)\b",
+            r"\bto be refined\b",
+            r"\bcurrent missing details\b",
+            r"\bcurrent parsed result summary\b",
+            r"\bfinal conclusion should\b",
         ]
         hits = []
         for section, text in section_values.items():
