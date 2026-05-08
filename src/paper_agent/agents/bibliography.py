@@ -39,7 +39,10 @@ class BibliographyAgent:
                     title=title,
                     query=self._contextual_query(term, state),
                     authors=["Related work authors"],
-                    note="Seed related-work entry generated from project keywords; replace with real paper metadata.",
+                    note=(
+                        "Seed related-work entry generated from project keywords; "
+                        "replace with real paper metadata. Verify metadata before submission."
+                    ),
                 ),
             )
 
@@ -51,7 +54,7 @@ class BibliographyAgent:
                     title=f"Related work for {request.project_name}",
                     query=request.project_name,
                     authors=["To be completed"],
-                    note="Placeholder bibliography seed; replace with real paper metadata.",
+                    note="Placeholder bibliography seed; replace with real paper metadata. Verify metadata before submission.",
                 ),
             )
 
