@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
+from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
-from paper_agent.state import PaperRequest
+from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
 from paper_agent.workflow import PaperWorkflow
 
 
@@ -20,6 +22,11 @@ def main() -> None:
     demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     demo.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     demo.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    demo.add_argument(
+        "--skip-llm-self-review",
+        action="store_true",
+        help="Skip the final LLM self-review pass for this run.",
+    )
     draft = sub.add_parser("draft", help="Draft a paper from local research materials.")
     draft.add_argument("--project-name", required=True)
     draft.add_argument("--target-venue", required=True)
@@ -31,10 +38,18 @@ def main() -> None:
     draft.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     draft.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     draft.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    draft.add_argument(
+        "--skip-llm-self-review",
+        action="store_true",
+        help="Skip the final LLM self-review pass for this run.",
+    )
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
+    sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     args = parser.parse_args()
 
     if args.command == "demo":
+        if args.skip_llm_self_review:
+            _disable_llm_self_review_for_run()
         request = PaperRequest(
             project_name="adaptive-baseline-improvement",
             target_venue="IEEE Conference",
@@ -62,12 +77,15 @@ def main() -> None:
         print(f"Template source: {state['venue_template'].template_source}")
         print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
+        print(f"LLM self-review: {_llm_self_review_mode(state)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
             zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
             state["latex_zip_path"] = zip_path
             print(f"Overleaf zip written to {zip_path}")
     elif args.command == "draft":
+        if args.skip_llm_self_review:
+            _disable_llm_self_review_for_run()
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
         request = PaperRequest(
@@ -96,6 +114,7 @@ def main() -> None:
         print(f"Template source: {state['venue_template'].template_source}")
         print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
+        print(f"LLM self-review: {_llm_self_review_mode(state)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
             zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
@@ -116,6 +135,8 @@ def main() -> None:
         except LLMError as exc:
             raise SystemExit(f"LLM ping failed: {exc}") from exc
         print(result.content.strip())
+    elif args.command == "llm-self-review-smoke":
+        _run_llm_self_review_smoke()
 
 
 def _resolve_baseline_pdf(path_value: str) -> Path:
@@ -127,6 +148,50 @@ def _resolve_baseline_pdf(path_value: str) -> Path:
         if pdfs:
             return pdfs[0]
     raise SystemExit(f"No baseline PDF found at {path}")
+
+
+def _disable_llm_self_review_for_run() -> None:
+    os.environ["PAPER_AGENT_DISABLE_LLM_SELF_REVIEW"] = "1"
+
+
+def _llm_self_review_mode(state: dict) -> str:
+    return str(state.get("artifacts", {}).get("llm_self_review", {}).get("mode", "not run"))
+
+
+def _run_llm_self_review_smoke() -> None:
+    config = load_llm_config()
+    client = LLMClient(config)
+    state = {
+        "request": PaperRequest(project_name="llm-self-review-smoke", target_venue="TPAMI"),
+        "sections": DraftSections(
+            experiments=(
+                "We evaluate on BLCA using C-index. The method obtains 0.999 on XYZ."
+            )
+        ),
+        "experiments": ExperimentSummary(
+            raw_preview=(
+                "| Method | BLCA C-index |\n"
+                "|---|---:|\n"
+                "| baseline | 0.646 |\n"
+                "| ours | 0.671 |\n"
+            ),
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+            observations=["Ours improves over baseline on BLCA by +0.025."],
+        ),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+    review = reviewed.get("artifacts", {}).get("llm_self_review", {})
+    print(f"LLM self-review mode: {review.get('mode', 'unknown')}")
+    if review.get("error"):
+        raise SystemExit(f"LLM self-review failed: {review['error']}")
+    claims = review.get("unsupported_claims", [])
+    print(f"Unsupported claims: {len(claims)}")
+    for claim in claims[:3]:
+        print(f"- [{claim.get('severity', 'major')}] {claim.get('section')}: {claim.get('claim')}")
 
 
 if __name__ == "__main__":

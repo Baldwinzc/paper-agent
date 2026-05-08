@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
+from paper_agent import cli as cli_module
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, PaperRequest, VenueTemplate
 from paper_agent.workflow import PaperWorkflow
@@ -1068,6 +1069,25 @@ def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
     assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
     assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
     assert client.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
+
+
+def test_cli_llm_self_review_smoke_reports_unavailable_without_llm(monkeypatch, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "1")
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-self-review-smoke"])
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "LLM self-review mode: unavailable" in output
+    assert "Unsupported claims: 0" in output
+
+
+def test_cli_skip_llm_self_review_sets_run_env(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+
+    cli_module._disable_llm_self_review_for_run()
+
+    assert os.environ["PAPER_AGENT_DISABLE_LLM_SELF_REVIEW"] == "1"
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

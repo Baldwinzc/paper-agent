@@ -108,6 +108,17 @@ $env:PYTHONPATH="D:\code\agent\paper-agent\src"
 python -m paper_agent.cli llm-ping
 ```
 
+Check the configured LLM reviewer on a tiny evidence bundle:
+
+```powershell
+$env:PYTHONPATH="D:\code\agent\paper-agent\src"
+python -m paper_agent.cli llm-self-review-smoke
+```
+
+The smoke command prints the LLM self-review mode and any unsupported claims it
+finds. It is useful after changing providers or model names because it exercises
+the same JSON review path used at the end of a real draft run.
+
 Draft from local materials:
 
 ```powershell
@@ -122,6 +133,11 @@ python -m paper_agent.cli draft `
   --output outputs\hyper-protosurv-mock\draft.md `
   --zip outputs\hyper-protosurv-mock-overleaf.zip
 ```
+
+Add `--skip-llm-self-review` when you want LLM section drafting but do not want
+the final second-pass reviewer to call the configured model. The CLI prints
+`LLM self-review: llm`, `unavailable`, `disabled`, or `error` after each draft
+run so provider/configuration problems are visible immediately.
 
 Use a manually downloaded official template when automatic fetching is blocked:
 

@@ -68,6 +68,9 @@ Generated sections are also checked against supplied experiments and innovation
 points to flag unsupported datasets, metrics, numeric results, or Method subsections.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
+The reviewer pass can be skipped per CLI run, and a dedicated smoke command
+exercises the configured provider on a tiny evidence bundle before spending a full
+draft-generation call.
 
 ## Phases
 
