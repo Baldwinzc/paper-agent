@@ -43,6 +43,12 @@ class RelatedWorkDiscoveryAgent:
             except Exception as exc:
                 errors["baseline_citations"] = str(exc)
 
+        if baseline:
+            try:
+                candidates.extend(self._mentioned_work_candidates(baseline, limit=3))
+            except Exception as exc:
+                errors["baseline_mentions"] = str(exc)
+
         query = self._field_query(state)
         if query:
             try:
@@ -146,6 +152,184 @@ class RelatedWorkDiscoveryAgent:
             for work in works[:limit]
         ]
 
+    def _mentioned_work_candidates(self, baseline, limit: int) -> list[CitationEntry]:
+        queries = self._mentioned_work_queries(baseline)
+        entries: list[CitationEntry] = []
+        for query in queries:
+            if len(entries) >= limit:
+                break
+            surname, search_query = self._split_mentioned_query(query)
+            data = self._query_openalex(
+                {
+                    "search": search_query,
+                    "per-page": 5,
+                    "sort": "relevance_score:desc",
+                    "select": self._select_fields(),
+                }
+            )
+            works = data.get("results", []) if isinstance(data, dict) else []
+            selected = self._best_mentioned_work(surname, search_query, works)
+            if not selected:
+                continue
+            entry = self._entry_from_work(
+                selected,
+                category="baseline_mentioned",
+                note_prefix="Candidate discovered from a named work in the provided baseline related-work text",
+            )
+            entries.append(entry.model_copy(update={"query": query, "note": f"{entry.note} Source query: {query}."}))
+        return entries
+
+    def _mentioned_work_queries(self, baseline) -> list[str]:
+        section_text = ""
+        if getattr(baseline, "structured_sections", None):
+            section_text = "\n".join(
+                [
+                    baseline.structured_sections.get("related_work", ""),
+                    baseline.structured_sections.get("introduction", ""),
+                ]
+            )
+        if not section_text:
+            section_text = getattr(baseline, "extracted_text_preview", "")
+        domain_context = self._baseline_query_context(baseline)
+        references = getattr(baseline, "references", {}) or {}
+        queries: list[str] = []
+        for sentence in self._sentences(section_text):
+            match = re.search(r"\b([A-Z][A-Za-z-]{2,})\s+et\s+al\.", sentence)
+            if not match:
+                continue
+            surname = match.group(1)
+            citation_match = re.search(r"\[(\d+)\]", sentence)
+            reference = references.get(citation_match.group(1)) if citation_match else ""
+            if reference:
+                context = self._reference_query(surname, reference)
+                if context:
+                    queries.append(context)
+                    if len(queries) >= 8:
+                        break
+                    continue
+            context_tokens = (self._query_context(sentence) + " " + domain_context).split()
+            context = " ".join(list(dict.fromkeys(context_tokens))[:12])
+            if context:
+                queries.append(f"{surname} {context}")
+            if len(queries) >= 8:
+                break
+        return list(dict.fromkeys(queries))
+
+    def _reference_query(self, surname: str, reference: str) -> str:
+        compact = re.sub(r"\s+", " ", reference or "").strip()
+        compact = re.sub(r"https?://\S+|doi:\S+|arXiv:\S+", " ", compact, flags=re.I)
+        parts = [part.strip(" .") for part in re.split(r"\.\s+", compact) if part.strip(" .")]
+        title = ""
+        if len(parts) >= 2:
+            title = parts[1]
+        elif parts:
+            title = parts[0]
+        title = re.sub(r"\b(?:In|Proceedings|IEEE|ACM|Springer|PMLR)\b.*$", "", title).strip(" ,.;:")
+        return f"{surname} | {title}"[:220].strip()
+
+    def _split_mentioned_query(self, query: str) -> tuple[str, str]:
+        if "|" in query:
+            surname, search_query = query.split("|", 1)
+            return surname.strip().split(maxsplit=1)[0], search_query.strip()
+        return (query.split(maxsplit=1)[0] if query else ""), query
+
+    def _baseline_query_context(self, baseline) -> str:
+        parts = [getattr(baseline, "title", "")]
+        parts.extend(getattr(baseline, "related_terms", []) or [])
+        tokens: list[str] = []
+        for part in parts:
+            tokens.extend(self._title_terms(str(part)))
+        unique_tokens = list(dict.fromkeys(tokens))
+        priority = [
+            token
+            for token in unique_tokens
+            if token
+            in {
+                "whole",
+                "slide",
+                "image",
+                "survival",
+                "predict",
+                "cancer",
+                "histology",
+                "graph",
+                "hypergraph",
+                "pathology",
+                "prognostic",
+                "molecular",
+                "outcome",
+            }
+        ]
+        selected = priority + [token for token in unique_tokens if token not in priority]
+        return " ".join(selected[:8])
+
+    def _sentences(self, text: str) -> list[str]:
+        compact = re.sub(r"\s+", " ", text or "").strip()
+        compact = re.sub(r"\bet\s+al\.", "et al<DOT>", compact)
+        return [
+            sentence.replace("et al<DOT>", "et al.").strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", compact)
+            if len(sentence.strip()) >= 40
+        ]
+
+    def _query_context(self, sentence: str) -> str:
+        cleaned = re.sub(r"\[[^\]]+\]", " ", sentence)
+        cleaned = re.sub(r"\b[A-Z][A-Za-z-]{2,}\s+et\s+al\.", " ", cleaned)
+        tokens = self._title_terms(cleaned)
+        priority = [
+            token
+            for token in tokens
+            if token
+            in {
+                "whole",
+                "slide",
+                "image",
+                "survival",
+                "predict",
+                "cancer",
+                "histology",
+                "graph",
+                "hypergraph",
+                "weakly",
+                "supervised",
+                "pathology",
+                "prognostic",
+                "molecular",
+                "outcome",
+            }
+        ]
+        selected = priority[:8] if priority else tokens[:8]
+        return " ".join(selected)
+
+    def _best_mentioned_work(
+        self,
+        surname: str,
+        query: str,
+        works: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        author_matches = [work for work in works if self._work_has_author_surname(work, surname)]
+        if not author_matches:
+            return None
+        relevant = [work for work in author_matches if self._mentioned_work_relevant(query, work)]
+        return relevant[0] if relevant else None
+
+    def _work_has_author_surname(self, work: dict[str, Any], surname: str) -> bool:
+        expected = self._normalize_name_token(surname)
+        if not expected:
+            return False
+        for author in self._authors(work):
+            parts = [self._normalize_name_token(part) for part in re.findall(r"[A-Za-z-]+", author)]
+            if expected in parts:
+                return True
+        return False
+
+    def _mentioned_work_relevant(self, query: str, work: dict[str, Any]) -> bool:
+        query_tokens = set(self._title_terms(query))
+        title_tokens = set(self._title_terms(str(work.get("title") or "")))
+        if not query_tokens or not title_tokens:
+            return False
+        return len(query_tokens & title_tokens) >= 2
+
     def _search_candidates(
         self,
         query: str,
@@ -240,6 +424,7 @@ class RelatedWorkDiscoveryAgent:
             "venue": entry.venue,
             "doi": entry.doi,
             "url": entry.url,
+            "query": entry.query,
             "category": category_match.group(1) if category_match else "unknown",
             "cited_by_count": int(cited_match.group(1)) if cited_match else 0,
         }
@@ -323,12 +508,42 @@ class RelatedWorkDiscoveryAgent:
             "using",
             "based",
             "paper",
+            "method",
+            "methods",
+            "model",
+            "models",
+            "proposed",
+            "employed",
+            "used",
+            "processing",
         }
-        return [
-            token.lower()
-            for token in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", title)
-            if token.lower() not in stopwords
-        ]
+        terms = []
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", title):
+            normalized = self._normalize_topic_token(token)
+            if normalized and normalized not in stopwords:
+                terms.append(normalized)
+        return terms
+
+    def _normalize_topic_token(self, value: str) -> str:
+        token = value.lower()
+        aliases = {
+            "images": "image",
+            "outcomes": "outcome",
+            "predicting": "predict",
+            "prediction": "predict",
+            "predictive": "predict",
+            "predicted": "predict",
+            "histological": "histology",
+            "cnns": "cnn",
+        }
+        if token in aliases:
+            return aliases[token]
+        if token.endswith("ies") and len(token) > 5:
+            return token[:-3] + "y"
+        return token
+
+    def _normalize_name_token(self, value: str) -> str:
+        return re.sub(r"[^a-z]", "", value.lower())
 
     def _relevant_to_query(self, query: str, title: str) -> bool:
         query_tokens = set(self._title_terms(query))

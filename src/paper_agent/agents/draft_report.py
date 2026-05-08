@@ -78,12 +78,15 @@ class DraftReportAgent:
         if related_candidates:
             lines.extend(["", "## Related Work Discovery", ""])
             for candidate in related_candidates:
+                query = candidate.get("query")
+                query_text = f"; query: {query}" if query and query != candidate.get("title") else ""
                 lines.append(
                     "- "
                     f"[{candidate.get('category', 'unknown')}] "
                     f"`{candidate.get('key')}`: {candidate.get('title')} "
                     f"({candidate.get('year') or 'year unknown'}, "
                     f"cited by {candidate.get('cited_by_count', 0)})"
+                    f"{query_text}"
                 )
 
         citation_coverage = artifacts.get("related_work_citation_coverage", [])

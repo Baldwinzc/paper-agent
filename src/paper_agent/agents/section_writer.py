@@ -482,13 +482,20 @@ class SectionWriterAgent:
 
         grouped: dict[str, list[dict[str, Any]]] = self._group_related_work(candidates)
         sections = []
-        if grouped.get("baseline_reference") or grouped.get("baseline_citing"):
+        if grouped.get("baseline_reference") or grouped.get("baseline_citing") or grouped.get("baseline_mentioned"):
             baseline_items = grouped.get("baseline_reference", [])[:3]
             citing_items = grouped.get("baseline_citing", [])[:3]
+            mentioned_items = grouped.get("baseline_mentioned", [])[:3]
             pieces = []
             if baseline_title:
                 pieces.append(
                     f"The provided baseline, {baseline_title}, anchors the local problem setting."
+                )
+            if mentioned_items:
+                pieces.append(
+                    "Candidate works retrieved from names explicitly discussed by the baseline include "
+                    + self._candidate_sentence(mentioned_items)
+                    + ", which provides local context for the baseline's stated research threads after manual verification."
                 )
             if baseline_items:
                 pieces.append(

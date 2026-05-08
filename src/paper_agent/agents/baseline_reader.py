@@ -50,6 +50,7 @@ class BaselineReaderAgent:
     def run(self, state: PaperState) -> PaperState:
         request: PaperRequest = state["request"]
         raw_text = self._extract_text(request.baseline_pdf_path)
+        reference_text = self._extract_text(request.baseline_pdf_path, max_pages=None)
         text = self._clean_extracted_text(raw_text)
         structured_sections = self._extract_structured_sections(raw_text)
         section_text = self._merged_section_text(structured_sections, text)
@@ -67,11 +68,12 @@ class BaselineReaderAgent:
             limitations=limitations,
             related_terms=terms,
             structured_sections=structured_sections,
+            references=self._extract_references(reference_text or raw_text),
             extracted_text_preview=preview,
         )
         return state
 
-    def _extract_text(self, pdf_path: str | None) -> str:
+    def _extract_text(self, pdf_path: str | None, max_pages: int | None = 8) -> str:
         if not pdf_path:
             return ""
         path = Path(pdf_path)
@@ -84,9 +86,37 @@ class BaselineReaderAgent:
             import fitz  # type: ignore
 
             doc = fitz.open(path)
-            return "\n".join(page.get_text("text") for page in doc[:8])
+            pages = doc if max_pages is None else doc[:max_pages]
+            return "\n".join(page.get_text("text") for page in pages)
         except Exception:
             return ""
+
+    def _extract_references(self, text: str) -> dict[str, str]:
+        if not text:
+            return {}
+        match = re.search(r"\bReferences\b", text, flags=re.I)
+        if not match:
+            return {}
+        body = text[match.end() :]
+        body = re.sub(r"(?<=\w)-\s+(?=\w)", "", body)
+        body = re.split(r"\n[A-Z]\n(?:Appendix|Additional|Implementation|Dataset|Visualization)", body, maxsplit=1)[0]
+        lines = []
+        for raw in body.splitlines():
+            clean = " ".join(raw.split()).strip()
+            if not clean or re.fullmatch(r"\d+", clean):
+                continue
+            lines.append(clean)
+        joined = "\n".join(lines)
+        references: dict[str, str] = {}
+        for chunk in re.split(r"\n(?=\[\d+\]\s+)", joined):
+            ref_match = re.match(r"\[(\d+)\]\s+(.+)", chunk, flags=re.S)
+            if not ref_match:
+                continue
+            label = ref_match.group(1)
+            reference = " ".join(ref_match.group(2).split())
+            if 25 <= len(reference) <= 1200:
+                references[label] = reference[:800]
+        return references
 
     def _clean_extracted_text(self, text: str) -> str:
         lines = []

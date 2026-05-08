@@ -61,6 +61,11 @@ the user when needed.
 The Related Work section should not depend only on the user-provided baseline PDF.
 The workflow expands it by retrieving the baseline's references, papers that cite the
 baseline, influential field papers, and recent field papers before drafting.
+When the baseline metadata cannot expose references directly, the workflow parses
+numbered references from the baseline PDF and uses named works mentioned in the
+baseline's related-work text as OpenAlex search seeds. Candidate papers must match
+the mentioned author's surname and overlap with the reference/title context before
+they are added to the bibliography.
 
 Bibliography metadata is treated as evidence with status. Automatically resolved
 entries are separated from unresolved seed entries, and the draft report keeps both

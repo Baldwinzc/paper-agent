@@ -149,6 +149,21 @@ def test_baseline_reader_extracts_structured_sections(tmp_path):
     assert "prototype learning" in baseline.related_terms
 
 
+def test_baseline_reader_extracts_numbered_references():
+    text = (
+        "References\n"
+        "[5] Richard J Chen, Ming Y Lu, and Faisal Mahmood. Whole slide images are 2d point clouds: "
+        "Context-aware survival prediction using patch-based graph convolutional networks. MICCAI, 2021.\n"
+        "[18] Mobadersany Person. Predicting cancer outcomes from histology. Journal, 2018.\n"
+    )
+
+    references = BaselineReaderAgent()._extract_references(text)
+
+    assert "5" in references
+    assert "Whole slide images are 2d point clouds" in references["5"]
+    assert "18" in references
+
+
 def test_innovation_name_uses_readable_hypergraph_title():
     name = InnovationAnalyzerAgent()._innovation_name(
         "Hyper-ProtoSurv explores adaptive hypergraph prototype learning, "
@@ -799,13 +814,13 @@ def test_reference_resolver_deduplicates_repeated_dois(monkeypatch):
 
 
 def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
-    def work(title, identifier, year, cited_by_count, referenced_works=None):
+    def work(title, identifier, year, cited_by_count, referenced_works=None, authors=None):
         return {
             "id": f"https://openalex.org/{identifier}",
             "title": title,
             "doi": f"https://doi.org/10.1234/{identifier.lower()}",
             "publication_year": year,
-            "authorships": [{"author": {"display_name": "Ada Lovelace"}}],
+            "authorships": [{"author": {"display_name": author}} for author in (authors or ["Ada Lovelace"])],
             "primary_location": {"source": {"display_name": "IEEE Transactions"}},
             "ids": {"openalex": f"https://openalex.org/{identifier}"},
             "referenced_works": referenced_works or [],
@@ -823,6 +838,19 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
                         42,
                         referenced_works=["https://openalex.org/WCLASSIC"],
                     )
+                ]
+            }
+        if "Predicting cancer outcomes" in str(params.get("search", "")):
+            return {
+                "results": [
+                    work("Unrelated software library", "WBAD", 2020, 999, authors=["Ada Lovelace"]),
+                    work(
+                        "Predicting cancer outcomes from histology",
+                        "WMENTION",
+                        2018,
+                        850,
+                        authors=["Mobadersany Person"],
+                    ),
                 ]
             }
         if str(params.get("filter", "")).startswith("openalex_id:"):
@@ -852,6 +880,18 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
         "baseline": BaselineSummary(
             title="Baseline Survival Paper",
             related_terms=["computational pathology"],
+            structured_sections={
+                "related_work": (
+                    "Mobadersany et al. [18] proposed an end-to-end CNN method for "
+                    "survival prediction in whole-slide histology images."
+                )
+            },
+            references={
+                "18": (
+                    "Mobadersany Person. Predicting cancer outcomes from histology. "
+                    "IEEE Transactions, 2018."
+                )
+            },
         ),
         "bibliography": [
             CitationEntry(
@@ -867,10 +907,36 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
 
     categories = {item["category"] for item in state["artifacts"]["related_work_candidates"]}
     titles = [item["title"] for item in state["artifacts"]["related_work_candidates"]]
-    assert {"baseline_reference", "baseline_citing", "influential", "recent"} <= categories
+    assert {"baseline_reference", "baseline_citing", "baseline_mentioned", "influential", "recent"} <= categories
     assert titles.count("New whole-slide survival prediction model") == 1
+    assert "Predicting cancer outcomes from histology" in titles
+    assert any("Predicting cancer outcomes" in item.get("query", "") for item in state["artifacts"]["related_work_candidates"])
     assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
     assert state["artifacts"]["citation_keys"]
+
+
+def test_related_work_discovery_extracts_baseline_mentioned_queries():
+    baseline = BaselineSummary(
+        structured_sections={
+            "related_work": (
+                "Mobadersany et al. [18] proposed an end-to-end CNN method for processing "
+                "manually annotated ROIs in whole-slide histology survival prediction. "
+                "Chen et al. [5] employed a graph convolutional network for context-aware WSI modeling."
+            )
+        },
+        references={
+            "18": "Mobadersany Person. Predicting cancer outcomes from histology. Journal, 2018.",
+            "5": (
+                "Chen Person. Whole slide images are 2d point clouds: Context-aware survival "
+                "prediction using patch-based graph convolutional networks. MICCAI, 2021."
+            ),
+        },
+    )
+
+    queries = RelatedWorkDiscoveryAgent()._mentioned_work_queries(baseline)
+
+    assert any(query.startswith("Mobadersany |") and "Predicting cancer outcomes" in query for query in queries)
+    assert any(query.startswith("Chen |") and "2d point clouds" in query for query in queries)
 
 
 def test_section_writer_uses_related_work_discovery_in_fallback():
@@ -891,6 +957,11 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
                     "category": "recent",
                     "title": "Recent paper",
                 },
+                {
+                    "key": "mentionedpaper",
+                    "category": "baseline_mentioned",
+                    "title": "Mentioned paper",
+                },
             ],
         },
     }
@@ -899,6 +970,7 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
 
     assert r"\cite{classicpaper}" in sections.related_work
     assert r"\cite{recentpaper}" in sections.related_work
+    assert r"\cite{mentionedpaper}" in sections.related_work
     assert "### Baseline Lineage" in sections.related_work
     assert "### Recent Developments" in sections.related_work
     assert "Classic paper" in sections.related_work
