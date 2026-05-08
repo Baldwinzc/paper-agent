@@ -45,6 +45,20 @@ class FakeLLMClient:
         return SimpleNamespace(content=self.content, model="fake", usage={}, raw={})
 
 
+class FakeSequenceLLMClient:
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = contents
+        self.calls = []
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def chat(self, messages, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return SimpleNamespace(content=self.contents.pop(0), model="fake", usage={}, raw={})
+
+
 def test_baseline_reader_uses_descriptive_pdf_filename_for_truncated_title():
     reader = BaselineReaderAgent()
     text_title = "Leveraging Tumor Heterogeneity: Heterogeneous"
@@ -1277,6 +1291,41 @@ def test_llm_self_review_records_bad_json_error(monkeypatch):
 
     assert reviewed["artifacts"]["llm_self_review"]["mode"] == "error"
     assert "review_findings" not in reviewed
+
+
+def test_llm_self_review_repairs_invalid_json_once(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    client = FakeSequenceLLMClient(
+        [
+            '{"unsupported_claims": [{"section": "method", "claim": "Broken',
+            """
+            {
+              "unsupported_claims": [
+                {
+                  "section": "method",
+                  "claim": "Uses NVIDIA GPUs.",
+                  "reason": "Hardware is absent from supplied evidence.",
+                  "evidence_needed": "Add hardware details.",
+                  "severity": "minor"
+                }
+              ],
+              "section_quality_notes": []
+            }
+            """,
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="llm-review-repair-demo", target_venue="TPAMI"),
+        "sections": DraftSections(method="Uses NVIDIA GPUs."),
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+
+    assert reviewed["artifacts"]["llm_self_review"]["mode"] == "llm"
+    assert reviewed["artifacts"]["llm_self_review"]["repaired_from_invalid_json"]
+    assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "method"
+    assert len(client.calls) == 2
 
 
 def test_draft_report_includes_llm_self_review(tmp_path):

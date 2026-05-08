@@ -29,27 +29,25 @@ class LLMSelfReviewAgent:
             artifacts["llm_self_review"] = {"mode": "skipped", "reason": "no sections"}
             return state
 
+        repaired_from_invalid_json = False
         try:
             result = self.llm_client.chat(
-                [
-                    ChatMessage(
-                        role="system",
-                        content=(
-                            "You are a strict scientific paper reviewer. You identify only claims "
-                            "that are not supported by the supplied evidence. You do not ask for "
-                            "stylistic edits."
-                        ),
-                    ),
-                    ChatMessage(
-                        role="user",
-                        content=json.dumps(self._prompt_payload(state), ensure_ascii=False),
-                    ),
-                ],
+                self._review_messages(state),
                 temperature=0.0,
-                max_tokens=1600,
+                max_tokens=2400,
                 response_format={"type": "json_object"},
             )
-            review = self._parse_review(result.content)
+            try:
+                review = self._parse_review(result.content)
+            except (ValueError, json.JSONDecodeError) as exc:
+                repaired_from_invalid_json = True
+                repair_result = self.llm_client.chat(
+                    self._repair_messages(result.content, str(exc)),
+                    temperature=0.0,
+                    max_tokens=1800,
+                    response_format={"type": "json_object"},
+                )
+                review = self._parse_review(repair_result.content)
         except (LLMError, ValueError, json.JSONDecodeError) as exc:
             artifacts["llm_self_review"] = {"mode": "error", "error": str(exc)}
             return state
@@ -60,6 +58,7 @@ class LLMSelfReviewAgent:
             "mode": "llm",
             "unsupported_claims": claims,
             "section_quality_notes": notes,
+            "repaired_from_invalid_json": repaired_from_invalid_json,
         }
         if claims:
             state["review_findings"] = [
@@ -89,6 +88,8 @@ class LLMSelfReviewAgent:
                 "A claim is unsupported if it introduces a dataset, metric, number, "
                 "baseline, method component, or contribution not present in evidence.",
                 "Do not flag cautious statements such as 'requires manual verification'.",
+                "Return at most five unsupported_claims.",
+                "Keep every JSON string under 160 characters.",
                 "Return JSON only.",
             ],
             "output_schema": {
@@ -125,6 +126,56 @@ class LLMSelfReviewAgent:
             },
             "draft_sections": self._truncate(sections.model_dump(), 9000),
         }
+
+    def _review_messages(self, state: PaperState) -> list[ChatMessage]:
+        return [
+            ChatMessage(
+                role="system",
+                content=(
+                    "You are a strict scientific paper reviewer. You identify only claims "
+                    "that are not supported by the supplied evidence. You do not ask for "
+                    "stylistic edits. Return compact valid JSON only."
+                ),
+            ),
+            ChatMessage(
+                role="user",
+                content=json.dumps(self._prompt_payload(state), ensure_ascii=False),
+            ),
+        ]
+
+    def _repair_messages(self, invalid_content: str, error: str) -> list[ChatMessage]:
+        return [
+            ChatMessage(
+                role="system",
+                content=(
+                    "Repair invalid JSON from a scientific self-review. Return only valid JSON "
+                    "matching the requested schema. Keep at most five unsupported_claims and "
+                    "short strings."
+                ),
+            ),
+            ChatMessage(
+                role="user",
+                content=json.dumps(
+                    {
+                        "parse_error": error,
+                        "invalid_json_prefix": invalid_content[:8000],
+                        "required_schema": {
+                            "unsupported_claims": [
+                                {
+                                    "section": "section name",
+                                    "claim": "short unsupported claim",
+                                    "reason": "short reason",
+                                    "evidence_needed": "short evidence need",
+                                    "severity": "major|minor",
+                                }
+                            ],
+                            "section_quality_notes": ["short note"],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        ]
 
     def _truncate(self, value: Any, limit: int) -> Any:
         text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
