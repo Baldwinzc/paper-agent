@@ -61,7 +61,12 @@ class InnovationAnalyzerAgent:
         if code and code.summary:
             evidence.append(code.summary)
         if experiments:
-            evidence.extend(experiments.observations[:2])
+            experiment_evidence = [
+                observation
+                for observation in experiments.observations
+                if observation != "Experiment analysis needs more structured result tables."
+            ]
+            evidence.extend(experiment_evidence[:1])
         return evidence or ["Evidence needs to be supplied."]
 
     def _innovation_name(self, claim: str) -> str:

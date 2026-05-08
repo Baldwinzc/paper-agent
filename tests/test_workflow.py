@@ -147,6 +147,30 @@ def test_experiment_analyzer_extracts_tcga_mock_results():
     assert "C-INDEX" in state["experiments"].metrics
     assert "IBS" in state["experiments"].metrics
     assert not state["experiments"].missing_details
+    assert state["artifacts"]["experiment_result_findings"]
+    assert "5/5 numeric comparisons" in state["experiments"].observations[0]
+    assert "average signed improvement +0.023" in state["experiments"].observations[0]
+
+
+def test_experiment_analyzer_handles_lower_is_better_metrics():
+    raw = """
+    | Method | DatasetA IBS | DatasetB IBS |
+    |---|---:|---:|
+    | baseline | 0.180 | 0.210 |
+    | ours | 0.160 | 0.190 |
+    """
+    state = {
+        "request": PaperRequest(
+            project_name="demo",
+            target_venue="TPAMI",
+            experiment_results=raw,
+        )
+    }
+
+    state = ExperimentAnalyzerAgent().run(state)
+
+    assert "2/2 numeric comparisons" in state["experiments"].observations[0]
+    assert "average signed improvement +0.020" in state["experiments"].observations[0]
 
 
 def test_zip_latex_project_contains_overleaf_files(tmp_path):

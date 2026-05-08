@@ -76,6 +76,13 @@ class SectionWriterAgent:
         )
         citation_keys = state.setdefault("artifacts", {}).get("citation_keys", [])
         citation_hint = self._citation_hint(citation_keys)
+        abstract_result_summary = self._result_summary(experiments, limit=1)
+        experiment_result_summary = self._result_summary(experiments, limit=2)
+        missing_details = (
+            ", ".join(experiments.missing_details)
+            if experiments and experiments.missing_details
+            else "No missing experiment details detected by the analyzer"
+        )
 
         return DraftSections(
             abstract=(
@@ -83,8 +90,7 @@ class SectionWriterAgent:
                 f"Starting from the baseline paper, we identify a set of method-level "
                 f"opportunities and propose an innovation-centered framework. "
                 f"Our current draft centers on: {', '.join(item.name for item in innovations)}. "
-                f"Preliminary experiments suggest the need for a structured evaluation over "
-                f"{', '.join(experiments.datasets) if experiments and experiments.datasets else 'the target datasets'}."
+                f"{abstract_result_summary or 'Preliminary experiments suggest the need for a structured evaluation over ' + (', '.join(experiments.datasets) if experiments and experiments.datasets else 'the target datasets') + '.'}"
             ),
             introduction=(
                 "The introduction should open with the research problem and its importance. "
@@ -111,7 +117,8 @@ class SectionWriterAgent:
                 "The experiments section should include: (1) datasets and preprocessing; "
                 "(2) baseline methods; (3) evaluation metrics; (4) implementation details; "
                 "(5) main comparison; (6) ablation studies; and (7) qualitative analysis. "
-                f"Current missing details: {', '.join(experiments.missing_details) if experiments else 'experiment table needed'}."
+                f"{'Current parsed result summary: ' + experiment_result_summary + ' ' if experiment_result_summary else ''}"
+                f"Current missing details: {missing_details}."
             ),
             conclusion=(
                 "This paper presents an innovation-centered improvement over the baseline setting. "
@@ -203,6 +210,16 @@ class SectionWriterAgent:
         return "using seed citations such as " + ", ".join(
             rf"\cite{{{key}}}" for key in citation_keys[:3]
         )
+
+    def _result_summary(self, experiments, limit: int) -> str:
+        if not experiments:
+            return ""
+        useful = [
+            observation
+            for observation in experiments.observations
+            if observation != "Experiment analysis needs more structured result tables."
+        ]
+        return " ".join(useful[:limit])
 
     def _extract_json(self, content: str) -> dict[str, Any]:
         try:
