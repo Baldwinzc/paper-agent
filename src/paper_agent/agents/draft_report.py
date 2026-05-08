@@ -70,6 +70,12 @@ class DraftReportAgent:
             for old_key, new_key in aliases.items():
                 lines.append(f"- `{old_key}` merged into `{new_key}`")
 
+        undefined_citations = artifacts.get("undefined_citation_keys", [])
+        if undefined_citations:
+            lines.extend(["", "## Undefined Citations", ""])
+            for key in undefined_citations:
+                lines.append(f"- `{key}`")
+
         section_errors = artifacts.get("section_writer_section_errors", {})
         if section_errors:
             lines.extend(["", "## Section Writer Errors", ""])

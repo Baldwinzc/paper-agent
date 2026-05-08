@@ -4,12 +4,13 @@ from zipfile import ZipFile
 
 from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
-from paper_agent.state import CitationEntry, PaperRequest
+from paper_agent.state import CitationEntry, PaperOutline, PaperRequest, VenueTemplate
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
+from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.state import CodeSummary, DraftSections, ExperimentSummary
@@ -514,3 +515,54 @@ def test_citation_aliases_convert_to_retained_key():
     tex = state["latex_output_path"].read_text(encoding="utf-8")
     assert r"\cite{wholeslideimages}" in tex
     assert "survivalprediction" not in tex
+
+
+def test_citation_aliases_convert_raw_latex_cite_to_retained_key(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="raw-citation-alias-demo", target_venue="TPAMI"),
+        "venue_template": VenueTemplate(
+            venue="TPAMI",
+            family="ieee_journal",
+            template_dir=str(tmp_path / "missing-template"),
+        ),
+        "outline": PaperOutline(title_candidates=["Raw Citation Alias Demo"]),
+        "sections": DraftSections(),
+        "bibliography": [
+            CitationEntry(key="wholeslideimages", title="Whole slide images", query="whole slide images")
+        ],
+        "artifacts": {"citation_key_aliases": {"survivalprediction": "wholeslideimages"}},
+    }
+    state["sections"].related_work = r"Prior work \cite{survivalprediction} motivates this setting."
+    state = LatexComposerAgent().run(state)
+
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert r"\cite{wholeslideimages}" in tex
+    assert "survivalprediction" not in tex
+
+
+def test_undefined_raw_latex_citation_is_reported(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="undefined-citation-demo", target_venue="TPAMI"),
+        "venue_template": VenueTemplate(
+            venue="TPAMI",
+            family="ieee_journal",
+            template_dir=str(tmp_path / "missing-template"),
+        ),
+        "outline": PaperOutline(title_candidates=["Undefined Citation Demo"]),
+        "sections": DraftSections(
+            related_work=r"Prior work \cite{missing_key} should be resolved before submission."
+        ),
+        "bibliography": [
+            CitationEntry(key="wholeslideimages", title="Whole slide images", query="whole slide images")
+        ],
+        "artifacts": {},
+    }
+    state = LatexComposerAgent().run(state)
+    state = DraftReportAgent().run(state)
+
+    report = (state["latex_project_dir"] / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    assert state["artifacts"]["undefined_citation_keys"] == ["missing_key"]
+    assert r"\cite{missing_key}" in tex
+    assert "## Undefined Citations" in report
+    assert "`missing_key`" in report

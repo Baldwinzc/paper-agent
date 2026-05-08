@@ -43,10 +43,12 @@ class LatexComposerAgent:
         )
         citation_keys = {entry.key for entry in state.get("bibliography", [])}
         citation_aliases = state.get("artifacts", {}).get("citation_key_aliases", {})
+        undefined_citations: set[str] = set()
         experiments_latex = self._latex_escape(
             sections.experiments,
             citation_keys=citation_keys,
             citation_aliases=citation_aliases,
+            undefined_citations=undefined_citations,
         )
         if experiment_table_latex:
             experiments_latex = experiments_latex + "\n\n" + experiment_table_latex
@@ -59,27 +61,32 @@ class LatexComposerAgent:
                 sections.abstract,
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
+                undefined_citations=undefined_citations,
             ),
             "introduction": self._latex_escape(
                 sections.introduction,
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
+                undefined_citations=undefined_citations,
             ),
             "related_work": self._latex_escape(
                 sections.related_work,
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
+                undefined_citations=undefined_citations,
             ),
             "method": self._latex_escape(
                 sections.method,
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
+                undefined_citations=undefined_citations,
             ),
             "experiments": experiments_latex,
             "conclusion": self._latex_escape(
                 sections.conclusion,
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
+                undefined_citations=undefined_citations,
             ),
         }
         if venue_template.sample_main_tex:
@@ -95,6 +102,7 @@ class LatexComposerAgent:
         state["latex_project_dir"] = output_root
         state["latex_output_path"] = output_path
         state.setdefault("artifacts", {})["latex_table_count"] = len(experiment_tables)
+        state["artifacts"]["undefined_citation_keys"] = sorted(undefined_citations)
         state["final_markdown"] = self._markdown(state)
         return state
 
@@ -106,6 +114,7 @@ class LatexComposerAgent:
         text: str,
         citation_keys: set[str] | None = None,
         citation_aliases: dict[str, str] | None = None,
+        undefined_citations: set[str] | None = None,
     ) -> str:
         converted_lines = []
         for line in text.splitlines():
@@ -118,6 +127,7 @@ class LatexComposerAgent:
                         line,
                         citation_keys=citation_keys,
                         citation_aliases=citation_aliases,
+                        undefined_citations=undefined_citations,
                     )
                 )
         return "\n".join(converted_lines)
@@ -127,11 +137,25 @@ class LatexComposerAgent:
         text: str,
         citation_keys: set[str] | None = None,
         citation_aliases: dict[str, str] | None = None,
+        undefined_citations: set[str] | None = None,
     ) -> str:
         if citation_keys:
-            text = self._convert_known_citations(text, citation_keys, citation_aliases or {})
+            text = self._convert_known_citations(
+                text,
+                citation_keys,
+                citation_aliases or {},
+                undefined_citations=undefined_citations,
+            )
         text = re.sub(r"\[PLACEHOLDER:\s*(.+?)\]", r"\\textbf{TODO:} \1", text, flags=re.I)
         text = re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", text)
+        protected_commands: dict[str, str] = {}
+
+        def protect_command(match: re.Match[str]) -> str:
+            token = f"PAPERAGENTCMD{len(protected_commands)}TOKEN"
+            protected_commands[token] = match.group(0)
+            return token
+
+        text = re.sub(r"\\cite\{[^}]+\}", protect_command, text)
         replacements = {
             "&": r"\&",
             "%": r"\%",
@@ -141,6 +165,8 @@ class LatexComposerAgent:
         }
         for old, new in replacements.items():
             text = text.replace(old, new)
+        for token, command in protected_commands.items():
+            text = text.replace(token, command)
         return text
 
     def _convert_known_citations(
@@ -148,16 +174,34 @@ class LatexComposerAgent:
         text: str,
         citation_keys: set[str],
         citation_aliases: dict[str, str],
+        undefined_citations: set[str] | None = None,
     ) -> str:
-        def replace(match: re.Match[str]) -> str:
-            raw = match.group(1)
+        def normalize(raw: str) -> tuple[list[str], list[str]]:
             keys = [citation_aliases.get(part.strip(), part.strip()) for part in raw.split(",")]
             deduped = list(dict.fromkeys(keys))
-            if deduped and all(key in citation_keys for key in deduped):
+            missing = [key for key in deduped if key not in citation_keys]
+            return deduped, missing
+
+        def remember_missing(missing: list[str]) -> None:
+            if undefined_citations is not None:
+                undefined_citations.update(key for key in missing if key)
+
+        def replace_markdown_cite(match: re.Match[str]) -> str:
+            deduped, missing = normalize(match.group(1))
+            if deduped and not missing:
+                return r"\cite{" + ",".join(deduped) + "}"
+            remember_missing(missing)
+            return match.group(0)
+
+        def replace_latex_cite(match: re.Match[str]) -> str:
+            deduped, missing = normalize(match.group(1))
+            remember_missing(missing)
+            if deduped and not missing:
                 return r"\cite{" + ",".join(deduped) + "}"
             return match.group(0)
 
-        return re.sub(r"\[([A-Za-z0-9,\s]+)\]", replace, text)
+        text = re.sub(r"\\cite\{([A-Za-z0-9_,\s-]+)\}", replace_latex_cite, text)
+        return re.sub(r"\[([A-Za-z0-9,\s]+)\]", replace_markdown_cite, text)
 
     def _copy_template_assets(self, template_dir: Path, output_root: Path) -> None:
         for path in template_dir.iterdir():
