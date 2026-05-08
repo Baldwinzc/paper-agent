@@ -77,7 +77,12 @@ class SectionWriterAgent:
         citation_keys = state.setdefault("artifacts", {}).get("citation_keys", [])
         citation_hint = self._citation_hint(citation_keys)
         related_work_discovery = state.get("artifacts", {}).get("related_work_candidates", [])
-        related_work_guidance = self._related_work_guidance(related_work_discovery, citation_hint)
+        related_work_text = self._related_work_text(
+            related_work_discovery,
+            citation_hint,
+            baseline_title=baseline.title if baseline else "",
+            innovations=innovations,
+        )
         abstract_result_summary = self._result_summary(experiments, limit=1)
         experiment_result_summary = self._result_summary(experiments, limit=2)
         missing_details = (
@@ -102,12 +107,7 @@ class SectionWriterAgent:
                 "The paper makes the following contributions:\n"
                 f"{innovation_text}"
             ),
-            related_work=(
-                "Related work should be organized by research threads rather than as a flat list. "
-                f"{related_work_guidance} "
-                "Finally, clarify how the proposed work differs in motivation, mechanism, or evidence. "
-                "All generated citation metadata must be verified before submission."
-            ),
+            related_work=related_work_text,
             method=(
                 "We describe the proposed method by following the innovation points established during "
                 "analysis. Code-level details are used only as implementation evidence and are not treated "
@@ -171,6 +171,8 @@ class SectionWriterAgent:
                 "Use code and baseline only as evidence.",
                 "Do not invent experiment numbers.",
                 "If details are missing, write a precise placeholder instead of fabricating.",
+                "For Related Work, write actual comparative paragraphs from "
+                "related_work_discovery rather than instructions.",
                 "Return only the requested section text.",
                 "Do not wrap the answer in JSON or Markdown code fences.",
             ],
@@ -213,33 +215,112 @@ class SectionWriterAgent:
             rf"\cite{{{key}}}" for key in citation_keys[:3]
         )
 
-    def _related_work_guidance(self, candidates: list[dict[str, Any]], citation_hint: str) -> str:
+    def _related_work_text(
+        self,
+        candidates: list[dict[str, Any]],
+        citation_hint: str,
+        baseline_title: str,
+        innovations,
+    ) -> str:
         if not candidates:
             return (
-                f"First, discuss the direct baseline family {citation_hint}. "
-                "Second, discuss methods related to each proposed innovation point."
+                "### Baseline Family and Problem Setting\n"
+                f"The direct baseline family provides the starting context {citation_hint}. "
+                "This thread explains the task definition, common evaluation protocols, "
+                "and the specific limitations that motivate the proposed method.\n\n"
+                "### Method Threads Related to the Proposed Contributions\n"
+                "The remaining related work is organized around the accepted innovation points. "
+                "Each thread connects prior modeling choices to one proposed contribution, while "
+                "avoiding unsupported novelty claims until the bibliography is manually verified."
             )
+
+        grouped: dict[str, list[dict[str, Any]]] = self._group_related_work(candidates)
+        sections = []
+        if grouped.get("baseline_reference") or grouped.get("baseline_citing"):
+            baseline_items = grouped.get("baseline_reference", [])[:3]
+            citing_items = grouped.get("baseline_citing", [])[:3]
+            pieces = []
+            if baseline_title:
+                pieces.append(
+                    f"The provided baseline, {baseline_title}, anchors the local problem setting."
+                )
+            if baseline_items:
+                pieces.append(
+                    "Its cited lineage includes "
+                    + self._candidate_sentence(baseline_items)
+                    + ", which helps identify the assumptions inherited by the baseline."
+                )
+            if citing_items:
+                pieces.append(
+                    "Later papers that cite the baseline include "
+                    + self._candidate_sentence(citing_items)
+                    + ", which indicate how the baseline has been extended or repositioned."
+                )
+            sections.append("### Baseline Lineage\n" + " ".join(pieces))
+
+        if grouped.get("influential"):
+            sections.append(
+                "### Influential Field Context\n"
+                "High-impact work in the broader field includes "
+                + self._candidate_sentence(grouped["influential"][:3])
+                + ". These papers provide the main methodological context for positioning the "
+                "proposed approach against established whole-slide survival prediction and "
+                "computational pathology models."
+            )
+
+        if grouped.get("recent"):
+            sections.append(
+                "### Recent Developments\n"
+                "Recent work includes "
+                + self._candidate_sentence(grouped["recent"][:3])
+                + ". This thread is useful for contrasting the proposed method with newer "
+                "foundation-model, "
+                "multimodal, or structure-aware survival prediction systems."
+            )
+
+        innovation_names = (
+            ", ".join(item.name for item in innovations[:3])
+            if innovations
+            else "the proposed contributions"
+        )
+        sections.append(
+            "### Relation to the Proposed Method\n"
+            f"The proposed method is positioned around {innovation_names}. "
+            "This framing separates prior assumptions inherited from the baseline family, "
+            "mechanisms changed by the proposed design, and comparisons that still require "
+            "verified bibliography metadata before submission."
+        )
+        return "\n\n".join(sections)
+
+    def _group_related_work(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         for candidate in candidates:
             grouped.setdefault(str(candidate.get("category", "unknown")), []).append(candidate)
-        parts = []
-        labels = {
-            "baseline_reference": "Baseline lineage",
-            "baseline_citing": "Recent papers citing the baseline",
-            "influential": "Influential field papers",
-            "recent": "Recent field papers",
-        }
-        for category in ["baseline_reference", "influential", "baseline_citing", "recent"]:
-            items = grouped.get(category, [])
-            if not items:
-                continue
-            cites = ", ".join(rf"\cite{{{item['key']}}}" for item in items[:3] if item.get("key"))
-            if cites:
-                parts.append(f"{labels[category]} should be discussed with {cites}.")
-        return " ".join(parts) or (
-            f"First, discuss the direct baseline family {citation_hint}. "
-            "Second, discuss methods related to each proposed innovation point."
-        )
+        return grouped
+
+    def _candidate_sentence(self, items: list[dict[str, Any]]) -> str:
+        phrases = [self._candidate_phrase(item) for item in items if item.get("key")]
+        if not phrases:
+            return "the discovered candidate papers"
+        if len(phrases) == 1:
+            return phrases[0]
+        return ", ".join(phrases[:-1]) + ", and " + phrases[-1]
+
+    def _candidate_phrase(self, item: dict[str, Any]) -> str:
+        title = str(item.get("title") or "a related paper")
+        year = item.get("year")
+        cited_by = item.get("cited_by_count", 0)
+        key = item.get("key")
+        context = []
+        if year:
+            context.append(str(year))
+        if cited_by:
+            context.append(f"cited by {cited_by}")
+        suffix = f" ({', '.join(context)})" if context else ""
+        return f"{title}{suffix} " + rf"\cite{{{key}}}"
 
     def _result_summary(self, experiments, limit: int) -> str:
         if not experiments:

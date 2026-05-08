@@ -566,6 +566,11 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
 
     assert r"\cite{classicpaper}" in sections.related_work
     assert r"\cite{recentpaper}" in sections.related_work
+    assert "### Baseline Lineage" in sections.related_work
+    assert "### Recent Developments" in sections.related_work
+    assert "Classic paper" in sections.related_work
+    assert "should be discussed" not in sections.related_work
+    assert "should be positioned" not in sections.related_work
 
 
 def test_known_markdown_citations_convert_to_latex_cite():
