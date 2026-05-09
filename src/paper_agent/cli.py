@@ -27,6 +27,11 @@ def main() -> None:
     demo.add_argument("--output", default="outputs/demo", help="Output directory for markdown.")
     demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     demo.add_argument("--summary", default="", help="Optional path for a JSON run summary.")
+    demo.add_argument(
+        "--acceptance-report",
+        default="",
+        help="Optional path for a Markdown acceptance report.",
+    )
     demo.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     demo.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     demo.add_argument(
@@ -44,6 +49,14 @@ def main() -> None:
     draft.add_argument("--output", default="", help="Optional path for generated Markdown copy.")
     draft.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
     draft.add_argument("--summary", default="", help="Optional path for a JSON run summary.")
+    draft.add_argument(
+        "--acceptance-report",
+        default="",
+        help=(
+            "Optional path for a Markdown acceptance report. Defaults next to "
+            "--summary, or next to --output when no summary path is provided."
+        ),
+    )
     draft.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     draft.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
     draft.add_argument(
@@ -63,6 +76,11 @@ def main() -> None:
     sample.add_argument("--example-root", default=r"D:\code\agent\example")
     sample.add_argument("--output-dir", default="outputs/hyper-protosurv-sample")
     sample.add_argument("--zip", default="outputs/hyper-protosurv-sample-overleaf.zip")
+    sample.add_argument(
+        "--acceptance-report",
+        default="",
+        help="Optional path for a Markdown acceptance report. Defaults to output-dir/ACCEPTANCE_REPORT.md.",
+    )
     sample.add_argument(
         "--experiment-results",
         default="",
@@ -151,9 +169,18 @@ def main() -> None:
         if args.zip:
             zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
             print(f"Overleaf zip written to {zip_path}")
-        if args.summary:
-            summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
+        summary_path, acceptance_report_path = _write_run_reports(
+            state,
+            summary_path=Path(args.summary) if args.summary else None,
+            markdown_path=markdown_path,
+            acceptance_report_path=Path(args.acceptance_report) if args.acceptance_report else None,
+            default_acceptance_report=False,
+            min_llm_sections=0,
+        )
+        if summary_path:
             print(f"Run summary written to {summary_path}")
+        if acceptance_report_path:
+            print(f"Acceptance report written to {acceptance_report_path}")
     elif args.command == "draft":
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
@@ -193,9 +220,17 @@ def main() -> None:
         if args.zip:
             zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
             print(f"Overleaf zip written to {zip_path}")
-        if args.summary:
-            summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
+        summary_path, acceptance_report_path = _write_run_reports(
+            state,
+            summary_path=Path(args.summary) if args.summary else None,
+            markdown_path=markdown_path,
+            acceptance_report_path=Path(args.acceptance_report) if args.acceptance_report else None,
+            min_llm_sections=0,
+        )
+        if summary_path:
             print(f"Run summary written to {summary_path}")
+        if acceptance_report_path:
+            print(f"Acceptance report written to {acceptance_report_path}")
     elif args.command == "sample-hyper-protosurv":
         _run_hyper_protosurv_sample(args)
     elif args.command == "llm-ping":
@@ -308,8 +343,15 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
         print(f"Overleaf zip written to {zip_path}")
 
-    summary_path = _write_run_summary(state, output_dir / "RUN_SUMMARY.json", markdown_path)
+    summary_path, acceptance_report_path = _write_run_reports(
+        state,
+        summary_path=output_dir / "RUN_SUMMARY.json",
+        markdown_path=markdown_path,
+        acceptance_report_path=Path(args.acceptance_report) if args.acceptance_report else None,
+        min_llm_sections=0,
+    )
     print(f"Run summary written to {summary_path}")
+    print(f"Acceptance report written to {acceptance_report_path}")
     print(f"Review findings: {len(state.get('review_findings', []))}")
     print(f"Template source: {state['venue_template'].template_source}")
     print(f"Bibliography entries: {len(state.get('bibliography', []))}")
@@ -509,6 +551,61 @@ def _write_run_summary(state: dict, summary_path: Path, markdown_path: Path | No
     return _write_run_summary_data(_build_run_summary(state, markdown_path), summary_path)
 
 
+def _write_run_reports(
+    state: dict,
+    *,
+    summary_path: Path | None = None,
+    markdown_path: Path | None = None,
+    acceptance_report_path: Path | None = None,
+    default_acceptance_report: bool = True,
+    min_llm_sections: int = 4,
+    require_llm_self_review: bool = False,
+) -> tuple[Path | None, Path | None]:
+    resolved_report_path = _resolve_acceptance_report_path(
+        acceptance_report_path,
+        summary_path,
+        markdown_path,
+        default_acceptance_report=default_acceptance_report,
+    )
+    if not summary_path and not resolved_report_path:
+        return None, None
+
+    summary = _build_run_summary(state, markdown_path)
+    if resolved_report_path:
+        summary["outputs"]["acceptance_report_path"] = str(resolved_report_path)
+
+    written_summary_path = _write_run_summary_data(summary, summary_path) if summary_path else None
+    written_report_path = (
+        _write_acceptance_report(
+            summary,
+            resolved_report_path,
+            min_llm_sections=min_llm_sections,
+            require_llm_self_review=require_llm_self_review,
+        )
+        if resolved_report_path
+        else None
+    )
+    return written_summary_path, written_report_path
+
+
+def _resolve_acceptance_report_path(
+    explicit_path: Path | None,
+    summary_path: Path | None,
+    markdown_path: Path | None,
+    *,
+    default_acceptance_report: bool = True,
+) -> Path | None:
+    if explicit_path:
+        return explicit_path
+    if not default_acceptance_report:
+        return None
+    if summary_path:
+        return summary_path.with_name("ACCEPTANCE_REPORT.md")
+    if markdown_path:
+        return markdown_path.with_name("ACCEPTANCE_REPORT.md")
+    return None
+
+
 def _write_run_summary_data(summary: dict, summary_path: Path) -> Path:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
@@ -637,6 +734,8 @@ def _acceptance_checks(
     compile_status = summary.get("submission_compile_status", "not_run")
     compile_tool = summary.get("submission_compile_tool", "")
     compile_mode = summary.get("submission_compile_mode", "")
+    review_major = int(summary.get("review_findings_major", summary.get("review_findings", 0)) or 0)
+    review_minor = int(summary.get("review_findings_minor", 0) or 0)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -677,26 +776,17 @@ def _acceptance_checks(
             summary.get("evidence_guard_findings", 0) == 0,
             f"{summary.get('evidence_guard_findings', 0)} findings",
         ),
-        _acceptance_item(
-            "Reviewer",
-            summary.get("review_findings", 0) == 0,
-            f"{summary.get('review_findings', 0)} findings",
-        ),
+        _reviewer_acceptance_item(review_major, review_minor),
         _acceptance_item(
             "Submission readiness",
             summary.get("submission_readiness_status") == "reviewable",
             f"{summary.get('submission_readiness_status', 'not run')} ({summary.get('submission_readiness_score', 0)}/100)",
             warning_status="WARN",
         ),
-        _acceptance_item(
-            "Submission package",
-            summary.get("submission_package_status") == "valid"
-            and summary.get("submission_package_errors", 0) == 0,
-            (
-                f"{summary.get('submission_package_status', 'not run')}; "
-                f"errors={summary.get('submission_package_errors', 0)}; "
-                f"warnings={summary.get('submission_package_warnings', 0)}"
-            ),
+        _submission_package_acceptance_item(
+            str(summary.get("submission_package_status", "not run")),
+            int(summary.get("submission_package_errors", 0) or 0),
+            int(summary.get("submission_package_warnings", 0) or 0),
         ),
         _compile_acceptance_item(compile_status, compile_tool, compile_mode),
         _acceptance_item(
@@ -740,6 +830,24 @@ def _acceptance_item(
     }
 
 
+def _reviewer_acceptance_item(major: int, minor: int) -> dict[str, str]:
+    detail = f"{major} major; {minor} minor"
+    if major:
+        return {"name": "Reviewer", "status": "FAIL", "detail": _table_safe(detail)}
+    if minor:
+        return {"name": "Reviewer", "status": "WARN", "detail": _table_safe(detail)}
+    return {"name": "Reviewer", "status": "PASS", "detail": _table_safe(detail)}
+
+
+def _submission_package_acceptance_item(status: str, errors: int, warnings: int) -> dict[str, str]:
+    detail = f"{status or 'not run'}; errors={errors}; warnings={warnings}"
+    if errors or status == "invalid":
+        return {"name": "Submission package", "status": "FAIL", "detail": _table_safe(detail)}
+    if warnings or status in {"needs_attention", "not run", "not_run", ""}:
+        return {"name": "Submission package", "status": "WARN", "detail": _table_safe(detail)}
+    return {"name": "Submission package", "status": "PASS", "detail": _table_safe(detail)}
+
+
 def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
     if status == "passed":
@@ -756,6 +864,9 @@ def _table_safe(text: str) -> str:
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifacts = state.get("artifacts", {})
     request = state.get("request")
+    review_findings = state.get("review_findings", [])
+    review_major = sum(1 for finding in review_findings if _review_finding_severity(finding) == "major")
+    review_minor = sum(1 for finding in review_findings if _review_finding_severity(finding) == "minor")
     llm_review = artifacts.get("llm_self_review", {})
     reference_verification = artifacts.get("reference_verification", {})
     readiness = artifacts.get("submission_readiness", {})
@@ -786,7 +897,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
         "llm_self_review_mode": llm_review.get("mode", "not run"),
         "llm_unsupported_claims": len(llm_review.get("unsupported_claims", [])),
-        "review_findings": len(state.get("review_findings", [])),
+        "review_findings": len(review_findings),
+        "review_findings_major": review_major,
+        "review_findings_minor": review_minor,
         "submission_readiness_score": readiness.get("overall_score", 0),
         "submission_readiness_status": readiness.get("status", "not run"),
         "submission_package_status": submission_package.get("status", "not run"),
@@ -837,6 +950,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "presentation_plan_path": artifacts.get("presentation_plan_path", ""),
         },
     }
+
+
+def _review_finding_severity(finding: object) -> str:
+    if isinstance(finding, dict):
+        return str(finding.get("severity", ""))
+    return str(getattr(finding, "severity", ""))
 
 
 def _run_llm_self_review_smoke() -> None:

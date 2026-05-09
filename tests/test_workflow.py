@@ -2504,6 +2504,46 @@ def test_acceptance_report_marks_disabled_compile_as_warning():
     assert "| LaTeX compile | WARN | status=disabled; tool=tectonic.exe; mode=not_run |" in report
 
 
+def test_acceptance_report_treats_minor_reviewer_and_package_warnings_as_warnings():
+    summary = {
+        "inputs": {
+            "code_path": "code",
+            "baseline_pdf_path": "baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+        },
+        "section_writer_llm_attempted_sections": [],
+        "section_writer_llm_successes": [],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 1,
+        "review_findings_major": 0,
+        "review_findings_minor": 1,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 91,
+        "submission_package_status": "needs_attention",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 2,
+        "submission_compile_mode": "compile",
+        "submission_compile_status": "passed",
+        "submission_compile_tool": "tectonic.exe",
+        "experiment_result_tables": 1,
+        "experiment_ablation_evidence": 0,
+        "experiment_sensitivity_evidence": 0,
+        "experiment_statistical_tests": 0,
+        "presentation_figures": 0,
+        "generated_figures": 0,
+        "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
+    }
+
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
+
+    assert "- Overall status: PASS_WITH_WARNINGS" in report
+    assert "| Reviewer | WARN | 0 major; 1 minor |" in report
+    assert "| Submission package | WARN | needs_attention; errors=0; warnings=2 |" in report
+
+
 def test_tcga_cohort_summary_uses_dataset_csv_without_performance_claims(tmp_path):
     dataset_dir = tmp_path / "dataset_csv"
     dataset_dir.mkdir()
@@ -3115,7 +3155,101 @@ def test_reviewer_accepts_dataset_tokens_present_in_experiment_evidence():
     assert unsupported == []
 
 
-def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path):
+def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_path, capsys):
+    baseline_dir = tmp_path / "baseline"
+    code_dir = tmp_path / "code"
+    output_dir = tmp_path / "out"
+    latex_dir = tmp_path / "latex"
+    baseline_dir.mkdir()
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (code_dir / "train.py").write_text("class HyperProtoSurv: pass\n", encoding="utf-8")
+    experiment_path = tmp_path / "tcga_results.md"
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| baseline | 0.646 |\n"
+        "| ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                    "submission_readiness": {
+                        "overall_score": 94,
+                        "status": "reviewable",
+                    },
+                    "submission_package": {
+                        "status": "valid",
+                        "errors": [],
+                        "warnings": [],
+                        "checks": {
+                            "compile": {
+                                "mode": "compile",
+                                "status": "passed",
+                                "tool": "tectonic",
+                            }
+                        },
+                    },
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    markdown_path = output_dir / "draft.md"
+    summary_path = output_dir / "RUN_SUMMARY.json"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "draft",
+            "--project-name",
+            "hyper-protosurv-tcga",
+            "--target-venue",
+            "TPAMI",
+            "--baseline",
+            str(baseline_dir),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--output",
+            str(markdown_path),
+            "--summary",
+            str(summary_path),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "Acceptance report written to" in output
+    assert markdown_path.read_text(encoding="utf-8") == "# Draft"
+    assert captured["request"].project_name == "hyper-protosurv-tcga"
+    assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
+    assert "- Overall status: PASS" in acceptance_report
+
+
+def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path, capsys):
     example_root = tmp_path / "example"
     baseline_dir = example_root / "baseline"
     code_dir = example_root / "code" / "hyper-protosurv"
@@ -3183,6 +3317,10 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     assert summary["inputs"]["experiment_results_source"] == "tcga_cohort_csv"
     assert summary["inputs"]["experiment_results_path"].endswith("dataset_csv")
     assert summary["llm_self_review_mode"] == "disabled"
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "Acceptance report written to" in capsys.readouterr().out
+    assert "# Paper Agent Acceptance Report" in acceptance_report
+    assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
 
 
 def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
@@ -3644,6 +3782,8 @@ def test_submission_package_validator_uses_tectonic_when_enabled(tmp_path, monke
         "main.tex",
     ]
     assert commands[0][1]["cwd"] == project_dir
+    assert commands[0][1]["encoding"] == "utf-8"
+    assert commands[0][1]["errors"] == "replace"
     assert commands[0][1]["timeout"] == SubmissionPackageValidatorAgent.COMPILE_TIMEOUT_SECONDS
     assert warnings == []
 

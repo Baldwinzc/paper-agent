@@ -197,6 +197,8 @@ class SubmissionPackageValidatorAgent:
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.COMPILE_TIMEOUT_SECONDS,
                 check=False,
             )

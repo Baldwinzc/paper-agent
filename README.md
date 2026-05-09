@@ -181,7 +181,8 @@ python -m paper_agent.cli draft `
   --keyword "survival prediction" `
   --output outputs\hyper-protosurv-tcga\draft.md `
   --zip outputs\hyper-protosurv-tcga-overleaf.zip `
-  --summary outputs\hyper-protosurv-tcga\RUN_SUMMARY.json
+  --summary outputs\hyper-protosurv-tcga\RUN_SUMMARY.json `
+  --acceptance-report outputs\hyper-protosurv-tcga\ACCEPTANCE_REPORT.md
 ```
 
 For the lower-level `draft` command, `--experiment-results` should point to a
@@ -194,6 +195,11 @@ full-method versus removed-component evidence and surfaced in the draft report.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.
+
+When `draft` writes `--output` or `--summary`, it also writes a Markdown
+acceptance report by default: next to the summary when `--summary` is provided,
+otherwise next to the draft Markdown. Override the path with
+`--acceptance-report`.
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
 the final second-pass reviewer to call the configured model. The CLI maps this
@@ -226,12 +232,14 @@ python -m paper_agent.cli sample-hyper-protosurv
 ```
 
 This reads `D:\code\agent\example`, writes `outputs\hyper-protosurv-sample\draft.md`,
-creates `outputs\hyper-protosurv-sample\RUN_SUMMARY.json`, and packages an
-Overleaf zip. By default, this sample builds its experiment input from the real
-TCGA cohort CSV files under `D:\code\agent\example\code\hyper-protosurv\dataset_csv`
-and does not fabricate performance scores. Add `--experiment-results <file>` only
-when you have real trained-model result tables to use instead. Add `--allow-llm`
-to spend configured model calls, and `--online` to allow remote template/reference
+creates `outputs\hyper-protosurv-sample\RUN_SUMMARY.json`, writes
+`outputs\hyper-protosurv-sample\ACCEPTANCE_REPORT.md`, and packages an Overleaf
+zip. By default, this sample builds its experiment input from the real TCGA
+cohort CSV files under
+`D:\code\agent\example\code\hyper-protosurv\dataset_csv` and does not fabricate
+performance scores. Add `--experiment-results <file>` only when you have real
+trained-model result tables to use instead. Add `--allow-llm` to spend
+configured model calls, and `--online` to allow remote template/reference
 lookups.
 
 For a free Overleaf account, upload the generated zip through
