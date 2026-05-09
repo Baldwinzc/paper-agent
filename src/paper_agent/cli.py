@@ -497,6 +497,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     request = state.get("request")
     llm_review = artifacts.get("llm_self_review", {})
     reference_verification = artifacts.get("reference_verification", {})
+    readiness = artifacts.get("submission_readiness", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
@@ -520,6 +521,8 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "llm_self_review_mode": llm_review.get("mode", "not run"),
         "llm_unsupported_claims": len(llm_review.get("unsupported_claims", [])),
         "review_findings": len(state.get("review_findings", [])),
+        "submission_readiness_score": readiness.get("overall_score", 0),
+        "submission_readiness_status": readiness.get("status", "not run"),
         "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
         "bibliography_entries": len(state.get("bibliography", [])),
         "reference_resolver_mode": artifacts.get("reference_resolver_mode", "not run"),

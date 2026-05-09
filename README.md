@@ -42,6 +42,7 @@ The current scaffold supports:
 - Optional LLM self-review that reads the evidence bundle and flags unsupported
   factual claims without mutating the draft.
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
+- Submission-readiness scoring with concrete action items for author review.
 - JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 - Structured ablation parsing that links variant drops back to likely innovation points.

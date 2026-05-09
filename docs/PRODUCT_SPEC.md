@@ -79,6 +79,9 @@ Related Work subsections are checked for real citation coverage so unsupported
 research-thread paragraphs are visible in the draft report.
 Generated sections are also checked against supplied experiments and innovation
 points to flag unsupported datasets, metrics, numeric results, or Method subsections.
+After review, the workflow computes a submission-readiness score across evidence
+grounding, writing completeness, citation readiness, and venue packaging, with
+explicit blocking items and next actions for the author.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command

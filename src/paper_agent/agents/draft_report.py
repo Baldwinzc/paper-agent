@@ -46,6 +46,25 @@ class DraftReportAgent:
         else:
             lines.append("- No reviewer findings recorded.")
 
+        readiness = artifacts.get("submission_readiness", {})
+        if readiness:
+            lines.extend(["", "## Submission Readiness", ""])
+            lines.append(f"- Status: {readiness.get('status', 'unknown')}")
+            lines.append(f"- Overall score: {readiness.get('overall_score', 0)}/100")
+            scores = readiness.get("scores", {})
+            for name, value in scores.items():
+                lines.append(f"- {name.replace('_', ' ').title()}: {value}/100")
+            blocking_items = readiness.get("blocking_items", [])
+            if blocking_items:
+                lines.append("- Blocking items:")
+                for item in blocking_items[:5]:
+                    lines.append(f"  - {item}")
+            action_items = readiness.get("action_items", [])
+            if action_items:
+                lines.append("- Next actions:")
+                for item in action_items[:5]:
+                    lines.append(f"  - {item}")
+
         if baseline:
             lines.extend(["", "## Baseline Evidence", ""])
             lines.append(f"- Title: {baseline.title or 'not detected'}")

@@ -16,6 +16,7 @@ from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.agents.section_writer import SectionWriterAgent
+from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.agents.venue_template import VenueTemplateAgent
 from paper_agent.config import load_llm_config
 from paper_agent.llm import LLMClient
@@ -45,6 +46,7 @@ class PaperWorkflow:
             LatexComposerAgent(),
             ReviewerAgent(),
             LLMSelfReviewAgent(llm_client=llm_client),
+            SubmissionReadinessAgent(),
             DraftReportAgent(),
         ]
 

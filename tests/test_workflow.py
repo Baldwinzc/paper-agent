@@ -24,7 +24,16 @@ from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.agents.section_writer import SectionWriterAgent
-from paper_agent.state import AblationEvidence, BaselineSummary, CodeSummary, DraftSections, ExperimentSummary
+from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
+from paper_agent.state import (
+    AblationEvidence,
+    BaselineSummary,
+    CodeSummary,
+    DraftSections,
+    ExperimentComparison,
+    ExperimentSummary,
+    ExperimentTableSummary,
+)
 
 
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
@@ -1595,6 +1604,127 @@ def test_draft_report_includes_factual_consistency(tmp_path):
     assert "`unsupported_metrics`: ok" in report
 
 
+def test_submission_readiness_scores_reviewable_draft(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="readiness-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline", problem="Problem", method="Method"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+            result_tables=[
+                ExperimentTableSummary(
+                    baseline="baseline",
+                    comparisons=[
+                        ExperimentComparison(
+                            dataset="BLCA",
+                            metric="C-INDEX",
+                            method="ours",
+                            baseline="baseline",
+                            method_value=0.671,
+                            baseline_value=0.646,
+                            signed_improvement=0.025,
+                            improved=True,
+                        )
+                    ],
+                )
+            ],
+        ),
+        "sections": DraftSections(
+            abstract="A" * 120,
+            introduction="I" * 120,
+            related_work="R" * 120,
+            method="M" * 120,
+            experiments="E" * 120,
+            conclusion="C" * 120,
+        ),
+        "bibliography": [CitationEntry(key="paper", title="Paper", authors=["Ada"], year="2024")],
+        "venue_template": VenueTemplate(venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "latex_output_path": tmp_path / "main.tex",
+        "latex_zip_path": tmp_path / "paper.zip",
+        "review_findings": [],
+        "artifacts": {
+            "reference_verification": {"resolved_count": 1, "unresolved_count": 0},
+            "factual_consistency": [
+                {"check": "unsupported_datasets", "status": "ok", "values": []},
+            ],
+            "related_work_citation_coverage": [
+                {
+                    "thread": "Classic Thread",
+                    "requires_citation": True,
+                    "covered_by_real_citation": True,
+                }
+            ],
+        },
+    }
+    state = SubmissionReadinessAgent().run(state)
+
+    readiness = state["artifacts"]["submission_readiness"]
+    assert readiness["overall_score"] >= 85
+    assert readiness["status"] == "reviewable"
+    assert not readiness["blocking_items"]
+    assert "final human pass" in readiness["action_items"][0]
+
+
+def test_submission_readiness_flags_blocking_evidence_gaps():
+    state = {
+        "request": PaperRequest(project_name="readiness-gap-demo", target_venue="TPAMI"),
+        "experiments": ExperimentSummary(
+            missing_details=["Dataset names are not explicit."],
+        ),
+        "sections": DraftSections(abstract="short"),
+        "review_findings": [
+            SimpleNamespace(
+                severity="major",
+                issue="Experiment section lacks required details.",
+            )
+        ],
+        "artifacts": {
+            "undefined_citation_keys": ["missing"],
+            "reference_resolver_mode": "disabled",
+        },
+    }
+
+    state = SubmissionReadinessAgent().run(state)
+
+    readiness = state["artifacts"]["submission_readiness"]
+    assert readiness["status"] == "needs_evidence"
+    assert any("Experiment details are incomplete" in item for item in readiness["blocking_items"])
+    assert any("Undefined citation keys" in item for item in readiness["blocking_items"])
+    assert readiness["overall_score"] < 70
+
+
+def test_draft_report_includes_submission_readiness(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="readiness-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "submission_readiness": {
+                "overall_score": 88,
+                "status": "reviewable",
+                "scores": {
+                    "evidence_grounding": 90,
+                    "writing_completeness": 85,
+                    "citation_readiness": 88,
+                    "venue_package": 100,
+                },
+                "blocking_items": [],
+                "action_items": ["Perform a final human pass."],
+            }
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Submission Readiness" in report
+    assert "- Status: reviewable" in report
+    assert "- Overall score: 88/100" in report
+    assert "Evidence Grounding: 90/100" in report
+    assert "Perform a final human pass." in report
+
+
 def test_draft_report_includes_reference_resolution_trace(tmp_path):
     state = {
         "request": PaperRequest(project_name="reference-trace-demo", target_venue="TPAMI"),
@@ -1920,6 +2050,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "reference_resolution_trace": [{"key": "paper", "status": "resolved"}],
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
+            "submission_readiness": {"overall_score": 82, "status": "needs_author_pass"},
             "latex_table_count": 3,
             "undefined_citation_keys": ["missing"],
             "draft_report_path": str(tmp_path / "latex" / "DRAFT_REPORT.md"),
@@ -1931,6 +2062,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["project_name"] == "summary-demo"
     assert summary["llm_self_review_mode"] == "disabled"
     assert summary["bibliography_entries"] == 1
+    assert summary["submission_readiness_score"] == 82
+    assert summary["submission_readiness_status"] == "needs_author_pass"
     assert summary["reference_unresolved"] == 2
     assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
