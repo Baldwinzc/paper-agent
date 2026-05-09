@@ -426,6 +426,7 @@ class ReviewerAgent:
                     f"{sensitivity.best_metric_value:.3f}",
                     f"{sensitivity.worst_metric_value:.3f}",
                     *sensitivity.tested_values,
+                    *(f"{value:.3f}" for value in sensitivity.metric_values),
                 ]
             )
         for test in experiments.statistical_tests:

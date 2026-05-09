@@ -411,6 +411,7 @@ class ExperimentAnalyzerAgent:
             best_metric_value=best_metric,
             worst_metric_value=worst_metric,
             tested_values=[value for value, _ in values],
+            metric_values=[metric_value for _, metric_value in values],
             higher_is_better=higher_is_better,
         )
 

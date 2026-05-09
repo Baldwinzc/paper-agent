@@ -662,6 +662,7 @@ def test_experiment_analyzer_extracts_sensitivity_and_statistical_tests():
     assert sensitivity[0].best_parameter_value == "1.0"
     assert sensitivity[0].best_metric_value == 0.690
     assert sensitivity[0].tested_values == ["0.1", "0.5", "1.0", "2.0"]
+    assert sensitivity[0].metric_values == [0.681, 0.687, 0.690, 0.686]
     assert len(tests) == 1
     assert tests[0].comparison == "Hyper-ProtoSurv vs ProtoSurv"
     assert tests[0].metric == "C-INDEX"
@@ -2439,6 +2440,10 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
         "submission_compile_mode": "compile",
         "submission_compile_status": "passed",
         "submission_compile_tool": "tectonic.exe",
+        "experiment_result_tables": 2,
+        "experiment_ablation_evidence": 4,
+        "experiment_sensitivity_evidence": 1,
+        "experiment_statistical_tests": 1,
         "presentation_figures": 4,
         "generated_figures": 4,
         "outputs": {
@@ -2459,6 +2464,8 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     report = report_path.read_text(encoding="utf-8")
 
     assert "- Overall status: PASS" in report
+    assert "- Main result tables: 2" in report
+    assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report
     assert "outputs/hyper-protosurv-llm-smoke/main.tex" in report
@@ -2634,6 +2641,26 @@ def test_llm_section_writer_records_successful_sections():
     ]
 
 
+def test_llm_related_work_gets_citation_backstop_when_model_omits_cites():
+    client = FakeLLMClient("Prior survival-prediction work motivates this setting.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [
+            CitationEntry(key="baseline", title="Baseline Paper"),
+            CitationEntry(key="recent", title="Recent Paper"),
+        ],
+        "artifacts": {},
+    }
+
+    section = SectionWriterAgent(llm_client=client)._run_llm_section(state, "related_work")
+
+    assert r"\cite{baseline,recent}" in section
+
+
 def test_llm_section_writer_repairs_rejected_method_once():
     client = FakeSequenceLLMClient(
         [
@@ -2731,6 +2758,49 @@ def test_llm_section_writer_repairs_method_omitted_innovation():
     assert "omitted innovation points" in state["artifacts"]["section_writer_repair_attempts"]["method"]
     repair_payload = json.loads(client.calls[1]["messages"][1].content)
     assert "omitted innovation points" in repair_payload["validation_error"]
+
+
+def test_llm_method_repair_auto_augments_still_omitted_innovation():
+    client = FakeSequenceLLMClient(
+        [
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The proposed method constructs optimal-transport prototypes from patch features."
+            ),
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The proposed method constructs optimal-transport prototypes from patch features."
+            ),
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=["data_preparation/hypergraph.py:20"],
+            ),
+            InnovationPoint(
+                name="Innovation 2: Minimal survival-reconstruction objective",
+                motivation="Training should remain compact.",
+                technical_idea="Simplify the training objective with survival and reconstruction terms.",
+                evidence=["utils/loss.py:12"],
+            ),
+        ],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    section = SectionWriterAgent(llm_client=client)._run_llm_section(state, "method")
+
+    assert "Minimal survival-reconstruction objective" in section
+    assert "survival and reconstruction terms" in section
+    assert state["artifacts"]["section_writer_repaired_sections"] == ["method"]
 
 
 def test_llm_section_rejects_placeholders_and_writer_instructions():
@@ -3702,6 +3772,28 @@ def test_presentation_planner_creates_evidence_bound_figure_and_table_plan():
                     signed_drop=0.016,
                 )
             ],
+            sensitivity_evidence=[
+                SensitivityEvidence(
+                    parameter="lambda_rec",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    best_parameter_value="1.0",
+                    best_metric_value=0.690,
+                    worst_metric_value=0.681,
+                    tested_values=["0.5", "1.0"],
+                    metric_values=[0.687, 0.690],
+                )
+            ],
+            statistical_tests=[
+                StatisticalTestEvidence(
+                    comparison="Hyper-ProtoSurv vs ProtoSurv",
+                    metric="C-INDEX",
+                    test="Wilcoxon",
+                    p_value=0.018,
+                    p_value_text="p=0.018",
+                    significant=True,
+                )
+            ],
         ),
         "artifacts": {
             "code_baseline_comparison": {
@@ -3718,7 +3810,11 @@ def test_presentation_planner_creates_evidence_bound_figure_and_table_plan():
     assert "fig:prototype-hypergraph" in labels
     assert "fig:main-results" in labels
     assert "fig:ablation-summary" in labels
+    assert "fig:sensitivity-summary" in labels
+    table_labels = {item["label"] for item in plan["tables"]}
     assert any(table["label"].startswith("tab:main-results") for table in plan["tables"])
+    assert "tab:sensitivity-summary" in table_labels
+    assert "tab:statistical-tests" in table_labels
     assert plan["open_items"]
 
 
@@ -3848,6 +3944,16 @@ def test_latex_composer_rewrites_unicode_lambda_for_compile():
     assert r"\(\lambda\) = 0.5" in latex
 
 
+def test_latex_composer_normalizes_windows_paths_without_breaking_math_commands():
+    latex = LatexComposerAgent()._latex_escape(
+        r"Evidence: data_preparation\hypergraph_construction_wb.py uses λ_rec."
+    )
+
+    assert "data\\_preparation/hypergraph\\_construction\\_wb.py" in latex
+    assert r"\(\lambda_{\mathrm{rec}}\)" in latex
+    assert r"\hypergraph" not in latex
+
+
 def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp_path):
     state = {
         "request": PaperRequest(
@@ -3921,6 +4027,18 @@ def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp
                     signed_drop=0.018,
                 )
             ],
+            sensitivity_evidence=[
+                SensitivityEvidence(
+                    parameter="lambda_rec",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    best_parameter_value="1.0",
+                    best_metric_value=0.690,
+                    worst_metric_value=0.687,
+                    tested_values=["0.5", "1.0"],
+                    metric_values=[0.687, 0.690],
+                )
+            ],
         ),
         "artifacts": {
             "presentation_plan": {
@@ -3952,12 +4070,22 @@ def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp
                         "evidence": [],
                         "status": "planned",
                     },
+                    {
+                        "label": "fig:sensitivity-summary",
+                        "title": "Sensitivity Summary",
+                        "section": "Experiments",
+                        "asset_path": "figures/sensitivity_summary.pdf",
+                        "caption": "Sensitivity summary.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
                 ],
                 "tables": [],
                 "open_items": [
                     "Create or attach the planned figure asset `figures/method_overview.pdf` for `fig:method-overview`.",
                     "Create or attach the planned figure asset `figures/main_results.pdf` for `fig:main-results`.",
                     "Create or attach the planned figure asset `figures/ablation_summary.pdf` for `fig:ablation-summary`.",
+                    "Create or attach the planned figure asset `figures/sensitivity_summary.pdf` for `fig:sensitivity-summary`.",
                 ],
             }
         },
@@ -3967,18 +4095,22 @@ def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp
 
     main_pdf = state["latex_project_dir"] / "figures" / "main_results.pdf"
     ablation_pdf = state["latex_project_dir"] / "figures" / "ablation_summary.pdf"
+    sensitivity_pdf = state["latex_project_dir"] / "figures" / "sensitivity_summary.pdf"
     tex = state["latex_output_path"].read_text(encoding="utf-8")
     plan = (state["latex_project_dir"] / "FIGURE_TABLE_PLAN.md").read_text(encoding="utf-8")
     assert main_pdf.exists()
     assert main_pdf.read_bytes().startswith(b"%PDF-1.4")
     assert ablation_pdf.exists()
+    assert sensitivity_pdf.exists()
     assert r"\includegraphics[width=\columnwidth]{figures/main_results.pdf}" in tex
     assert r"\includegraphics[width=\columnwidth]{figures/ablation_summary.pdf}" in tex
+    assert r"\includegraphics[width=\columnwidth]{figures/sensitivity_summary.pdf}" in tex
     assert "figures/method_overview.pdf" not in tex
-    assert state["artifacts"]["generated_figure_count"] == 2
+    assert state["artifacts"]["generated_figure_count"] == 3
     assert {item["label"] for item in state["artifacts"]["generated_figures"]} == {
         "fig:main-results",
         "fig:ablation-summary",
+        "fig:sensitivity-summary",
     }
     assert "Status: generated" in plan
     assert state["artifacts"]["presentation_plan"]["open_items"] == [

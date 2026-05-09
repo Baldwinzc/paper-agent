@@ -223,6 +223,7 @@ class LatexComposerAgent:
             return token
 
         text = re.sub(r"\\cite\{[^}]+\}", protect_command, text)
+        text = self._normalize_windows_path_separators(text)
         replacements = {
             "&": r"\&",
             "%": r"\%",
@@ -245,6 +246,9 @@ class LatexComposerAgent:
         for old, new in math_replacements.items():
             text = text.replace(old, new)
         return text
+
+    def _normalize_windows_path_separators(self, text: str) -> str:
+        return re.sub(r"(?<=[A-Za-z0-9.-])\\(?=[A-Za-z0-9.-])", "/", text)
 
     def _convert_known_citations(
         self,
@@ -628,6 +632,16 @@ class LatexComposerAgent:
                     bars=bars,
                     y_label="Signed drop",
                 )
+            elif label == "fig:sensitivity-summary" and experiments:
+                bars = self._sensitivity_bars(experiments)
+                if not bars:
+                    continue
+                write_bar_chart_pdf(
+                    output_path,
+                    title=str(figure.get("title") or label),
+                    bars=bars,
+                    y_label="Metric value",
+                )
             else:
                 continue
 
@@ -731,6 +745,14 @@ class LatexComposerAgent:
             (item.variant, item.signed_drop)
             for item in experiments.ablation_evidence[:10]
         ]
+
+    def _sensitivity_bars(self, experiments) -> list[tuple[str, float]]:
+        bars: list[tuple[str, float]] = []
+        for item in experiments.sensitivity_evidence[:6]:
+            label_prefix = item.parameter or "parameter"
+            for value, metric_value in zip(item.tested_values[:8], item.metric_values[:8]):
+                bars.append((f"{label_prefix}={value}", metric_value))
+        return bars[:10]
 
     def _figure_latex_for_section(self, state: PaperState, section: str) -> str:
         plan = state.get("artifacts", {}).get("presentation_plan", {})

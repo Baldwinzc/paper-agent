@@ -88,6 +88,7 @@ class SensitivityEvidence(BaseModel):
     best_metric_value: float = 0.0
     worst_metric_value: float = 0.0
     tested_values: list[str] = Field(default_factory=list)
+    metric_values: list[float] = Field(default_factory=list)
     higher_is_better: bool = True
 
 

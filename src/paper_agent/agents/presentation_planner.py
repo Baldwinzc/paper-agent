@@ -106,6 +106,24 @@ class PresentationPlannerAgent:
                 )
             )
 
+        if experiments and experiments.sensitivity_evidence:
+            figures.append(
+                self._figure(
+                    label="fig:sensitivity-summary",
+                    title="Sensitivity Summary",
+                    section="Experiments",
+                    asset_path="figures/sensitivity_summary.pdf",
+                    caption=(
+                        "Parameter sensitivity summary generated from the supplied sensitivity "
+                        "analysis table."
+                    ),
+                    evidence=[
+                        f"{item.parameter}: best {item.best_parameter_value} -> {item.best_metric_value:.3f}"
+                        for item in experiments.sensitivity_evidence[:4]
+                    ],
+                )
+            )
+
         return figures
 
     def _table_plan(self, state: PaperState) -> list[dict[str, object]]:
@@ -133,6 +151,36 @@ class PresentationPlannerAgent:
                     "source": "parsed_ablation_evidence",
                     "columns": 4,
                     "rows": len(experiments.ablation_evidence),
+                    "status": "planned",
+                }
+            )
+        if experiments and experiments.sensitivity_evidence and not any(
+            self._contains_any(str(item["caption"]), ["sensitivity", "parameter", "lambda", "λ"])
+            for item in tables
+        ):
+            tables.append(
+                {
+                    "label": "tab:sensitivity-summary",
+                    "caption": "Sensitivity summary from supplied parameter evidence.",
+                    "section": "Experiments",
+                    "source": "parsed_sensitivity_evidence",
+                    "columns": 4,
+                    "rows": len(experiments.sensitivity_evidence),
+                    "status": "planned",
+                }
+            )
+        if experiments and experiments.statistical_tests and not any(
+            self._contains_any(str(item["caption"]), ["statistical", "p-value", "p value", "significance"])
+            for item in tables
+        ):
+            tables.append(
+                {
+                    "label": "tab:statistical-tests",
+                    "caption": "Statistical-test evidence from supplied p-value rows.",
+                    "section": "Experiments",
+                    "source": "parsed_statistical_tests",
+                    "columns": 5,
+                    "rows": len(experiments.statistical_tests),
                     "status": "planned",
                 }
             )

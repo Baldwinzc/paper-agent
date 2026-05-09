@@ -573,6 +573,13 @@ def _build_acceptance_report(
         f"- Experiment results: {inputs.get('experiment_results_path', '') or inputs.get('experiment_results_source', '')}",
         f"- Template source: {summary.get('template_source', '')}",
         "",
+        "## Experiment Evidence Coverage",
+        "",
+        f"- Main result tables: {summary.get('experiment_result_tables', 0)}",
+        f"- Ablation evidence items: {summary.get('experiment_ablation_evidence', 0)}",
+        f"- Sensitivity evidence items: {summary.get('experiment_sensitivity_evidence', 0)}",
+        f"- Statistical test items: {summary.get('experiment_statistical_tests', 0)}",
+        "",
         "## Acceptance Checks",
         "",
         "| Check | Status | Detail |",
@@ -643,6 +650,17 @@ def _acceptance_checks(
             "Experiment input",
             bool(inputs.get("experiment_results_provided")),
             f"source={inputs.get('experiment_results_source', 'none')}; path={inputs.get('experiment_results_path', '')}",
+        ),
+        _acceptance_item(
+            "Experiment evidence coverage",
+            summary.get("experiment_result_tables", 0) > 0,
+            (
+                f"main={summary.get('experiment_result_tables', 0)}; "
+                f"ablation={summary.get('experiment_ablation_evidence', 0)}; "
+                f"sensitivity={summary.get('experiment_sensitivity_evidence', 0)}; "
+                f"statistical={summary.get('experiment_statistical_tests', 0)}"
+            ),
+            warning_status="WARN",
         ),
         _acceptance_item(
             "LLM section drafting",

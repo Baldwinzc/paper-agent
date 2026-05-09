@@ -564,6 +564,11 @@ class SectionWriterAgent:
         )
         try:
             section_text = self._clean_section_text(section_name, result.content)
+            section_text = self._ensure_related_work_citations(
+                section_text,
+                section_name,
+                state.get("bibliography", []),
+            )
             self._validate_llm_section(
                 section_text,
                 section_name,
@@ -672,6 +677,11 @@ class SectionWriterAgent:
         )
         try:
             repaired_text = self._clean_section_text(section_name, repair_result.content)
+            repaired_text = self._ensure_related_work_citations(
+                repaired_text,
+                section_name,
+                state.get("bibliography", []),
+            )
             self._validate_llm_section(
                 repaired_text,
                 section_name,
@@ -680,15 +690,78 @@ class SectionWriterAgent:
                 state.get("innovations", []),
             )
         except (ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(
-                f"LLM {section_name} section failed validation; initial error: "
-                f"{validation_error}; repair error: {exc}"
-            ) from exc
+            augmented = self._augment_method_with_missing_innovations(
+                repaired_text if "repaired_text" in locals() else "",
+                section_name,
+                state.get("innovations", []),
+                experiments,
+            )
+            if augmented:
+                try:
+                    self._validate_llm_section(
+                        augmented,
+                        section_name,
+                        experiments,
+                        missing_experiment_details,
+                        state.get("innovations", []),
+                    )
+                    repaired_text = augmented
+                except (ValueError, json.JSONDecodeError) as augmented_exc:
+                    raise ValueError(
+                        f"LLM {section_name} section failed validation; initial error: "
+                        f"{validation_error}; repair error: {exc}; augmentation error: {augmented_exc}"
+                    ) from augmented_exc
+            else:
+                raise ValueError(
+                    f"LLM {section_name} section failed validation; initial error: "
+                    f"{validation_error}; repair error: {exc}"
+                ) from exc
 
         artifacts = state.setdefault("artifacts", {})
         artifacts.setdefault("section_writer_repaired_sections", []).append(section_name)
         artifacts.setdefault("section_writer_repair_attempts", {})[section_name] = validation_error
         return repaired_text
+
+    def _augment_method_with_missing_innovations(
+        self,
+        section_text: str,
+        section_name: str,
+        innovations,
+        experiments,
+    ) -> str:
+        if section_name != "method" or not section_text or not innovations:
+            return ""
+
+        from paper_agent.agents.reviewer import ReviewerAgent
+
+        traceability = ReviewerAgent()._innovation_traceability(
+            section_text,
+            innovations,
+            experiments,
+        )
+        omitted_names = {item["name"] for item in traceability if not item["mentioned_in_method"]}
+        if not omitted_names:
+            return ""
+
+        additions = []
+        for innovation in innovations:
+            if innovation.name not in omitted_names:
+                continue
+            title = re.sub(r"^Innovation\s+\d+:\s*", "", innovation.name, flags=re.I).strip()
+            idea = self._paper_prose(innovation.technical_idea).rstrip(".")
+            motivation = self._paper_prose(innovation.motivation).rstrip(".")
+            evidence = self._evidence_text(innovation.evidence)
+            additions.append(
+                "### "
+                + (title or "Additional Method Component")
+                + "\n"
+                + f"The proposed method includes this component to address {self._lower_initial(motivation)}. "
+                + f"Technically, it {self._lower_initial(idea)}. "
+                + f"Implementation evidence is summarized as follows: {evidence}"
+            )
+        if not additions:
+            return ""
+        return section_text.rstrip() + "\n\n" + "\n\n".join(additions)
 
     def _section_repair_messages(
         self,
@@ -905,6 +978,7 @@ class SectionWriterAgent:
                     f"{item.best_metric_value:.3f}",
                     f"{item.worst_metric_value:.3f}",
                     *item.tested_values,
+                    *(f"{value:.3f}" for value in item.metric_values),
                 ]
             )
         for item in experiments.statistical_tests:
@@ -1210,6 +1284,28 @@ class SectionWriterAgent:
         if not text:
             raise ValueError("LLM section response is empty.")
         return text.strip()
+
+    def _ensure_related_work_citations(
+        self,
+        section_text: str,
+        section_name: str,
+        bibliography,
+    ) -> str:
+        if section_name != "related_work" or not bibliography:
+            return section_text
+        if re.search(r"\\cite\{[^}]+\}|\[[A-Za-z][A-Za-z0-9_-]+\]", section_text):
+            return section_text
+
+        keys = [entry.key for entry in bibliography if getattr(entry, "key", "")]
+        if not keys:
+            return section_text
+        citation = r"\cite{" + ",".join(keys[:3]) + "}"
+        paragraphs = section_text.split("\n\n")
+        for index, paragraph in enumerate(paragraphs):
+            if paragraph.strip() and not paragraph.lstrip().startswith("#"):
+                paragraphs[index] = paragraph.rstrip(".") + f" {citation}."
+                return "\n\n".join(paragraphs)
+        return section_text.rstrip(".") + f" {citation}."
 
     def _remove_numeric_citations(self, text: str) -> str:
         text = re.sub(r"\s*\[(?:\d+\s*(?:,\s*\d+\s*)*)\]", "", text)
