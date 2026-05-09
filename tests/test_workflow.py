@@ -1548,6 +1548,24 @@ def test_draft_report_includes_ablation_evidence(tmp_path):
     assert "reconstruction regularization" in report
 
 
+def test_draft_report_includes_llm_section_successes(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="llm-section-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "section_writer_mode": "partial_llm",
+            "section_writer_llm_successes": ["abstract", "method"],
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "- LLM-written sections: 2" in report
+    assert "## LLM Section Drafting" in report
+    assert "Successful sections: abstract, method" in report
+
+
 def test_draft_report_includes_baseline_evidence(tmp_path):
     state = {
         "request": PaperRequest(project_name="baseline-report-demo", target_venue="TPAMI"),
@@ -1774,6 +1792,9 @@ def test_run_summary_reports_core_metrics(tmp_path):
         "latex_zip_path": tmp_path / "paper.zip",
         "artifacts": {
             "section_writer_mode": "fallback",
+            "section_writer_llm_attempted_sections": ["abstract", "method"],
+            "section_writer_llm_successes": ["abstract"],
+            "section_writer_section_errors": {"method": "blocked"},
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
             "related_work_candidates": [{"title": "A"}],
@@ -1793,6 +1814,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["related_work_candidates"] == 1
     assert summary["experiment_result_tables"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
+    assert summary["section_writer_llm_successes"] == ["abstract"]
+    assert summary["section_writer_section_errors"] == {"method": "blocked"}
     assert summary["outputs"]["markdown"].endswith("draft.md")
 
 
@@ -1893,8 +1916,64 @@ def test_llm_section_prompt_blocks_performance_claims_when_results_missing(monke
     joined_rules = " ".join(payload["hard_rules"])
     assert "experiment evidence is incomplete" in joined_rules
     assert "Do not mention C-index" in joined_rules
+    assert "Do not include writer instructions" in joined_rules
     assert "Do not copy numeric citations" in joined_rules
     assert payload["missing_experiment_details"] == ["Evaluation metrics are not explicit."]
+
+
+def test_llm_section_writer_records_successful_sections():
+    client = FakeLLMClient("A cautious section.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client).run(state)
+
+    assert state["artifacts"]["section_writer_mode"] == "llm"
+    assert state["artifacts"]["section_writer_llm_attempted_sections"] == [
+        "abstract",
+        "introduction",
+        "related_work",
+        "method",
+        "experiments",
+        "conclusion",
+    ]
+    assert state["artifacts"]["section_writer_llm_successes"] == [
+        "abstract",
+        "introduction",
+        "related_work",
+        "method",
+        "experiments",
+        "conclusion",
+    ]
+
+
+def test_llm_section_rejects_placeholders_and_writer_instructions():
+    client = FakeLLMClient(
+        "[Placeholder: Table I should include final experimental results once final results are available.]"
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "experiments")
+    except ValueError as exc:
+        assert "draft instructions or placeholders" in str(exc)
+    else:
+        raise AssertionError("Expected placeholder-heavy LLM section to be rejected.")
 
 
 def test_llm_section_cleaner_removes_numeric_citations_only():
@@ -2104,6 +2183,90 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     assert summary["inputs"]["experiment_results_source"] == "tcga_cohort_csv"
     assert summary["inputs"]["experiment_results_path"].endswith("dataset_csv")
     assert summary["llm_self_review_mode"] == "disabled"
+
+
+def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    experiment_path = tmp_path / "results.md"
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| baseline | 0.646 |\n"
+        "| ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_available"] = bool(llm_client and llm_client.available)
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "partial_llm",
+                    "section_writer_llm_attempted_sections": [
+                        "abstract",
+                        "method",
+                        "experiments",
+                    ],
+                    "section_writer_llm_successes": ["abstract", "method"],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    output_dir = tmp_path / "out"
+    zip_path = tmp_path / "llm-smoke.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "llm-draft-smoke",
+            "--example-root",
+            str(example_root),
+            "--experiment-results",
+            str(experiment_path),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--min-llm-sections",
+            "2",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "LLM draft smoke passed." in output
+    assert captured["llm_available"]
+    assert captured["request"].skip_llm_self_review
+    assert summary["section_writer_llm_successes"] == ["abstract", "method"]
+    assert summary["inputs"]["experiment_results_source"] == "file"
+    assert zip_path.exists()
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

@@ -42,6 +42,17 @@ class SectionWriterAgent:
             r"unlike\s+prior|unlike\s+previous)\b",
         ),
     ]
+    LLM_PROCEDURAL_FORBIDDEN_PATTERNS = [
+        ("placeholder marker", r"\[(?:placeholder|todo|tbd)[^\]]*\]|\bPlaceholder:|\bTODO\b|\bTBD\b"),
+        (
+            "writer instruction",
+            r"\b(?:should|must)\s+(?:be\s+)?(?:inserted|added|filled|completed|highlighted)\b",
+        ),
+        (
+            "pending-result instruction",
+            r"\bonce final (?:experimental )?results are available\b|\bthe table should\b",
+        ),
+    ]
 
     SECTION_SPECS = {
         "abstract": {
@@ -461,15 +472,21 @@ class SectionWriterAgent:
         fallback = self._run_fallback(state)
         values: dict[str, str] = {}
         errors: dict[str, str] = {}
+        successes: list[str] = []
         for section_name in self.SECTION_SPECS:
             try:
                 values[section_name] = self._run_llm_section(state, section_name)
+                successes.append(section_name)
             except (LLMError, ValueError, json.JSONDecodeError) as exc:
                 errors[section_name] = str(exc)
                 values[section_name] = getattr(fallback, section_name)
 
+        state.setdefault("artifacts", {})["section_writer_llm_attempted_sections"] = list(
+            self.SECTION_SPECS
+        )
+        state["artifacts"]["section_writer_llm_successes"] = successes
         if errors:
-            state.setdefault("artifacts", {})["section_writer_section_errors"] = errors
+            state["artifacts"]["section_writer_section_errors"] = errors
 
         return DraftSections(**values)
 
@@ -523,6 +540,7 @@ class SectionWriterAgent:
         self._raise_if_missing_results_overclaimed(
             section_text, section_name, missing_experiment_details
         )
+        self._raise_if_procedural_language(section_text, section_name)
         return section_text
 
     def _raise_if_missing_results_overclaimed(
@@ -557,12 +575,28 @@ class SectionWriterAgent:
             f"experiment details are missing: {', '.join(matched)}"
         )
 
+    def _raise_if_procedural_language(self, section_text: str, section_name: str) -> None:
+        matched = [
+            label
+            for label, pattern in self.LLM_PROCEDURAL_FORBIDDEN_PATTERNS
+            if re.search(pattern, section_text, flags=re.I)
+        ]
+        if not matched:
+            return
+        raise ValueError(
+            f"LLM {section_name} section included draft instructions or placeholders: "
+            f"{', '.join(matched)}"
+        )
+
     def _llm_hard_rules(self, missing_experiment_details: list[str]) -> list[str]:
         rules = [
             "Write the Method section from innovation points, not raw code diffs.",
             "Use code and baseline only as evidence.",
             "Do not invent experiment numbers.",
-            "If details are missing, write a precise placeholder instead of fabricating.",
+            "If details are missing, write cautious paper prose that says the evidence is pending "
+            "instead of fabricating details.",
+            "Do not include writer instructions, TODOs, TBDs, bracketed placeholders, or text "
+            "telling the author what a future table should contain.",
             "For Related Work, write actual comparative paragraphs from "
             "related_work_discovery rather than instructions.",
             "Use only allowed_citation_keys for citations. Do not copy numeric citations like [5] "

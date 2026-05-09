@@ -31,6 +31,7 @@ class DraftReportAgent:
             f"- Project: {request.project_name}",
             f"- Target venue: {request.target_venue}",
             f"- Section writer mode: {artifacts.get('section_writer_mode', 'unknown')}",
+            f"- LLM-written sections: {len(artifacts.get('section_writer_llm_successes', []))}",
             f"- Template source: {state.get('venue_template').template_source if state.get('venue_template') else 'unknown'}",
             f"- LaTeX tables: {artifacts.get('latex_table_count', 0)}",
             f"- Bibliography entries: {len(bibliography)}",
@@ -190,6 +191,10 @@ class DraftReportAgent:
                 lines.append(f"- `{key}`")
 
         section_errors = artifacts.get("section_writer_section_errors", {})
+        section_successes = artifacts.get("section_writer_llm_successes", [])
+        if section_successes:
+            lines.extend(["", "## LLM Section Drafting", ""])
+            lines.append(f"- Successful sections: {', '.join(section_successes)}")
         if section_errors:
             lines.extend(["", "## Section Writer Errors", ""])
             for section, error in section_errors.items():

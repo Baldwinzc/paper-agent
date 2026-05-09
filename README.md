@@ -121,6 +121,21 @@ The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.
 
+Run a configured-LLM acceptance smoke on the local Hyper-ProtoSurv materials:
+
+```powershell
+$env:PYTHONPATH="D:\code\agent\paper-agent\src"
+python -m paper_agent.cli llm-draft-smoke `
+  --example-root D:\code\agent\example `
+  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --output-dir outputs\llm-draft-smoke
+```
+
+This command uses the configured text model for section drafting and fails if
+fewer than four sections are actually written by the LLM. It keeps template and
+reference network calls offline by default, so the check isolates whether the
+paper-writing path itself can call the model.
+
 ## Acceptance Flow
 
 Every meaningful paper-agent test should exercise the full paper-writing path:
