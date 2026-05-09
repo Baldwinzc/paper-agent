@@ -56,6 +56,7 @@ class ReviewerAgent:
         "OTSU",
         "PDF",
         "TCGA",
+        "TME",
         "TPAMI",
         "UNI",
         "VI",
@@ -444,11 +445,17 @@ class ReviewerAgent:
             allowed.add("BRIER SCORE")
         if "BRIER SCORE" in allowed:
             allowed.add("IBS")
-        mentioned = {
-            self._normalize_metric(match.group(1))
-            for match in re.finditer(self.METRIC_PATTERN, text, flags=re.I)
-        }
+        mentioned = set()
+        for match in re.finditer(self.METRIC_PATTERN, text, flags=re.I):
+            metric = self._normalize_metric(match.group(1))
+            if metric == "ACCURACY" and not self._metric_claim_has_number(text, match):
+                continue
+            mentioned.add(metric)
         return sorted(metric for metric in mentioned if metric and metric not in allowed)
+
+    def _metric_claim_has_number(self, text: str, match: re.Match[str]) -> bool:
+        window = text[max(0, match.start() - 80) : match.end() + 80]
+        return bool(re.search(r"\d", window))
 
     def _normalize_metric(self, metric: str) -> str:
         key = re.sub(r"\s+", " ", metric.strip().upper().replace("-", " "))

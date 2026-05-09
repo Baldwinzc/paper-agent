@@ -9,7 +9,10 @@ import os
 import statistics
 from pathlib import Path
 
+from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
+from paper_agent.agents.submission_package_validator import SubmissionPackageValidatorAgent
+from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
@@ -146,8 +149,7 @@ def main() -> None:
         print(f"LLM self-review: {_llm_self_review_mode(state)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
-            zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
-            state["latex_zip_path"] = zip_path
+            zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
             print(f"Overleaf zip written to {zip_path}")
         if args.summary:
             summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
@@ -189,8 +191,7 @@ def main() -> None:
         print(f"LLM self-review: {_llm_self_review_mode(state)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
-            zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
-            state["latex_zip_path"] = zip_path
+            zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
             print(f"Overleaf zip written to {zip_path}")
         if args.summary:
             summary_path = _write_run_summary(state, Path(args.summary), markdown_path)
@@ -231,6 +232,19 @@ def _resolve_baseline_pdf(path_value: str) -> Path:
 
 def _llm_self_review_mode(state: dict) -> str:
     return str(state.get("artifacts", {}).get("llm_self_review", {}).get("mode", "not run"))
+
+
+def _refresh_submission_artifacts(state: dict) -> None:
+    SubmissionPackageValidatorAgent().run(state)
+    SubmissionReadinessAgent().run(state)
+    DraftReportAgent().run(state)
+
+
+def _write_latex_zip_and_refresh(state: dict, zip_path: Path) -> Path:
+    written_path = zip_latex_project(state["latex_project_dir"], zip_path)
+    state["latex_zip_path"] = written_path
+    _refresh_submission_artifacts(state)
+    return written_path
 
 
 def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
@@ -291,8 +305,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     print(f"Markdown written to {markdown_path}")
 
     if args.zip:
-        zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
-        state["latex_zip_path"] = zip_path
+        zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
         print(f"Overleaf zip written to {zip_path}")
 
     summary_path = _write_run_summary(state, output_dir / "RUN_SUMMARY.json", markdown_path)
@@ -350,8 +363,7 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     print(f"Markdown written to {markdown_path}")
 
     if args.zip:
-        zip_path = zip_latex_project(state["latex_project_dir"], Path(args.zip))
-        state["latex_zip_path"] = zip_path
+        zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
         print(f"Overleaf zip written to {zip_path}")
 
     summary_path = _write_run_summary(state, output_dir / "RUN_SUMMARY.json", markdown_path)
@@ -499,6 +511,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     reference_verification = artifacts.get("reference_verification", {})
     readiness = artifacts.get("submission_readiness", {})
     code_baseline_comparison = artifacts.get("code_baseline_comparison", {})
+    submission_package = artifacts.get("submission_package", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
@@ -524,6 +537,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "review_findings": len(state.get("review_findings", [])),
         "submission_readiness_score": readiness.get("overall_score", 0),
         "submission_readiness_status": readiness.get("status", "not run"),
+        "submission_package_status": submission_package.get("status", "not run"),
+        "submission_package_errors": len(submission_package.get("errors", [])),
+        "submission_package_warnings": len(submission_package.get("warnings", [])),
         "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
         "code_baseline_method_shifts": len(
             code_baseline_comparison.get("likely_method_shifts", [])

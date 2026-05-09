@@ -65,6 +65,30 @@ class DraftReportAgent:
                 for item in action_items[:5]:
                     lines.append(f"  - {item}")
 
+        package = artifacts.get("submission_package", {})
+        if package:
+            checks = package.get("checks", {})
+            zip_check = checks.get("zip", {}) if isinstance(checks, dict) else {}
+            compile_check = checks.get("compile", {}) if isinstance(checks, dict) else {}
+            lines.extend(["", "## Submission Package", ""])
+            lines.append(f"- Status: {package.get('status', 'unknown')}")
+            lines.append(f"- Errors: {len(package.get('errors', []))}")
+            lines.append(f"- Warnings: {len(package.get('warnings', []))}")
+            if isinstance(zip_check, dict):
+                lines.append(
+                    f"- Zip: {'present' if zip_check.get('present') else 'not generated'}"
+                    f"; entries: {zip_check.get('entries', 0)}"
+                )
+            if isinstance(compile_check, dict):
+                lines.append(
+                    f"- Compile check: {compile_check.get('status', 'unknown')}"
+                    f" ({compile_check.get('tool') or 'no tool'})"
+                )
+            for item in package.get("errors", [])[:5]:
+                lines.append(f"- Error: {item}")
+            for item in package.get("warnings", [])[:5]:
+                lines.append(f"- Warning: {item}")
+
         if baseline:
             lines.extend(["", "## Baseline Evidence", ""])
             lines.append(f"- Title: {baseline.title or 'not detected'}")

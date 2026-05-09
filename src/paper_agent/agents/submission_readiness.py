@@ -107,6 +107,9 @@ class SubmissionReadinessAgent:
             score += 10
         if state.get("latex_zip_path"):
             score += 10
+        package = state.get("artifacts", {}).get("submission_package", {})
+        score -= min(40, len(package.get("errors", [])) * 20)
+        score -= min(15, len(package.get("warnings", [])) * 3)
         return self._clamp(score)
 
     def _blocking_items(self, state: PaperState) -> list[str]:
@@ -125,6 +128,9 @@ class SubmissionReadinessAgent:
         undefined = state.get("artifacts", {}).get("undefined_citation_keys", [])
         if undefined:
             items.append("Undefined citation keys remain: " + ", ".join(undefined[:5]) + ".")
+        package_errors = state.get("artifacts", {}).get("submission_package", {}).get("errors", [])
+        for error in package_errors[:3]:
+            items.append(f"Submission package error: {error}")
         return list(dict.fromkeys(items))
 
     def _action_items(self, state: PaperState, blocking_items: list[str]) -> list[str]:
@@ -148,6 +154,9 @@ class SubmissionReadinessAgent:
         if section_errors:
             sections = ", ".join(section_errors.keys())
             items.append(f"Review fallback sections after rejected LLM output: {sections}.")
+        package_warnings = artifacts.get("submission_package", {}).get("warnings", [])
+        for warning in package_warnings[:3]:
+            items.append(f"Submission package warning: {warning}")
         if not items:
             items.append("Perform a final human pass for wording, author metadata, figures, and venue rules.")
         return list(dict.fromkeys(items))[:8]

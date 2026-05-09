@@ -25,6 +25,7 @@ from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.agents.section_writer import SectionWriterAgent
+from paper_agent.agents.submission_package_validator import SubmissionPackageValidatorAgent
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.state import (
     AblationEvidence,
@@ -1513,6 +1514,19 @@ def test_reviewer_accepts_supported_experiment_facts():
     assert not any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
 
 
+def test_reviewer_ignores_tme_and_generic_accuracy_in_background_text():
+    experiments = ExperimentSummary(datasets=["BLCA", "BRCA"], metrics=["C-INDEX"])
+    text = (
+        "The tumor microenvironment (TME) provides rich prognostic context. "
+        "Manual diagnosis can vary in accuracy across observers before any model evaluation."
+    )
+
+    reviewer = ReviewerAgent()
+
+    assert reviewer._unsupported_datasets(text, experiments) == []
+    assert reviewer._unsupported_metrics(text, experiments) == []
+
+
 def test_reviewer_treats_ibs_as_brier_score_evidence():
     state = {
         "experiments": ExperimentSummary(
@@ -2129,6 +2143,11 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "submission_readiness": {"overall_score": 82, "status": "needs_author_pass"},
+            "submission_package": {
+                "status": "needs_attention",
+                "errors": ["missing main.tex"],
+                "warnings": ["compile unavailable"],
+            },
             "code_baseline_comparison": {
                 "likely_method_shifts": [{"technique": "hypergraph modeling"}],
                 "innovation_seeds": ["Introduce hypergraph structure modeling."],
@@ -2146,6 +2165,9 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["bibliography_entries"] == 1
     assert summary["submission_readiness_score"] == 82
     assert summary["submission_readiness_status"] == "needs_author_pass"
+    assert summary["submission_package_status"] == "needs_attention"
+    assert summary["submission_package_errors"] == 1
+    assert summary["submission_package_warnings"] == 1
     assert summary["code_baseline_method_shifts"] == 1
     assert summary["code_baseline_innovation_seeds"] == 1
     assert summary["reference_unresolved"] == 2
@@ -2930,6 +2952,147 @@ def test_draft_report_includes_code_baseline_comparison(tmp_path):
     assert "Shared technical context: prototype learning, survival prediction" in report
     assert "Code-side innovation candidates: hypergraph modeling" in report
     assert "Introduce hypergraph structure modeling" in report
+
+
+def test_submission_package_validator_accepts_project_zip(tmp_path):
+    project_dir = tmp_path / "latex"
+    project_dir.mkdir()
+    main_tex = project_dir / "main.tex"
+    main_tex.write_text(
+        "\n".join(
+            [
+                r"\documentclass{article}",
+                r"\title{Demo}",
+                r"\begin{document}",
+                r"\begin{abstract}A concise abstract.\end{abstract}",
+                r"Prior work \cite{paper}.",
+                r"\bibliography{references}",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "references.bib").write_text(
+        "@article{paper,\n  title={Paper},\n  author={Ada Lovelace},\n  year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    zip_path = zip_latex_project(project_dir, tmp_path / "paper.zip")
+    state = {
+        "latex_project_dir": project_dir,
+        "latex_output_path": main_tex,
+        "latex_zip_path": zip_path,
+        "artifacts": {},
+    }
+
+    SubmissionPackageValidatorAgent().run(state)
+
+    package = state["artifacts"]["submission_package"]
+    assert package["status"] != "invalid"
+    assert not package["errors"]
+    assert package["checks"]["citation_keys"] == ["paper"]
+    assert package["checks"]["bib_keys"] == ["paper"]
+    assert package["checks"]["zip"]["present"]
+    assert package["checks"]["zip"]["contains_main_tex"]
+
+
+def test_submission_package_validator_flags_missing_graphic(tmp_path):
+    project_dir = tmp_path / "latex"
+    project_dir.mkdir()
+    main_tex = project_dir / "main.tex"
+    main_tex.write_text(
+        "\n".join(
+            [
+                r"\documentclass{article}",
+                r"\title{Demo}",
+                r"\begin{document}",
+                r"\begin{abstract}A concise abstract.\end{abstract}",
+                r"\includegraphics{figures/missing-figure}",
+                r"\bibliography{references}",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "references.bib").write_text("", encoding="utf-8")
+    state = {
+        "latex_project_dir": project_dir,
+        "latex_output_path": main_tex,
+        "artifacts": {},
+    }
+
+    SubmissionPackageValidatorAgent().run(state)
+
+    package = state["artifacts"]["submission_package"]
+    assert package["status"] == "invalid"
+    assert any("Missing graphics" in error for error in package["errors"])
+    assert package["checks"]["missing_graphics"] == ["figures/missing-figure"]
+
+
+def test_draft_report_includes_submission_package_validation(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="package-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "submission_package": {
+                "status": "needs_attention",
+                "errors": [],
+                "warnings": ["No local LaTeX compiler was found; static package checks were run only."],
+                "checks": {
+                    "zip": {"present": True, "entries": 4},
+                    "compile": {"status": "tool_unavailable", "tool": ""},
+                },
+            }
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Submission Package" in report
+    assert "- Status: needs_attention" in report
+    assert "- Zip: present; entries: 4" in report
+    assert "static package checks" in report
+
+
+def test_cli_zip_refreshes_submission_package_and_readiness(tmp_path):
+    project_dir = tmp_path / "latex"
+    project_dir.mkdir()
+    main_tex = project_dir / "main.tex"
+    main_tex.write_text(
+        "\n".join(
+            [
+                r"\documentclass{article}",
+                r"\title{Demo}",
+                r"\begin{document}",
+                r"\begin{abstract}A concise abstract.\end{abstract}",
+                r"Prior work \cite{paper}.",
+                r"\bibliography{references}",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "references.bib").write_text(
+        "@article{paper,\n  title={Paper},\n  author={Ada Lovelace},\n  year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    state = {
+        "request": PaperRequest(project_name="zip-refresh-demo", target_venue="TPAMI"),
+        "latex_project_dir": project_dir,
+        "latex_output_path": main_tex,
+        "venue_template": VenueTemplate(venue="TPAMI"),
+        "bibliography": [CitationEntry(key="paper", title="Paper", authors=["Ada"], year="2024")],
+        "artifacts": {},
+    }
+
+    zip_path = cli_module._write_latex_zip_and_refresh(state, tmp_path / "paper.zip")
+
+    assert zip_path.exists()
+    assert state["artifacts"]["submission_package"]["checks"]["zip"]["present"]
+    assert state["artifacts"]["submission_readiness"]["scores"]["venue_package"] >= 90
+    report = (project_dir / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Submission Package" in report
+    assert "- Zip: present" in report
 
 
 def test_citation_aliases_convert_to_retained_key():

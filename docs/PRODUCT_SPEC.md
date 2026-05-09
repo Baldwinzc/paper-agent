@@ -47,6 +47,7 @@ InputCollector
   -> SectionWriter
   -> EvidenceGuard
   -> LatexComposer
+  -> SubmissionPackageValidator
   -> Reviewer
   -> LLMSelfReview
   -> SubmissionReadiness
@@ -88,6 +89,9 @@ points to flag unsupported datasets, metrics, numeric results, or Method subsect
 After review, the workflow computes a submission-readiness score across evidence
 grounding, writing completeness, citation readiness, and venue packaging, with
 explicit blocking items and next actions for the author.
+The LaTeX submission package is statically validated before reporting: the agent
+checks `main.tex`, `references.bib`, citation-key closure, referenced graphics,
+required zip entries, and optional local LaTeX compilation when enabled.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command
