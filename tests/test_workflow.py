@@ -2542,6 +2542,87 @@ def test_llm_section_rejects_unsupported_experiment_claims_with_results():
         raise AssertionError("Expected unsupported LLM experiment claim to be rejected.")
 
 
+def test_llm_experiments_prompt_includes_evidence_contract():
+    client = FakeLLMClient(
+        "### Main Results\n"
+        "On BLCA C-index, Hyper-ProtoSurv obtains 0.671 compared with 0.646 for the baseline."
+    )
+    experiments = ExperimentSummary(
+        raw_preview=(
+            "| Method | BLCA C-index |\n"
+            "|---|---:|\n"
+            "| ProtoSurv baseline | 0.646 |\n"
+            "| Hyper-ProtoSurv ours | 0.671 |\n"
+        ),
+        datasets=["BLCA"],
+        metrics=["C-INDEX"],
+        result_tables=[
+            ExperimentTableSummary(
+                caption="Main Results",
+                metric="C-INDEX",
+                method="Hyper-ProtoSurv ours",
+                baseline="ProtoSurv baseline",
+                comparisons=[
+                    ExperimentComparison(
+                        table_caption="Main Results",
+                        dataset="BLCA",
+                        metric="C-INDEX",
+                        method="Hyper-ProtoSurv ours",
+                        baseline="ProtoSurv baseline",
+                        method_value=0.671,
+                        baseline_value=0.646,
+                        signed_improvement=0.025,
+                        improved=True,
+                    )
+                ],
+            )
+        ],
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": experiments,
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client)._run_llm_section(state, "experiments")
+
+    payload = json.loads(client.calls[0]["messages"][1].content)
+    contract = payload["experiment_evidence_contract"]
+    assert contract["status"] == "structured"
+    assert contract["allowed_datasets"] == ["BLCA"]
+    assert contract["allowed_metrics"] == ["C-INDEX"]
+    assert "0.671" in contract["allowed_numbers"]
+    assert any("signed improvement +0.025" in claim for claim in contract["allowed_result_claims"])
+    assert any("accuracy" in rule for rule in contract["rules"])
+    assert "structured result tables are present" in payload["section_instruction"].lower()
+
+
+def test_llm_experiment_claim_validator_ignores_markdown_heading_numbers():
+    experiments = ExperimentSummary(
+        raw_preview=(
+            "| Method | BLCA C-index |\n"
+            "|---|---:|\n"
+            "| ProtoSurv baseline | 0.646 |\n"
+            "| Hyper-ProtoSurv ours | 0.671 |\n"
+        ),
+        datasets=["BLCA"],
+        metrics=["C-INDEX"],
+    )
+
+    SectionWriterAgent()._validate_llm_section(
+        "### 4.1 Main Results\n"
+        "On BLCA C-index, Hyper-ProtoSurv obtains 0.671 compared with 0.646 for the baseline.",
+        "experiments",
+        experiments,
+        [],
+        [],
+    )
+
+
 def test_llm_section_cleaner_removes_numeric_citations_only():
     text = SectionWriterAgent()._clean_section_text(
         "related_work",
@@ -3506,6 +3587,14 @@ def test_latex_composer_escapes_bibtex_special_characters():
     escaped = LatexComposerAgent()._bibtex_escape("category=baseline_mentioned & 50% #1")
 
     assert escaped == r"category=baseline\_mentioned \& 50\% \#1"
+
+
+def test_latex_composer_rewrites_unicode_lambda_for_compile():
+    latex = LatexComposerAgent()._latex_escape("Sensitivity uses λ_rec = 1.0 and λ = 0.5.")
+
+    assert "λ" not in latex
+    assert r"\(\lambda_{\mathrm{rec}}\)" in latex
+    assert r"\(\lambda\) = 0.5" in latex
 
 
 def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp_path):

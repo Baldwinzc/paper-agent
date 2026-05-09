@@ -232,8 +232,18 @@ class LatexComposerAgent:
         }
         for old, new in replacements.items():
             text = text.replace(old, new)
+        text = self._replace_unicode_math_symbols(text)
         for token, command in protected_commands.items():
             text = text.replace(token, command)
+        return text
+
+    def _replace_unicode_math_symbols(self, text: str) -> str:
+        math_replacements = {
+            "λ\\_rec": r"\(\lambda_{\mathrm{rec}}\)",
+            "λ": r"\(\lambda\)",
+        }
+        for old, new in math_replacements.items():
+            text = text.replace(old, new)
         return text
 
     def _convert_known_citations(

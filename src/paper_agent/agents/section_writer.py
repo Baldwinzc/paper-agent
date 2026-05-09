@@ -90,7 +90,12 @@ class SectionWriterAgent:
         },
         "experiments": {
             "max_tokens": 900,
-            "instruction": "Write only an experiments framework. Since exact results may be missing, do not claim improvements or numeric deltas.",
+            "instruction": (
+                "Write the Experiments section from the supplied experiment evidence. "
+                "If structured result tables are present, write grounded result prose using only "
+                "the listed datasets, metrics, numbers, and comparison claims; otherwise write a "
+                "cautious framework without numeric results."
+            ),
         },
         "conclusion": {
             "max_tokens": 700,
@@ -557,6 +562,7 @@ class SectionWriterAgent:
             "baseline": baseline.model_dump() if baseline else {},
             "code_summary": code.model_dump() if code else {},
             "experiment_summary": experiments.model_dump() if experiments else {},
+            "experiment_evidence_contract": self._experiment_evidence_contract(experiments),
             "missing_experiment_details": missing_experiment_details,
             "innovations": [item.model_dump() for item in innovations],
             "bibliography": [entry.model_dump() for entry in bibliography],
@@ -664,6 +670,7 @@ class SectionWriterAgent:
             "project_name": state["request"].project_name,
             "target_venue": state["request"].target_venue,
             "experiment_summary": experiments.model_dump() if experiments else {},
+            "experiment_evidence_contract": self._experiment_evidence_contract(experiments),
             "innovations": [item.model_dump() for item in state.get("innovations", [])],
             "allowed_citation_keys": [entry.key for entry in state.get("bibliography", [])],
             "output_format": f"Plain text content for {section_name}; no JSON or code fences.",
@@ -695,7 +702,14 @@ class SectionWriterAgent:
                 ]
             )
         if section_name in self.EXPERIMENT_CLAIM_SECTIONS:
-            rules.append("Keep experiment claims bounded to the supplied experiment tables.")
+            rules.extend(
+                [
+                    "Keep experiment claims bounded to the supplied experiment tables.",
+                    "If the validation error names unsupported metrics or numbers, remove them completely.",
+                    "Do not add classification accuracy, AUC, F1, hardware, optimizer, or training-setting claims unless they appear in the experiment evidence contract.",
+                    "Use markdown headings without numeric prefixes, for example ### Experimental Setup and ### Main Results.",
+                ]
+            )
         return rules
 
     def _raise_if_missing_results_overclaimed(
@@ -755,11 +769,12 @@ class SectionWriterAgent:
         from paper_agent.agents.reviewer import ReviewerAgent
 
         reviewer = ReviewerAgent()
+        claim_text = self._experiment_claim_validation_text(section_text)
         evidence_text = reviewer._evidence_text(experiments)
         issues = {
-            "datasets": reviewer._unsupported_datasets(section_text, experiments),
-            "metrics": reviewer._unsupported_metrics(section_text, experiments),
-            "numbers": reviewer._unsupported_numbers(section_text, evidence_text),
+            "datasets": reviewer._unsupported_datasets(claim_text, experiments),
+            "metrics": reviewer._unsupported_metrics(claim_text, experiments),
+            "numbers": reviewer._unsupported_numbers(claim_text, evidence_text),
         }
         issues = {key: values for key, values in issues.items() if values}
         if not issues:
@@ -771,6 +786,112 @@ class SectionWriterAgent:
         raise ValueError(
             f"LLM {section_name} section included unsupported experiment claims: {details}"
         )
+
+    def _experiment_claim_validation_text(self, text: str) -> str:
+        cleaned_lines = []
+        for line in text.splitlines():
+            cleaned_lines.append(
+                re.sub(
+                    r"^(\s*#{1,6}\s+)\d+(?:\.\d+)+\.?\s+",
+                    r"\1",
+                    line,
+                )
+            )
+        return "\n".join(cleaned_lines)
+
+    def _experiment_evidence_contract(self, experiments) -> dict[str, object]:
+        if not experiments:
+            return {
+                "status": "no_experiment_summary",
+                "rules": [
+                    "No experiment evidence is available. Do not write empirical results.",
+                ],
+            }
+
+        allowed_numbers = self._allowed_experiment_numbers(experiments)
+        result_claims = self._allowed_result_claims(experiments)
+        ablation_claims = self._allowed_ablation_claims(experiments)
+        rules = [
+            "Use only these datasets, metrics, numbers, and grounded claims when writing empirical prose.",
+            "Do not introduce absent metrics such as accuracy, AUC, F1, or classification performance unless they are listed as allowed metrics.",
+            "Do not invent optimizer settings, hardware, training epochs, p-values, confidence intervals, or statistical tests.",
+            "Do not use numeric section labels such as 4.1 or 4.2; markdown headings should be unnumbered.",
+        ]
+        if experiments.result_tables:
+            rules.append(
+                "Structured result tables are present, so the Experiments section may discuss the listed comparisons."
+            )
+        else:
+            rules.append(
+                "Structured result tables are absent, so avoid numeric performance claims."
+            )
+        return {
+            "status": "structured" if experiments.result_tables else "incomplete",
+            "allowed_datasets": experiments.datasets,
+            "allowed_metrics": experiments.metrics,
+            "allowed_numbers": allowed_numbers,
+            "allowed_result_claims": result_claims,
+            "allowed_ablation_claims": ablation_claims,
+            "missing_details": experiments.missing_details,
+            "rules": rules,
+        }
+
+    def _allowed_experiment_numbers(self, experiments) -> list[str]:
+        numbers: list[str] = []
+        sources = [experiments.raw_preview, *experiments.observations]
+        for table in experiments.result_tables:
+            for comparison in table.comparisons:
+                sources.extend(
+                    [
+                        f"{comparison.method_value:.3f}",
+                        f"{comparison.baseline_value:.3f}",
+                        f"{comparison.signed_improvement:+.3f}",
+                    ]
+                )
+        for item in experiments.ablation_evidence:
+            sources.extend(
+                [
+                    f"{item.reference_value:.3f}",
+                    f"{item.variant_value:.3f}",
+                    f"{item.signed_drop:+.3f}",
+                ]
+            )
+        for source in sources:
+            numbers.extend(
+                match.group(0).strip()
+                for match in re.finditer(
+                    r"(?<![A-Za-z0-9])[-+]?(?:0?\.\d+|\d+\.\d+)(?:\s*%)?",
+                    source,
+                )
+            )
+        return list(dict.fromkeys(numbers))[:120]
+
+    def _allowed_result_claims(self, experiments) -> list[str]:
+        claims: list[str] = []
+        for table in experiments.result_tables[:4]:
+            for comparison in table.comparisons[:12]:
+                metric = comparison.metric or table.metric or "reported metric"
+                dataset = comparison.dataset or "reported column"
+                direction = "higher is better" if comparison.higher_is_better else "lower is better"
+                claims.append(
+                    f"{dataset} {metric}: {comparison.method} {comparison.method_value:.3f} vs "
+                    f"{comparison.baseline} {comparison.baseline_value:.3f}; signed improvement "
+                    f"{comparison.signed_improvement:+.3f}; {direction}."
+                )
+        return claims[:40]
+
+    def _allowed_ablation_claims(self, experiments) -> list[str]:
+        claims: list[str] = []
+        for item in experiments.ablation_evidence[:20]:
+            metric = item.metric or "reported metric"
+            dataset = item.dataset or "reported column"
+            direction = "higher is better" if item.higher_is_better else "lower is better"
+            supports = f"; supports {', '.join(item.supports)}" if item.supports else ""
+            claims.append(
+                f"{item.variant} on {dataset} {metric}: {item.reference} {item.reference_value:.3f} vs "
+                f"variant {item.variant_value:.3f}; signed drop {item.signed_drop:+.3f}; {direction}{supports}."
+            )
+        return claims
 
     def _llm_hard_rules(self, missing_experiment_details: list[str]) -> list[str]:
         rules = [
