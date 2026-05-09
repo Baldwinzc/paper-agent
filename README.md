@@ -53,7 +53,8 @@ The current scaffold supports:
   and Method subsections not tied to accepted innovation points.
 - Optional LLM self-review that reads the evidence bundle and flags unsupported
   factual claims without mutating the draft.
-- Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
+- Draft quality report (`DRAFT_REPORT.md`) and author-facing submission checklist
+  (`SUBMISSION_CHECKLIST.md`) included in Overleaf-ready exports.
 - Submission-readiness scoring with concrete action items for author review.
 - JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.

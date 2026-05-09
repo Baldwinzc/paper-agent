@@ -2447,6 +2447,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "latex_table_count": 3,
             "undefined_citation_keys": ["missing"],
             "draft_report_path": str(tmp_path / "latex" / "DRAFT_REPORT.md"),
+            "submission_checklist_path": str(tmp_path / "latex" / "SUBMISSION_CHECKLIST.md"),
         },
     }
 
@@ -2480,6 +2481,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["section_writer_section_errors"] == {"method": "blocked"}
     assert summary["outputs"]["markdown"].endswith("draft.md")
     assert summary["outputs"]["presentation_plan_path"].endswith("FIGURE_TABLE_PLAN.md")
+    assert summary["outputs"]["submission_checklist_path"].endswith("SUBMISSION_CHECKLIST.md")
 
 
 def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
@@ -3677,6 +3679,23 @@ def test_draft_report_submission_reminder_asks_for_real_performance_tables(tmp_p
     assert "synthetic or mock" not in report
 
 
+def test_submission_checklist_flags_tcga_cohort_summary_as_data_only(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="tcga-checklist-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "experiment_results_source": "tcga_cohort_csv",
+            "experiment_results_path": "D:/code/agent/example/code/hyper-protosurv/dataset_csv",
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    checklist = (tmp_path / "SUBMISSION_CHECKLIST.md").read_text(encoding="utf-8")
+    assert "TCGA cohort CSV summaries describe available data only" in checklist
+    assert "add trained-model performance results" in checklist
+
+
 def test_reviewer_flags_method_missing_innovation():
     state = {
         "experiments": ExperimentSummary(),
@@ -3985,6 +4004,12 @@ def test_draft_report_includes_submission_package_validation(tmp_path):
     assert "- Status: needs_attention" in report
     assert "- Zip: present; entries: 4" in report
     assert "static package checks" in report
+    checklist = (tmp_path / "SUBMISSION_CHECKLIST.md").read_text(encoding="utf-8")
+    assert "## Quick Status" in checklist
+    assert "- Package: needs_attention" in checklist
+    assert "static package checks" in checklist
+    assert "Upload the generated zip file to Overleaf" in checklist
+    assert state["artifacts"]["submission_checklist_path"].endswith("SUBMISSION_CHECKLIST.md")
 
 
 def test_cli_zip_refreshes_submission_package_and_readiness(tmp_path):
@@ -4026,6 +4051,14 @@ def test_cli_zip_refreshes_submission_package_and_readiness(tmp_path):
     report = (project_dir / "DRAFT_REPORT.md").read_text(encoding="utf-8")
     assert "## Submission Package" in report
     assert "- Zip: present" in report
+    checklist = (project_dir / "SUBMISSION_CHECKLIST.md").read_text(encoding="utf-8")
+    assert "## Quick Status" in checklist
+    assert "- Zip entries:" in checklist
+    assert "missing helper notes: SUBMISSION_CHECKLIST.md" not in checklist
+    with ZipFile(zip_path) as archive:
+        names = archive.namelist()
+        assert "DRAFT_REPORT.md" in names
+        assert "SUBMISSION_CHECKLIST.md" in names
 
 
 def test_presentation_planner_creates_evidence_bound_figure_and_table_plan():

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from paper_agent.state import PaperState
 
 
@@ -12,10 +14,159 @@ class DraftReportAgent:
         project_dir = state.get("latex_project_dir")
         if not project_dir:
             return state
+        project_dir = Path(project_dir)
         report_path = project_dir / "DRAFT_REPORT.md"
         report_path.write_text(self._report(state), encoding="utf-8")
-        state.setdefault("artifacts", {})["draft_report_path"] = str(report_path)
+        checklist_path = project_dir / "SUBMISSION_CHECKLIST.md"
+        checklist_path.write_text(self._submission_checklist(state), encoding="utf-8")
+        artifacts = state.setdefault("artifacts", {})
+        artifacts["draft_report_path"] = str(report_path)
+        artifacts["submission_checklist_path"] = str(checklist_path)
         return state
+
+    def _submission_checklist(self, state: PaperState) -> str:
+        request = state["request"]
+        artifacts = state.get("artifacts", {})
+        readiness = artifacts.get("submission_readiness", {})
+        package = artifacts.get("submission_package", {})
+        package_checks = package.get("checks", {}) if isinstance(package, dict) else {}
+        compile_check = package_checks.get("compile", {}) if isinstance(package_checks, dict) else {}
+        zip_check = package_checks.get("zip", {}) if isinstance(package_checks, dict) else {}
+        verification = artifacts.get("reference_verification", {})
+        bibliography = state.get("bibliography", [])
+        review_findings = state.get("review_findings", [])
+
+        experiment_source = artifacts.get(
+            "experiment_results_source",
+            "provided" if (getattr(request, "experiment_results", "") or "").strip() else "none",
+        )
+        experiment_path = artifacts.get("experiment_results_path", "")
+        experiment_note = self._experiment_evidence_note(str(experiment_source), str(experiment_path))
+
+        lines = [
+            "# Submission Checklist",
+            "",
+            "Use this file as the author-facing handoff before uploading the project to Overleaf or a submission system.",
+            "",
+            "## Quick Status",
+            "",
+            f"- Project: {request.project_name}",
+            f"- Target venue: {request.target_venue}",
+            f"- Main TeX: {self._path_or_unknown(state.get('latex_output_path'))}",
+            f"- Overleaf zip: {self._path_or_unknown(state.get('latex_zip_path'))}",
+            f"- Readiness: {readiness.get('status', 'not run')} ({readiness.get('overall_score', 0)}/100)",
+            f"- Package: {package.get('status', 'not run') if isinstance(package, dict) else 'not run'}",
+            (
+                "- Compile: "
+                f"{compile_check.get('status', 'not run')} "
+                f"({compile_check.get('tool') or 'no tool'})"
+            ),
+            (
+                "- Zip entries: "
+                f"{zip_check.get('entries', 0) if isinstance(zip_check, dict) else 0}"
+            ),
+            f"- Bibliography entries: {len(bibliography)}",
+            f"- References resolved: {verification.get('resolved_count', 0)}",
+            f"- References unresolved: {verification.get('unresolved_count', 0)}",
+            f"- Experiment evidence: {experiment_source}{f' ({experiment_path})' if experiment_path else ''}",
+            f"- Evidence note: {experiment_note}",
+            "",
+            "## Upload Steps",
+            "",
+            "1. Upload the generated zip file to Overleaf with New Project > Upload Project.",
+            "2. Set `main.tex` as the main document if Overleaf does not detect it automatically.",
+            "3. Compile once on Overleaf and compare the warnings with `DRAFT_REPORT.md`.",
+            "4. Replace placeholders for author names, affiliations, acknowledgments, and supplementary links.",
+            "5. Re-check the target venue instructions before final submission.",
+            "",
+            "## Must Review",
+            "",
+        ]
+
+        must_review = self._submission_action_items(
+            readiness=readiness if isinstance(readiness, dict) else {},
+            package=package if isinstance(package, dict) else {},
+            review_findings=review_findings,
+            verification=verification if isinstance(verification, dict) else {},
+            experiment_note=experiment_note,
+        )
+        lines.extend(f"- {item}" for item in must_review)
+
+        lines.extend(
+            [
+                "",
+                "## Generated Files",
+                "",
+                "- `main.tex`: generated manuscript source.",
+                "- `references.bib`: generated bibliography; verify every entry manually.",
+                "- `DRAFT_REPORT.md`: detailed quality and evidence report.",
+                "- `FIGURE_TABLE_PLAN.md`: figure/table assets and open presentation items.",
+                "- `TEMPLATE_SOURCE.md`: venue template provenance.",
+                "- `README_OVERLEAF.md`: minimal Overleaf upload notes.",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _submission_action_items(
+        self,
+        *,
+        readiness: dict,
+        package: dict,
+        review_findings: list,
+        verification: dict,
+        experiment_note: str,
+    ) -> list[str]:
+        items: list[str] = []
+        items.extend(str(item) for item in readiness.get("blocking_items", [])[:5])
+        items.extend(str(item) for item in package.get("errors", [])[:5])
+        items.extend(str(item) for item in package.get("warnings", [])[:5])
+
+        major_findings = [
+            self._finding_text(finding)
+            for finding in review_findings
+            if self._finding_severity(finding) == "major"
+        ]
+        items.extend(major_findings[:5])
+
+        if verification.get("unresolved_count", 0):
+            items.append(
+                f"Resolve or remove {verification.get('unresolved_count')} unresolved bibliography seed entries."
+            )
+        if "synthetic" in experiment_note.lower() or "cohort summary" in experiment_note.lower():
+            items.append(experiment_note)
+        items.extend(str(item) for item in readiness.get("action_items", [])[:5])
+
+        if not items:
+            items.append("Perform a final human pass on claims, citations, figures, and venue formatting.")
+        return list(dict.fromkeys(item for item in items if item))
+
+    def _experiment_evidence_note(self, source: str, path: str) -> str:
+        combined = f"{source} {path}".lower()
+        if any(token in combined for token in ("mock", "synthetic", "fabricated")):
+            return "Synthetic or mock experiment numbers are suitable for pipeline testing only; replace them before submission."
+        if source == "tcga_cohort_csv":
+            return "TCGA cohort CSV summaries describe available data only; add trained-model performance results before empirical claims."
+        if source in {"none", ""}:
+            return "No experiment result file was supplied; keep the Experiments section as a framework."
+        return "Review the supplied experiment file against the final tables and claims."
+
+    def _path_or_unknown(self, value: object) -> str:
+        return str(value) if value else "not generated"
+
+    def _finding_severity(self, finding: object) -> str:
+        if isinstance(finding, dict):
+            return str(finding.get("severity", ""))
+        return str(getattr(finding, "severity", ""))
+
+    def _finding_text(self, finding: object) -> str:
+        if isinstance(finding, dict):
+            issue = str(finding.get("issue", ""))
+            suggestion = str(finding.get("suggestion", ""))
+        else:
+            issue = str(getattr(finding, "issue", ""))
+            suggestion = str(getattr(finding, "suggestion", ""))
+        return f"{issue} Suggestion: {suggestion}".strip()
 
     def _report(self, state: PaperState) -> str:
         request = state["request"]

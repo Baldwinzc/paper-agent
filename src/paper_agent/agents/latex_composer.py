@@ -485,7 +485,8 @@ class LatexComposerAgent:
                     f"- Template: {venue_template.template_name or venue_template.family}",
                     f"- Template source: {venue_template.template_source}",
                     f"- Overleaf template page: {venue_template.overleaf_url or 'not configured'}",
-                    "- `references.bib` is a placeholder; add real BibTeX entries before submission.",
+                    "- Start author review from `SUBMISSION_CHECKLIST.md` and `DRAFT_REPORT.md`.",
+                    "- Verify every `references.bib` entry against the actual paper before submission.",
                     "- Generated text should be reviewed against the actual experiments and baseline paper.",
                     "",
                 ]

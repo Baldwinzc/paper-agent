@@ -392,9 +392,14 @@ def _refresh_submission_artifacts(state: dict) -> None:
 
 
 def _write_latex_zip_and_refresh(state: dict, zip_path: Path) -> Path:
+    DraftReportAgent().run(state)
     written_path = zip_latex_project(state["latex_project_dir"], zip_path)
     state["latex_zip_path"] = written_path
     _refresh_submission_artifacts(state)
+    written_path = zip_latex_project(state["latex_project_dir"], zip_path)
+    state["latex_zip_path"] = written_path
+    SubmissionPackageValidatorAgent().run(state)
+    SubmissionReadinessAgent().run(state)
     return written_path
 
 
@@ -824,6 +829,7 @@ def _build_acceptance_report(
             f"- Main TeX: {outputs.get('latex_output_path', '')}",
             f"- Overleaf zip: {outputs.get('latex_zip_path', '')}",
             f"- Draft report: {outputs.get('draft_report_path', '')}",
+            f"- Submission checklist: {outputs.get('submission_checklist_path', '')}",
             f"- Figure/table plan: {outputs.get('presentation_plan_path', '')}",
         ]
     )
@@ -1081,6 +1087,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "latex_output_path": str(state.get("latex_output_path", "")),
             "latex_zip_path": str(state.get("latex_zip_path", "")),
             "draft_report_path": artifacts.get("draft_report_path", ""),
+            "submission_checklist_path": artifacts.get("submission_checklist_path", ""),
             "presentation_plan_path": artifacts.get("presentation_plan_path", ""),
         },
     }
