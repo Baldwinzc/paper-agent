@@ -53,6 +53,19 @@ class SectionWriterAgent:
             r"\bonce final (?:experimental )?results are available\b|\bthe table should\b",
         ),
     ]
+    LLM_METHOD_DIFF_FORBIDDEN_PATTERNS = [
+        (
+            "baseline-diff framing",
+            r"\b(?:baseline|prior work|previous method|existing method)\b.{0,90}"
+            r"\b(?:replace|replaces|removed|remove|modify|modifies|differ|differs|instead|relative to)\b",
+        ),
+        (
+            "baseline-diff framing",
+            r"\b(?:replace|replaces|removed|remove|modify|modifies|differ|differs)\b.{0,90}"
+            r"\b(?:baseline|prior work|previous method|existing method)\b",
+        ),
+        ("implementation-modification framing", r"\bmodifications affecting\b|\braw code diff\b|\bcode differences?\b"),
+    ]
     EXPERIMENT_CLAIM_SECTIONS = {"abstract", "introduction", "experiments", "conclusion"}
 
     SECTION_SPECS = {
@@ -70,7 +83,10 @@ class SectionWriterAgent:
         },
         "method": {
             "max_tokens": 1200,
-            "instruction": "Write Method from innovation points only. Use markdown ### headings for subsections.",
+            "instruction": (
+                "Write Method as a standalone proposed design from innovation points only. "
+                "Do not frame it as baseline/code modifications. Use markdown ### headings."
+            ),
         },
         "experiments": {
             "max_tokens": 900,
@@ -542,6 +558,7 @@ class SectionWriterAgent:
             section_text, section_name, missing_experiment_details
         )
         self._raise_if_procedural_language(section_text, section_name)
+        self._raise_if_method_diff_framing(section_text, section_name)
         self._raise_if_unsupported_experiment_claims(
             section_text,
             section_name,
@@ -627,6 +644,8 @@ class SectionWriterAgent:
         rules = [
             "Write the Method section from innovation points, not raw code diffs.",
             "Use code and baseline only as evidence.",
+            "For Method, do not describe the design as baseline modifications, code differences, "
+            "or replacement of baseline components. Present the proposed computation as a standalone method.",
             "Do not invent experiment numbers.",
             "Do not invent preprocessing accuracies, classifier accuracies, hidden validation "
             "scores, hardware details, optimizer settings, or dataset properties absent from "
@@ -660,6 +679,21 @@ class SectionWriterAgent:
                 ]
             )
         return rules
+
+    def _raise_if_method_diff_framing(self, section_text: str, section_name: str) -> None:
+        if section_name != "method":
+            return
+        matched = [
+            label
+            for label, pattern in self.LLM_METHOD_DIFF_FORBIDDEN_PATTERNS
+            if re.search(pattern, section_text, flags=re.I | re.S)
+        ]
+        if not matched:
+            return
+        raise ValueError(
+            "LLM method section framed the design as code/baseline differences: "
+            + ", ".join(sorted(set(matched)))
+        )
 
     def _citation_hint(self, citation_keys: list[str]) -> str:
         if not citation_keys:

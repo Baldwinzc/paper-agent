@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.bibliography import BibliographyAgent
+from paper_agent.agents.code_baseline_comparison import CodeBaselineComparisonAgent
 from paper_agent.agents.code_understanding import CodeUnderstandingAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
@@ -35,6 +36,7 @@ class PaperWorkflow:
             BaselineReaderAgent(),
             CodeUnderstandingAgent(),
             ExperimentAnalyzerAgent(),
+            CodeBaselineComparisonAgent(),
             InnovationAnalyzerAgent(),
             VenueTemplateAgent(),
             PaperPlannerAgent(),

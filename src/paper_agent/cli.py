@@ -498,6 +498,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     llm_review = artifacts.get("llm_self_review", {})
     reference_verification = artifacts.get("reference_verification", {})
     readiness = artifacts.get("submission_readiness", {})
+    code_baseline_comparison = artifacts.get("code_baseline_comparison", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
@@ -524,6 +525,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "submission_readiness_score": readiness.get("overall_score", 0),
         "submission_readiness_status": readiness.get("status", "not run"),
         "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
+        "code_baseline_method_shifts": len(
+            code_baseline_comparison.get("likely_method_shifts", [])
+        ),
+        "code_baseline_innovation_seeds": len(
+            code_baseline_comparison.get("innovation_seeds", [])
+        ),
         "bibliography_entries": len(state.get("bibliography", [])),
         "reference_resolver_mode": artifacts.get("reference_resolver_mode", "not run"),
         "reference_resolved": reference_verification.get("resolved_count", 0),

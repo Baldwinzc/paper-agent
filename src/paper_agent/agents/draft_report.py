@@ -79,6 +79,29 @@ class DraftReportAgent:
                 section_names = ", ".join(baseline.structured_sections.keys())
                 lines.append(f"- Structured sections: {section_names}")
 
+        comparison = artifacts.get("code_baseline_comparison", {})
+        if comparison:
+            lines.extend(["", "## Code-Baseline Comparison", ""])
+            lines.append(f"- Mode: {comparison.get('mode', 'unknown')}")
+            overlap = ", ".join(comparison.get("overlapping_terms", [])[:6])
+            code_only = ", ".join(comparison.get("code_only_terms", [])[:6])
+            if overlap:
+                lines.append(f"- Shared technical context: {overlap}")
+            if code_only:
+                lines.append(f"- Code-side innovation candidates: {code_only}")
+            shifts = comparison.get("likely_method_shifts", [])
+            if shifts:
+                lines.append("- Method-shift evidence:")
+                for item in shifts[:5]:
+                    lines.append(f"  - {item.get('technique')}: {self._clip(item.get('rationale', ''))}")
+                    for evidence in item.get("evidence", [])[:2]:
+                        lines.append(f"    Evidence: {self._clip(evidence)}")
+            seeds = comparison.get("innovation_seeds", [])
+            if seeds:
+                lines.append("- Innovation seeds:")
+                for seed in seeds[:5]:
+                    lines.append(f"  - {self._clip(seed)}")
+
         lines.extend(["", "## Missing Experiment Details", ""])
         if experiments and experiments.missing_details:
             lines.extend(f"- {item}" for item in experiments.missing_details)

@@ -20,6 +20,8 @@ The current scaffold supports:
 
 - Baseline PDF extraction with a text fallback.
 - Lightweight codebase summarization.
+- Code-baseline comparison that turns repository-only method evidence into
+  innovation seeds without making Method read like a raw diff.
 - Experiment-result summarization from pasted Markdown/CSV text.
 - Innovation-point analysis.
 - Venue template selection and optional remote template download.

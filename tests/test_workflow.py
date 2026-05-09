@@ -12,6 +12,7 @@ from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, Pape
 from paper_agent.workflow import PaperWorkflow
 from paper_agent.agents.baseline_reader import BaselineReaderAgent
 from paper_agent.agents.bibliography import BibliographyAgent
+from paper_agent.agents.code_baseline_comparison import CodeBaselineComparisonAgent
 from paper_agent.agents.code_understanding import CodeUnderstandingAgent
 from paper_agent.agents.evidence_guard import EvidenceGuardAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
@@ -245,6 +246,76 @@ def test_code_understanding_extracts_implementation_evidence(tmp_path):
     assert any("(OT/Wasserstein hypergraph construction)" in item for item in evidence)
     assert any("(cross-cluster cost mask)" in item for item in evidence)
     assert "implementation evidence snippets" in state["code"].summary
+
+
+def test_code_baseline_comparison_generates_innovation_seeds():
+    state = {
+        "baseline": BaselineSummary(
+            title="Prototype Graphs for Survival Prediction",
+            method="The baseline uses heterogeneous graph prototypes for WSI survival prediction.",
+            related_terms=["prototype learning", "survival prediction"],
+        ),
+        "code": CodeSummary(
+            summary="Scanned method files.",
+            implementation_evidence=[
+                "models/model.py:14 (BHE/HCoN module) self.hcon = HCoN(input_feat_x_dim=512)",
+                "data/hypergraph.py:20 (OT/Wasserstein hypergraph construction) X_bar = ot.lp.free_support_barycenter(...)",
+                "models/model.py:52 (incidence reconstruction) rec_loss = F.binary_cross_entropy_with_logits(logits, target_H)",
+            ],
+            method_claims=[
+                "Adaptive hypergraph prototype learning with optimal transport and incidence reconstruction."
+            ],
+        ),
+        "artifacts": {},
+    }
+
+    CodeBaselineComparisonAgent().run(state)
+
+    comparison = state["artifacts"]["code_baseline_comparison"]
+    assert comparison["mode"] == "compared"
+    assert "prototype learning" in comparison["overlapping_terms"]
+    assert "hypergraph modeling" in comparison["code_only_terms"]
+    assert "optimal transport geometry" in comparison["code_only_terms"]
+    assert any("hypergraph" in seed for seed in comparison["innovation_seeds"])
+    assert comparison["likely_method_shifts"]
+
+
+def test_innovation_analyzer_prioritizes_code_baseline_seeds():
+    state = {
+        "request": PaperRequest(project_name="comparison-innovation-demo", target_venue="TPAMI"),
+        "code": CodeSummary(
+            summary="Scanned method files.",
+            implementation_evidence=[
+                "models/model.py:52 (incidence reconstruction) rec_loss = F.binary_cross_entropy_with_logits(logits, target_H)"
+            ],
+            method_claims=["A lower-priority implementation claim."],
+        ),
+        "artifacts": {
+            "code_baseline_comparison": {
+                "innovation_seeds": [
+                    "Regularize learned hypergraph structure with incidence reconstruction."
+                ],
+                "likely_method_shifts": [
+                    {
+                        "technique": "incidence reconstruction",
+                        "evidence": [
+                            "models/model.py:52 (incidence reconstruction) rec_loss = F.binary_cross_entropy_with_logits(logits, target_H)"
+                        ],
+                    }
+                ],
+            }
+        },
+    }
+
+    InnovationAnalyzerAgent().run(state)
+
+    assert state["innovations"][0].technical_idea.startswith(
+        "Regularize learned hypergraph structure"
+    )
+    assert any(
+        "Innovation support: incidence reconstruction" in item
+        for item in state["innovations"][0].evidence
+    )
 
 
 def test_innovation_evidence_includes_code_implementation_snippets():
@@ -795,6 +866,11 @@ def test_bibliography_uses_technical_queries_for_innovation_threads():
                 technical_idea="Use a survival-reconstruction objective for representation learning.",
                 motivation="The baseline objective is incomplete.",
             ),
+            InnovationPoint(
+                name="Innovation 4: Simplify the training objective",
+                technical_idea="Simplify the training objective by removing unsupported legacy regularizers.",
+                motivation="The baseline objective is incomplete.",
+            ),
         ],
         "artifacts": {},
     }
@@ -808,6 +884,8 @@ def test_bibliography_uses_technical_queries_for_innovation_threads():
     assert any("survival prediction representation learning" in query for query in queries)
     assert not any(key.startswith("innovation") for key in keys)
     assert not any("Innovation 1" in entry.title for entry in state["bibliography"])
+    assert not any("simplify objective removing" in query for query in queries)
+    assert not any("the legacy" in query for query in queries)
 
 
 def test_reference_resolver_enriches_seed_entry(monkeypatch):
@@ -2051,6 +2129,10 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "submission_readiness": {"overall_score": 82, "status": "needs_author_pass"},
+            "code_baseline_comparison": {
+                "likely_method_shifts": [{"technique": "hypergraph modeling"}],
+                "innovation_seeds": ["Introduce hypergraph structure modeling."],
+            },
             "latex_table_count": 3,
             "undefined_citation_keys": ["missing"],
             "draft_report_path": str(tmp_path / "latex" / "DRAFT_REPORT.md"),
@@ -2064,6 +2146,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["bibliography_entries"] == 1
     assert summary["submission_readiness_score"] == 82
     assert summary["submission_readiness_status"] == "needs_author_pass"
+    assert summary["code_baseline_method_shifts"] == 1
+    assert summary["code_baseline_innovation_seeds"] == 1
     assert summary["reference_unresolved"] == 2
     assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
@@ -2174,6 +2258,7 @@ def test_llm_section_prompt_blocks_performance_claims_when_results_missing(monke
     assert "Do not invent preprocessing accuracies" in joined_rules
     assert "Do not include writer instructions" in joined_rules
     assert "Do not copy numeric citations" in joined_rules
+    assert "do not describe the design as baseline modifications" in joined_rules
     assert payload["missing_experiment_details"] == ["Evaluation metrics are not explicit."]
 
 
@@ -2340,6 +2425,38 @@ def test_llm_method_rejects_unsupported_mechanistic_outcome_when_results_missing
         assert "unsupported method outcome" in str(exc)
     else:
         raise AssertionError("Expected unsupported method outcome to be rejected")
+
+
+def test_llm_method_rejects_baseline_diff_framing():
+    client = FakeLLMClient(
+        "### Adaptive Prototype Geometry\n"
+        "In the baseline ProtoSurv, an online prototype bank is used. "
+        "Hyper-ProtoSurv replaces the baseline prototype bank with offline OT prototypes."
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=["data_preparation/hypergraph.py:20"],
+            )
+        ],
+        "outline": PaperOutline(),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "method")
+    except ValueError as exc:
+        assert "code/baseline differences" in str(exc)
+    else:
+        raise AssertionError("Expected baseline-diff Method framing to be rejected")
 
 
 def test_llm_related_work_rejects_method_effect_claims_when_results_missing():
@@ -2779,6 +2896,40 @@ def test_draft_report_includes_innovation_traceability(tmp_path):
     assert "missing from Method" in report
     assert "Repository exposes L_surv and L_rec." in report
     assert "signed drop +0.016" in report
+
+
+def test_draft_report_includes_code_baseline_comparison(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="comparison-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "code_baseline_comparison": {
+                "mode": "compared",
+                "overlapping_terms": ["prototype learning", "survival prediction"],
+                "code_only_terms": ["hypergraph modeling"],
+                "likely_method_shifts": [
+                    {
+                        "technique": "hypergraph modeling",
+                        "rationale": "Repository evidence supports this as a proposed-method component.",
+                        "evidence": [
+                            "models/model.py:14 (BHE/HCoN module) self.hcon = HCoN(...)"
+                        ],
+                    }
+                ],
+                "innovation_seeds": [
+                    "Introduce hypergraph structure modeling for higher-order tissue and prototype relations."
+                ],
+            }
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Code-Baseline Comparison" in report
+    assert "Shared technical context: prototype learning, survival prediction" in report
+    assert "Code-side innovation candidates: hypergraph modeling" in report
+    assert "Introduce hypergraph structure modeling" in report
 
 
 def test_citation_aliases_convert_to_retained_key():

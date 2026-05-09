@@ -37,6 +37,7 @@ InputCollector
   -> BaselineReader
   -> CodeUnderstanding
   -> ExperimentAnalyzer
+  -> CodeBaselineComparison
   -> InnovationAnalyzer
   -> VenueTemplate
   -> PaperPlanner
@@ -48,6 +49,7 @@ InputCollector
   -> LatexComposer
   -> Reviewer
   -> LLMSelfReview
+  -> SubmissionReadiness
   -> DraftReport
 ```
 
@@ -57,6 +59,10 @@ The Method section is not written from "code differences". Code is evidence. Bas
 analysis is evidence. Experiment results are evidence. The Method section is written
 from explicit innovation points inferred from those evidence sources and confirmed by
 the user when needed.
+
+Code-baseline comparison is allowed as an evidence organizer, not as Method prose.
+It records shared context, repository-only method candidates, and innovation seeds
+so later writing can focus on contribution points instead of describing a raw diff.
 
 The Related Work section should not depend only on the user-provided baseline PDF.
 The workflow expands it by retrieving the baseline's references, papers that cite the

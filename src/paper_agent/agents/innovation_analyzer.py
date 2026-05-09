@@ -13,6 +13,7 @@ class InnovationAnalyzerAgent:
         baseline = state.get("baseline")
         code = state.get("code")
         experiments = state.get("experiments")
+        comparison = state.get("artifacts", {}).get("code_baseline_comparison", {})
 
         notes = request.method_notes.strip()
         innovations: list[InnovationPoint] = []
@@ -20,7 +21,13 @@ class InnovationAnalyzerAgent:
         if notes:
             claims = [chunk.strip("- \n") for chunk in notes.split("\n") if chunk.strip()]
         elif code and code.method_claims:
-            claims = code.method_claims
+            claims = [
+                *comparison.get("innovation_seeds", []),
+                *code.method_claims,
+            ]
+        elif comparison.get("innovation_seeds"):
+            claims = list(comparison.get("innovation_seeds", []))
+        claims = list(dict.fromkeys(claims))
 
         if claims:
             for index, chunk in enumerate(claims[:4], start=1):
@@ -33,7 +40,7 @@ class InnovationAnalyzerAgent:
                             else "Addresses a limitation identified in the baseline setting."
                         ),
                         technical_idea=chunk,
-                        evidence=self._evidence(code, experiments),
+                        evidence=self._evidence(code, experiments, comparison),
                         risk=(
                             "Needs manual confirmation that the contribution is novel and not overclaimed."
                             if notes
@@ -48,7 +55,7 @@ class InnovationAnalyzerAgent:
                     name="Innovation 1: Method improvement to be confirmed",
                     motivation="The baseline leaves room for a targeted method improvement.",
                     technical_idea="User should provide the core technical change in method notes.",
-                    evidence=self._evidence(code, experiments),
+                    evidence=self._evidence(code, experiments, comparison),
                     risk="Insufficient method notes; this point should not be treated as final.",
                 )
             )
@@ -56,12 +63,18 @@ class InnovationAnalyzerAgent:
         state["innovations"] = innovations
         return state
 
-    def _evidence(self, code, experiments) -> list[str]:
+    def _evidence(self, code, experiments, comparison=None) -> list[str]:
         evidence = []
         if code and code.summary:
             evidence.append(code.summary)
         if code and code.implementation_evidence:
             evidence.extend(self._select_implementation_evidence(code.implementation_evidence))
+        if comparison:
+            for shift in comparison.get("likely_method_shifts", [])[:3]:
+                technique = shift.get("technique")
+                if technique and technique != "problem-setting continuity":
+                    evidence.append(f"Innovation support: {technique} is backed by repository evidence.")
+                evidence.extend((shift.get("evidence") or [])[:1])
         if code and code.method_claims:
             evidence.extend(code.method_claims[:2])
         if experiments:
