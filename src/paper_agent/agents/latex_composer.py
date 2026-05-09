@@ -8,6 +8,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from paper_agent.figures import write_bar_chart_pdf
 from paper_agent.state import PaperState, VenueTemplate
 from paper_agent.tables import extract_markdown_tables, markdown_table_to_latex
 
@@ -37,7 +38,12 @@ class LatexComposerAgent:
             lstrip_blocks=True,
         )
         template = env.get_template("main.tex.j2")
+        self._copy_template_assets(template_dir, output_root)
+        self._copy_cached_template_assets(Path(venue_template.template_dir), output_root)
         experiment_tables = extract_markdown_tables(request.experiment_results)
+        self._generate_presentation_figures(output_root, state)
+        method_figures_latex = self._figure_latex_for_section(state, "Method")
+        experiment_figures_latex = self._figure_latex_for_section(state, "Experiments")
         experiment_table_latex = "\n\n".join(
             markdown_table_to_latex(table) for table in experiment_tables
         )
@@ -52,6 +58,8 @@ class LatexComposerAgent:
         )
         if experiment_table_latex:
             experiments_latex = experiments_latex + "\n\n" + experiment_table_latex
+        if experiment_figures_latex:
+            experiments_latex = experiments_latex + "\n\n" + experiment_figures_latex
 
         title = outline.title_candidates[0] if outline.title_candidates else request.project_name
         template_values = {
@@ -80,7 +88,8 @@ class LatexComposerAgent:
                 citation_keys=citation_keys,
                 citation_aliases=citation_aliases,
                 undefined_citations=undefined_citations,
-            ),
+            )
+            + (("\n\n" + method_figures_latex) if method_figures_latex else ""),
             "experiments": experiments_latex,
             "conclusion": self._latex_escape(
                 sections.conclusion,
@@ -93,8 +102,6 @@ class LatexComposerAgent:
             rendered = self._render_from_sample_main(Path(venue_template.sample_main_tex), template_values)
         else:
             rendered = template.render(**template_values)
-        self._copy_template_assets(template_dir, output_root)
-        self._copy_cached_template_assets(Path(venue_template.template_dir), output_root)
         self._write_project_helpers(output_root, venue_template, state)
         self._write_presentation_plan(output_root, state, experiment_tables)
 
@@ -103,6 +110,9 @@ class LatexComposerAgent:
         state["latex_project_dir"] = output_root
         state["latex_output_path"] = output_path
         state.setdefault("artifacts", {})["latex_table_count"] = len(experiment_tables)
+        state["artifacts"]["generated_figure_count"] = len(
+            state.get("artifacts", {}).get("generated_figures", [])
+        )
         state["artifacts"]["latex_tables"] = [
             {
                 "label": table.label,
@@ -434,6 +444,7 @@ class LatexComposerAgent:
                         f"- `{figure.get('label')}`: {figure.get('title')}",
                         f"  - Section: {figure.get('section')}",
                         f"  - Asset: `{figure.get('asset_path')}`",
+                        f"  - Status: {figure.get('status', 'planned')}",
                         f"  - Caption: {figure.get('caption')}",
                     ]
                 )
@@ -460,6 +471,99 @@ class LatexComposerAgent:
         path = output_root / "FIGURE_TABLE_PLAN.md"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         state.setdefault("artifacts", {})["presentation_plan_path"] = str(path)
+
+    def _generate_presentation_figures(self, output_root: Path, state: PaperState) -> None:
+        plan = state.setdefault("artifacts", {}).get("presentation_plan", {})
+        if not isinstance(plan, dict):
+            return
+        figures = plan.get("figures", [])
+        if not figures:
+            return
+        experiments = state.get("experiments")
+        if not experiments:
+            return
+
+        generated: list[dict[str, str]] = []
+        for figure in figures:
+            label = figure.get("label")
+            if label == "fig:main-results":
+                bars = self._main_result_bars(experiments)
+            elif label == "fig:ablation-summary":
+                bars = self._ablation_bars(experiments)
+            else:
+                bars = []
+            if not bars:
+                continue
+            asset_path = str(figure.get("asset_path") or "")
+            if not asset_path:
+                continue
+            output_path = output_root / asset_path
+            write_bar_chart_pdf(
+                output_path,
+                title=str(figure.get("title") or label),
+                bars=bars,
+                y_label="Signed improvement" if label == "fig:main-results" else "Signed drop",
+            )
+            figure["status"] = "generated"
+            figure["asset_exists"] = True
+            figure["generated_path"] = str(output_path)
+            generated.append(
+                {
+                    "label": str(label),
+                    "asset_path": asset_path,
+                    "path": str(output_path),
+                }
+            )
+
+        state.setdefault("artifacts", {})["generated_figures"] = generated
+        plan["open_items"] = [
+            item
+            for item in plan.get("open_items", [])
+            if not any(generated_item["asset_path"] in item for generated_item in generated)
+        ]
+
+    def _main_result_bars(self, experiments) -> list[tuple[str, float]]:
+        bars: list[tuple[str, float]] = []
+        for table in experiments.result_tables:
+            for comparison in table.comparisons:
+                label = " ".join(
+                    part
+                    for part in [comparison.dataset, comparison.metric]
+                    if part
+                ) or comparison.table_caption or "Result"
+                bars.append((label, comparison.signed_improvement))
+        return bars[:10]
+
+    def _ablation_bars(self, experiments) -> list[tuple[str, float]]:
+        return [
+            (item.variant, item.signed_drop)
+            for item in experiments.ablation_evidence[:10]
+        ]
+
+    def _figure_latex_for_section(self, state: PaperState, section: str) -> str:
+        plan = state.get("artifacts", {}).get("presentation_plan", {})
+        if not isinstance(plan, dict):
+            return ""
+        snippets = []
+        for figure in plan.get("figures", []):
+            if figure.get("section") != section or figure.get("status") != "generated":
+                continue
+            asset_path = str(figure.get("asset_path") or "")
+            if not asset_path:
+                continue
+            snippets.append(
+                "\n".join(
+                    [
+                        r"\begin{figure}[t]",
+                        r"\centering",
+                        rf"\includegraphics[width=\columnwidth]{{{asset_path}}}",
+                        rf"\caption{{{self._escape_inline(str(figure.get('caption') or 'Generated figure.'))}}}",
+                        rf"\label{{{figure.get('label')}}}",
+                        r"\end{figure}",
+                    ]
+                )
+            )
+        return "\n\n".join(snippets)
 
     def _markdown(self, state: PaperState) -> str:
         sections = state["sections"]

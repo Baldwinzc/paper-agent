@@ -94,8 +94,12 @@ class DraftReportAgent:
             figures = presentation.get("figures", [])
             tables = presentation.get("tables", [])
             open_items = presentation.get("open_items", [])
+            generated_figures = [
+                figure for figure in figures if figure.get("status") == "generated"
+            ]
             lines.extend(["", "## Figure and Table Plan", ""])
             lines.append(f"- Planned figures: {len(figures)}")
+            lines.append(f"- Generated figures: {len(generated_figures)}")
             lines.append(f"- Planned/rendered tables: {len(tables)}")
             plan_path = artifacts.get("presentation_plan_path", "")
             if plan_path:

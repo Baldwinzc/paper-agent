@@ -120,7 +120,13 @@ class ReviewerAgent:
                 )
 
         if sections:
-            consistency = self._factual_consistency_checks(sections, experiments, innovations)
+            consistency = self._factual_consistency_checks(
+                sections,
+                experiments,
+                innovations,
+                state.get("code"),
+                state.get("artifacts", {}),
+            )
             state.setdefault("artifacts", {})["factual_consistency"] = consistency
             consistency_issues = [
                 item
@@ -333,7 +339,14 @@ class ReviewerAgent:
         ]
         return list(dict.fromkeys(normalized))
 
-    def _factual_consistency_checks(self, sections, experiments, innovations) -> list[dict[str, object]]:
+    def _factual_consistency_checks(
+        self,
+        sections,
+        experiments,
+        innovations,
+        code=None,
+        artifacts=None,
+    ) -> list[dict[str, object]]:
         checks: list[dict[str, object]] = []
         section_values = sections.model_dump()
         evidence_text = self._evidence_text(experiments)
@@ -363,7 +376,13 @@ class ReviewerAgent:
         checks.append(
             self._consistency_item(
                 "unsupported_method_threads",
-                self._unsupported_method_threads(sections.method, innovations, experiments),
+                self._unsupported_method_threads(
+                    sections.method,
+                    innovations,
+                    experiments,
+                    code,
+                    artifacts or {},
+                ),
             )
         )
         return checks
@@ -488,7 +507,14 @@ class ReviewerAgent:
             normalized = value.lstrip("+")
         return normalized + suffix
 
-    def _unsupported_method_threads(self, method_text: str, innovations, experiments=None) -> list[str]:
+    def _unsupported_method_threads(
+        self,
+        method_text: str,
+        innovations,
+        experiments=None,
+        code=None,
+        artifacts=None,
+    ) -> list[str]:
         if not innovations:
             return []
         unsupported = []
@@ -501,7 +527,12 @@ class ReviewerAgent:
                 for innovation in innovations
             )
             ablation_supported = self._method_thread_supported_by_ablation(subsection, experiments)
-            if not innovation_supported and not ablation_supported:
+            implementation_supported = self._method_thread_supported_by_implementation(
+                subsection,
+                code,
+                artifacts or {},
+            )
+            if not innovation_supported and not ablation_supported and not implementation_supported:
                 unsupported.append(heading)
         return unsupported
 
@@ -515,6 +546,48 @@ class ReviewerAgent:
             if (overlap & self.STRONG_ABLATION_TOKENS) or len(overlap) >= 2:
                 return True
         return False
+
+    def _method_thread_supported_by_implementation(
+        self,
+        subsection: str,
+        code,
+        artifacts: dict[str, object],
+    ) -> bool:
+        evidence_items = self._implementation_support_items(code, artifacts)
+        if not evidence_items:
+            return False
+        subsection_tokens = self._expanded_content_tokens(subsection)
+        if not subsection_tokens:
+            return False
+        for item in evidence_items:
+            evidence_tokens = self._expanded_content_tokens(item)
+            overlap = subsection_tokens & evidence_tokens
+            if (overlap & self._strong_method_tokens()) or len(overlap) >= 3:
+                return True
+        return False
+
+    def _implementation_support_items(self, code, artifacts: dict[str, object]) -> list[str]:
+        items: list[str] = []
+        if code:
+            items.extend(getattr(code, "likely_method_files", []) or [])
+            items.extend(getattr(code, "implementation_evidence", []) or [])
+            items.extend(getattr(code, "method_claims", []) or [])
+            if getattr(code, "summary", ""):
+                items.append(code.summary)
+
+        comparison = artifacts.get("code_baseline_comparison", {})
+        if isinstance(comparison, dict):
+            items.extend(str(term) for term in comparison.get("overlapping_terms", []) or [])
+            items.extend(str(term) for term in comparison.get("code_only_terms", []) or [])
+            items.extend(str(seed) for seed in comparison.get("innovation_seeds", []) or [])
+            for shift in comparison.get("likely_method_shifts", []) or []:
+                if not isinstance(shift, dict):
+                    continue
+                items.append(str(shift.get("technique", "")))
+                items.append(str(shift.get("rationale", "")))
+                items.extend(str(evidence) for evidence in shift.get("evidence", []) or [])
+
+        return [item for item in items if item.strip()]
 
     def _markdown_subsections(self, text: str) -> list[tuple[str, str]]:
         sections: list[tuple[str, str]] = []
@@ -629,7 +702,35 @@ class ReviewerAgent:
 
     def _expanded_content_tokens(self, text: str) -> set[str]:
         expanded = re.sub(r"[-_]+", " ", text)
-        return set(self._content_tokens(text)) | set(self._content_tokens(expanded))
+        tokens = set(self._content_tokens(text)) | set(self._content_tokens(expanded))
+        singulars = {
+            token[:-1]
+            for token in tokens
+            if token.endswith("s") and len(token) > 4
+        }
+        return tokens | singulars
+
+    def _strong_method_tokens(self) -> set[str]:
+        return {
+            "attention",
+            "barycenter",
+            "bidirectional",
+            "binary",
+            "convolution",
+            "cox",
+            "cross",
+            "fusion",
+            "hcon",
+            "hyperedge",
+            "hypergraph",
+            "incidence",
+            "optimal",
+            "prototype",
+            "reconstruction",
+            "survival",
+            "transport",
+            "wasserstein",
+        }
 
     def _format_ablation_evidence(self, item) -> str:
         metric = f" {item.metric}" if item.metric else ""

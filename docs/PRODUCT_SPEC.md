@@ -97,6 +97,9 @@ The presentation planner records evidence-bound figure and table plans with
 labels, captions, target sections, suggested asset paths, and open items in
 `FIGURE_TABLE_PLAN.md` so authors can add visual assets without the draft
 inventing figures.
+When structured experiment tables are available, the LaTeX composer can generate
+simple PDF bar charts for main results and ablations and inserts only those
+figures whose assets exist in the package.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command

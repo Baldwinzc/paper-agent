@@ -1628,6 +1628,59 @@ def test_reviewer_accepts_method_thread_supported_by_ablation_evidence():
     assert consistency["unsupported_method_threads"]["status"] == "ok"
 
 
+def test_reviewer_accepts_method_thread_supported_by_code_evidence():
+    state = {
+        "experiments": ExperimentSummary(),
+        "code": CodeSummary(
+            likely_method_files=["data_preparation/hypergraph_construction_wb.py"],
+            implementation_evidence=[
+                "data_preparation/hypergraph_construction_wb.py:146 "
+                "(OT/Wasserstein hypergraph construction) X_bar = ot.lp.free_support_barycenter("
+            ],
+            method_claims=["Construct heterogeneous hypergraphs from prototype hyperedges."],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="The baseline uses static prototypes.",
+                technical_idea="Construct adaptive prototype geometry with optimal-transport evidence.",
+                evidence=["Wasserstein barycenter construction is implemented."],
+            )
+        ],
+        "sections": DraftSections(
+            method=(
+                "### Adaptive prototype geometry\n"
+                "The method constructs adaptive prototypes.\n\n"
+                "### Heterogeneous Hypergraph Construction\n"
+                "Nodes correspond to tissue patches and hyperedges connect patches with prototypes."
+            )
+        ),
+        "artifacts": {
+            "code_baseline_comparison": {
+                "code_only_terms": ["hypergraph modeling", "optimal transport geometry"],
+                "innovation_seeds": [
+                    "Introduce hypergraph structure modeling for higher-order tissue and prototype relations."
+                ],
+                "likely_method_shifts": [
+                    {
+                        "technique": "hypergraph modeling",
+                        "evidence": ["Repository evidence supports hypergraph construction."],
+                    }
+                ],
+            }
+        },
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+
+    assert consistency["unsupported_method_threads"]["status"] == "ok"
+    assert not any("unsupported_method_threads" in f.issue for f in reviewed["review_findings"])
+
+
 def test_reviewer_flags_outline_language():
     state = {
         "experiments": ExperimentSummary(),
@@ -2154,6 +2207,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
                 "tables": [{"label": "tab:main-results"}],
                 "open_items": ["Create method overview figure."],
             },
+            "generated_figures": [{"label": "fig:main-results"}],
             "presentation_plan_path": str(tmp_path / "latex" / "FIGURE_TABLE_PLAN.md"),
             "code_baseline_comparison": {
                 "likely_method_shifts": [{"technique": "hypergraph modeling"}],
@@ -2176,6 +2230,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["submission_package_errors"] == 1
     assert summary["submission_package_warnings"] == 1
     assert summary["presentation_figures"] == 1
+    assert summary["generated_figures"] == 1
     assert summary["presentation_tables"] == 1
     assert summary["presentation_open_items"] == 1
     assert summary["code_baseline_method_shifts"] == 1
@@ -3248,6 +3303,148 @@ def test_latex_composer_writes_figure_table_plan(tmp_path):
     assert "## Figure and Table Plan" in state["final_markdown"]
 
 
+def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp_path):
+    state = {
+        "request": PaperRequest(
+            project_name="generated-figures-demo",
+            target_venue="TPAMI",
+            experiment_results=(
+                "## Main Results\n\n"
+                "| Method | BLCA C-index | BRCA C-index |\n"
+                "|---|---:|---:|\n"
+                "| ProtoSurv baseline | 0.646 | 0.669 |\n"
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |\n"
+                "\n"
+                "## Ablation Results\n\n"
+                "| Variant | Average C-index |\n"
+                "|---|---:|\n"
+                "| Full Hyper-ProtoSurv | 0.690 |\n"
+                "| w/o L_rec | 0.672 |\n"
+            ),
+        ),
+        "venue_template": VenueTemplate(venue="TPAMI", family="ieee_journal"),
+        "outline": PaperOutline(title_candidates=["Generated Figures Demo"]),
+        "sections": DraftSections(
+            abstract="Abstract.",
+            introduction="Introduction.",
+            related_work="Related work.",
+            method="### Method Overview\nMethod.",
+            experiments="### Main Results\nResults.",
+            conclusion="Conclusion.",
+        ),
+        "bibliography": [],
+        "experiments": ExperimentSummary(
+            datasets=["BLCA", "BRCA"],
+            metrics=["C-INDEX"],
+            result_tables=[
+                ExperimentTableSummary(
+                    caption="Main Results",
+                    method="Hyper-ProtoSurv ours",
+                    baseline="ProtoSurv baseline",
+                    comparisons=[
+                        ExperimentComparison(
+                            dataset="BLCA",
+                            metric="C-INDEX",
+                            method="Hyper-ProtoSurv ours",
+                            baseline="ProtoSurv baseline",
+                            method_value=0.671,
+                            baseline_value=0.646,
+                            signed_improvement=0.025,
+                            improved=True,
+                        ),
+                        ExperimentComparison(
+                            dataset="BRCA",
+                            metric="C-INDEX",
+                            method="Hyper-ProtoSurv ours",
+                            baseline="ProtoSurv baseline",
+                            method_value=0.691,
+                            baseline_value=0.669,
+                            signed_improvement=0.022,
+                            improved=True,
+                        ),
+                    ],
+                )
+            ],
+            ablation_evidence=[
+                AblationEvidence(
+                    variant="w/o L_rec",
+                    reference="Full Hyper-ProtoSurv",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference_value=0.690,
+                    variant_value=0.672,
+                    signed_drop=0.018,
+                )
+            ],
+        ),
+        "artifacts": {
+            "presentation_plan": {
+                "figures": [
+                    {
+                        "label": "fig:method-overview",
+                        "title": "Method Overview",
+                        "section": "Method",
+                        "asset_path": "figures/method_overview.pdf",
+                        "caption": "Overview of the proposed method.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
+                    {
+                        "label": "fig:main-results",
+                        "title": "Main Result Summary",
+                        "section": "Experiments",
+                        "asset_path": "figures/main_results.pdf",
+                        "caption": "Summary visualization of the main results.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
+                    {
+                        "label": "fig:ablation-summary",
+                        "title": "Ablation Summary",
+                        "section": "Experiments",
+                        "asset_path": "figures/ablation_summary.pdf",
+                        "caption": "Ablation summary.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
+                ],
+                "tables": [],
+                "open_items": [
+                    "Create or attach the planned figure asset `figures/method_overview.pdf` for `fig:method-overview`.",
+                    "Create or attach the planned figure asset `figures/main_results.pdf` for `fig:main-results`.",
+                    "Create or attach the planned figure asset `figures/ablation_summary.pdf` for `fig:ablation-summary`.",
+                ],
+            }
+        },
+    }
+
+    LatexComposerAgent().run(state)
+
+    main_pdf = state["latex_project_dir"] / "figures" / "main_results.pdf"
+    ablation_pdf = state["latex_project_dir"] / "figures" / "ablation_summary.pdf"
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    plan = (state["latex_project_dir"] / "FIGURE_TABLE_PLAN.md").read_text(encoding="utf-8")
+    assert main_pdf.exists()
+    assert main_pdf.read_bytes().startswith(b"%PDF-1.4")
+    assert ablation_pdf.exists()
+    assert r"\includegraphics[width=\columnwidth]{figures/main_results.pdf}" in tex
+    assert r"\includegraphics[width=\columnwidth]{figures/ablation_summary.pdf}" in tex
+    assert "figures/method_overview.pdf" not in tex
+    assert state["artifacts"]["generated_figure_count"] == 2
+    assert {item["label"] for item in state["artifacts"]["generated_figures"]} == {
+        "fig:main-results",
+        "fig:ablation-summary",
+    }
+    assert "Status: generated" in plan
+    assert state["artifacts"]["presentation_plan"]["open_items"] == [
+        "Create or attach the planned figure asset `figures/method_overview.pdf` for `fig:method-overview`."
+    ]
+
+    SubmissionPackageValidatorAgent().run(state)
+    assert not state["artifacts"]["submission_package"]["errors"]
+    assert state["artifacts"]["submission_package"]["checks"]["missing_graphics"] == []
+
+
 def test_draft_report_includes_presentation_plan(tmp_path):
     state = {
         "request": PaperRequest(project_name="presentation-report-demo", target_venue="TPAMI"),
@@ -3275,6 +3472,7 @@ def test_draft_report_includes_presentation_plan(tmp_path):
     report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
     assert "## Figure and Table Plan" in report
     assert "- Planned figures: 1" in report
+    assert "- Generated figures: 0" in report
     assert "`fig:method-overview`" in report
     assert "Create the method overview figure." in report
 

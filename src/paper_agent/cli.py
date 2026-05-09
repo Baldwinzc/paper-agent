@@ -542,6 +542,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "submission_package_errors": len(submission_package.get("errors", [])),
         "submission_package_warnings": len(submission_package.get("warnings", [])),
         "presentation_figures": len(presentation_plan.get("figures", [])),
+        "generated_figures": len(artifacts.get("generated_figures", [])),
         "presentation_tables": len(presentation_plan.get("tables", [])),
         "presentation_open_items": len(presentation_plan.get("open_items", [])),
         "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
