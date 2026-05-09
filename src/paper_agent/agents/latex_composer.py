@@ -96,12 +96,22 @@ class LatexComposerAgent:
         self._copy_template_assets(template_dir, output_root)
         self._copy_cached_template_assets(Path(venue_template.template_dir), output_root)
         self._write_project_helpers(output_root, venue_template, state)
+        self._write_presentation_plan(output_root, state, experiment_tables)
 
         output_path = output_root / "main.tex"
         output_path.write_text(rendered, encoding="utf-8")
         state["latex_project_dir"] = output_root
         state["latex_output_path"] = output_path
         state.setdefault("artifacts", {})["latex_table_count"] = len(experiment_tables)
+        state["artifacts"]["latex_tables"] = [
+            {
+                "label": table.label,
+                "caption": table.caption,
+                "columns": len(table.headers),
+                "rows": len(table.rows),
+            }
+            for table in experiment_tables
+        ]
         state["artifacts"]["undefined_citation_keys"] = sorted(undefined_citations)
         state["final_markdown"] = self._markdown(state)
         return state
@@ -390,6 +400,67 @@ class LatexComposerAgent:
             encoding="utf-8",
         )
 
+    def _write_presentation_plan(self, output_root: Path, state: PaperState, experiment_tables) -> None:
+        plan = state.setdefault("artifacts", {}).get("presentation_plan", {})
+        figures = plan.get("figures", []) if isinstance(plan, dict) else []
+        planned_tables = plan.get("tables", []) if isinstance(plan, dict) else []
+        rendered_tables = [
+            {
+                "label": table.label,
+                "caption": table.caption,
+                "columns": len(table.headers),
+                "rows": len(table.rows),
+                "status": "rendered_from_markdown",
+            }
+            for table in experiment_tables
+        ]
+        table_by_label = {
+            str(item.get("label")): item
+            for item in [*planned_tables, *rendered_tables]
+            if item.get("label")
+        }
+        lines = [
+            "# Figure and Table Plan",
+            "",
+            "This file records planned presentation assets for author review. Planned figures are not inserted into `main.tex` until the asset exists.",
+            "",
+            "## Planned Figures",
+            "",
+        ]
+        if figures:
+            for figure in figures:
+                lines.extend(
+                    [
+                        f"- `{figure.get('label')}`: {figure.get('title')}",
+                        f"  - Section: {figure.get('section')}",
+                        f"  - Asset: `{figure.get('asset_path')}`",
+                        f"  - Caption: {figure.get('caption')}",
+                    ]
+                )
+                evidence = figure.get("evidence", [])
+                if evidence:
+                    lines.append("  - Evidence:")
+                    lines.extend(f"    - {item}" for item in evidence[:3])
+        else:
+            lines.append("- No planned figures.")
+        lines.extend(["", "## Tables", ""])
+        if table_by_label:
+            for table in table_by_label.values():
+                lines.append(
+                    f"- `{table.get('label')}`: {table.get('caption')} "
+                    f"({table.get('rows', 0)} rows, {table.get('columns', 0)} columns; "
+                    f"{table.get('status', 'planned')})"
+                )
+        else:
+            lines.append("- No planned or rendered tables.")
+        open_items = plan.get("open_items", []) if isinstance(plan, dict) else []
+        if open_items:
+            lines.extend(["", "## Open Items", ""])
+            lines.extend(f"- {item}" for item in open_items)
+        path = output_root / "FIGURE_TABLE_PLAN.md"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        state.setdefault("artifacts", {})["presentation_plan_path"] = str(path)
+
     def _markdown(self, state: PaperState) -> str:
         sections = state["sections"]
         outline = state["outline"]
@@ -397,6 +468,7 @@ class LatexComposerAgent:
         references = "\n".join(
             f"- `{entry.key}`: {entry.title}" for entry in state.get("bibliography", [])
         )
+        presentation = self._presentation_markdown(state)
         return (
             f"# {title}\n\n"
             f"## Abstract\n\n{sections.abstract}\n\n"
@@ -405,8 +477,34 @@ class LatexComposerAgent:
             f"## Method\n\n{sections.method}\n\n"
             f"## Experiments\n\n{sections.experiments}\n\n"
             f"## Conclusion\n\n{sections.conclusion}\n\n"
+            f"{presentation}"
             f"## Reference Seeds\n\n{references or '- To be completed.'}\n"
         )
+
+    def _presentation_markdown(self, state: PaperState) -> str:
+        plan = state.get("artifacts", {}).get("presentation_plan", {})
+        if not isinstance(plan, dict):
+            return ""
+        figures = plan.get("figures", [])
+        tables = plan.get("tables", [])
+        if not figures and not tables:
+            return ""
+        lines = ["## Figure and Table Plan", ""]
+        if figures:
+            lines.append("Planned figures:")
+            for figure in figures[:6]:
+                lines.append(
+                    f"- `{figure.get('label')}` ({figure.get('section')}): "
+                    f"{figure.get('caption')}"
+                )
+        if tables:
+            lines.append("")
+            lines.append("Planned/rendered tables:")
+            for table in tables[:6]:
+                lines.append(
+                    f"- `{table.get('label')}`: {table.get('caption')}"
+                )
+        return "\n".join(lines) + "\n\n"
 
     def _bibtex(self, state: PaperState) -> str:
         entries = state.get("bibliography", [])

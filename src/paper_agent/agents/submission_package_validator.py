@@ -222,7 +222,7 @@ class SubmissionPackageValidatorAgent:
         if unsafe:
             errors.append("Overleaf zip contains unsafe paths: " + ", ".join(unsafe[:5]) + ".")
         required = {"main.tex", "references.bib"}
-        helper_files = {"README_OVERLEAF.md", "TEMPLATE_SOURCE.md"}
+        helper_files = {"README_OVERLEAF.md", "TEMPLATE_SOURCE.md", "FIGURE_TABLE_PLAN.md"}
         missing = sorted(name for name in required if name not in names)
         missing_helpers = sorted(name for name in helper_files if name not in names)
         if missing:

@@ -41,6 +41,7 @@ InputCollector
   -> InnovationAnalyzer
   -> VenueTemplate
   -> PaperPlanner
+  -> PresentationPlanner
   -> Bibliography
   -> ReferenceResolver
   -> RelatedWorkDiscovery
@@ -92,6 +93,10 @@ explicit blocking items and next actions for the author.
 The LaTeX submission package is statically validated before reporting: the agent
 checks `main.tex`, `references.bib`, citation-key closure, referenced graphics,
 required zip entries, and optional local LaTeX compilation when enabled.
+The presentation planner records evidence-bound figure and table plans with
+labels, captions, target sections, suggested asset paths, and open items in
+`FIGURE_TABLE_PLAN.md` so authors can add visual assets without the draft
+inventing figures.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command

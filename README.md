@@ -32,6 +32,8 @@ The current scaffold supports:
 - Overleaf-ready zip export for free Overleaf upload workflows.
 - Submission-package validation for `main.tex`, `references.bib`, citation keys,
   referenced graphics, optional local compile checks, and generated zip contents.
+- Figure/table planning with labels, captions, target sections, and asset open
+  items written to `FIGURE_TABLE_PLAN.md`.
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
 - Seed BibTeX generation with explicit reviewer warnings for unresolved references.
 - Optional OpenAlex/Semantic Scholar metadata resolution with resolved/unresolved

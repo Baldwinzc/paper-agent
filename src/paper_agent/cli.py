@@ -512,6 +512,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     readiness = artifacts.get("submission_readiness", {})
     code_baseline_comparison = artifacts.get("code_baseline_comparison", {})
     submission_package = artifacts.get("submission_package", {})
+    presentation_plan = artifacts.get("presentation_plan", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
@@ -540,6 +541,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "submission_package_status": submission_package.get("status", "not run"),
         "submission_package_errors": len(submission_package.get("errors", [])),
         "submission_package_warnings": len(submission_package.get("warnings", [])),
+        "presentation_figures": len(presentation_plan.get("figures", [])),
+        "presentation_tables": len(presentation_plan.get("tables", [])),
+        "presentation_open_items": len(presentation_plan.get("open_items", [])),
         "evidence_guard_findings": len(artifacts.get("evidence_guard_findings", [])),
         "code_baseline_method_shifts": len(
             code_baseline_comparison.get("likely_method_shifts", [])
@@ -570,6 +574,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "latex_output_path": str(state.get("latex_output_path", "")),
             "latex_zip_path": str(state.get("latex_zip_path", "")),
             "draft_report_path": artifacts.get("draft_report_path", ""),
+            "presentation_plan_path": artifacts.get("presentation_plan_path", ""),
         },
     }
 

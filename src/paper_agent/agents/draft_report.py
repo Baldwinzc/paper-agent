@@ -89,6 +89,31 @@ class DraftReportAgent:
             for item in package.get("warnings", [])[:5]:
                 lines.append(f"- Warning: {item}")
 
+        presentation = artifacts.get("presentation_plan", {})
+        if presentation:
+            figures = presentation.get("figures", [])
+            tables = presentation.get("tables", [])
+            open_items = presentation.get("open_items", [])
+            lines.extend(["", "## Figure and Table Plan", ""])
+            lines.append(f"- Planned figures: {len(figures)}")
+            lines.append(f"- Planned/rendered tables: {len(tables)}")
+            plan_path = artifacts.get("presentation_plan_path", "")
+            if plan_path:
+                lines.append(f"- Plan file: {plan_path}")
+            for figure in figures[:5]:
+                lines.append(
+                    f"- Figure `{figure.get('label')}` ({figure.get('section')}): "
+                    f"{self._clip(figure.get('caption', ''))}"
+                )
+            for table in tables[:5]:
+                lines.append(
+                    f"- Table `{table.get('label')}`: {self._clip(table.get('caption', ''))}"
+                )
+            if open_items:
+                lines.append("- Open presentation items:")
+                for item in open_items[:5]:
+                    lines.append(f"  - {item}")
+
         if baseline:
             lines.extend(["", "## Baseline Evidence", ""])
             lines.append(f"- Title: {baseline.title or 'not detected'}")

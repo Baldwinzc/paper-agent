@@ -20,6 +20,7 @@ from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.latex_composer import LatexComposerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.paper_planner import PaperPlannerAgent
+from paper_agent.agents.presentation_planner import PresentationPlannerAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
@@ -2148,6 +2149,12 @@ def test_run_summary_reports_core_metrics(tmp_path):
                 "errors": ["missing main.tex"],
                 "warnings": ["compile unavailable"],
             },
+            "presentation_plan": {
+                "figures": [{"label": "fig:method-overview"}],
+                "tables": [{"label": "tab:main-results"}],
+                "open_items": ["Create method overview figure."],
+            },
+            "presentation_plan_path": str(tmp_path / "latex" / "FIGURE_TABLE_PLAN.md"),
             "code_baseline_comparison": {
                 "likely_method_shifts": [{"technique": "hypergraph modeling"}],
                 "innovation_seeds": ["Introduce hypergraph structure modeling."],
@@ -2168,6 +2175,9 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["submission_package_status"] == "needs_attention"
     assert summary["submission_package_errors"] == 1
     assert summary["submission_package_warnings"] == 1
+    assert summary["presentation_figures"] == 1
+    assert summary["presentation_tables"] == 1
+    assert summary["presentation_open_items"] == 1
     assert summary["code_baseline_method_shifts"] == 1
     assert summary["code_baseline_innovation_seeds"] == 1
     assert summary["reference_unresolved"] == 2
@@ -2178,6 +2188,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["section_writer_llm_successes"] == ["abstract"]
     assert summary["section_writer_section_errors"] == {"method": "blocked"}
     assert summary["outputs"]["markdown"].endswith("draft.md")
+    assert summary["outputs"]["presentation_plan_path"].endswith("FIGURE_TABLE_PLAN.md")
 
 
 def test_tcga_cohort_summary_uses_dataset_csv_without_performance_claims(tmp_path):
@@ -3093,6 +3104,179 @@ def test_cli_zip_refreshes_submission_package_and_readiness(tmp_path):
     report = (project_dir / "DRAFT_REPORT.md").read_text(encoding="utf-8")
     assert "## Submission Package" in report
     assert "- Zip: present" in report
+
+
+def test_presentation_planner_creates_evidence_bound_figure_and_table_plan():
+    state = {
+        "request": PaperRequest(
+            project_name="presentation-demo",
+            target_venue="TPAMI",
+            experiment_results=(
+                "## Main Results\n"
+                "Metric: C-index.\n\n"
+                "| Method | BLCA C-index |\n"
+                "|---|---:|\n"
+                "| ProtoSurv baseline | 0.646 |\n"
+                "| Hyper-ProtoSurv ours | 0.671 |\n"
+            ),
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype hypergraph",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=[
+                    "data_preparation/hypergraph.py:20 (OT/Wasserstein hypergraph construction)"
+                ],
+            )
+        ],
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+            result_tables=[
+                ExperimentTableSummary(
+                    caption="Main Results",
+                    method="Hyper-ProtoSurv",
+                    baseline="ProtoSurv",
+                    comparisons=[
+                        ExperimentComparison(
+                            dataset="BLCA",
+                            metric="C-INDEX",
+                            method="Hyper-ProtoSurv",
+                            baseline="ProtoSurv",
+                            method_value=0.671,
+                            baseline_value=0.646,
+                            signed_improvement=0.025,
+                            improved=True,
+                        )
+                    ],
+                )
+            ],
+            ablation_evidence=[
+                AblationEvidence(
+                    variant="w/o OT-driven adaptive hyperedges",
+                    reference="Full",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference_value=0.690,
+                    variant_value=0.674,
+                    signed_drop=0.016,
+                )
+            ],
+        ),
+        "artifacts": {
+            "code_baseline_comparison": {
+                "code_only_terms": ["optimal transport geometry", "hypergraph modeling"]
+            }
+        },
+    }
+
+    PresentationPlannerAgent().run(state)
+
+    plan = state["artifacts"]["presentation_plan"]
+    labels = {item["label"] for item in plan["figures"]}
+    assert "fig:method-overview" in labels
+    assert "fig:prototype-hypergraph" in labels
+    assert "fig:main-results" in labels
+    assert "fig:ablation-summary" in labels
+    assert any(table["label"].startswith("tab:main-results") for table in plan["tables"])
+    assert plan["open_items"]
+
+
+def test_latex_composer_writes_figure_table_plan(tmp_path):
+    state = {
+        "request": PaperRequest(
+            project_name="figure-table-plan-demo",
+            target_venue="TPAMI",
+            experiment_results=(
+                "## Main Results\n\n"
+                "| Method | BLCA C-index |\n"
+                "|---|---:|\n"
+                "| baseline | 0.646 |\n"
+                "| ours | 0.671 |\n"
+            ),
+        ),
+        "venue_template": VenueTemplate(venue="TPAMI", family="ieee_journal"),
+        "outline": PaperOutline(title_candidates=["Figure Table Plan Demo"]),
+        "sections": DraftSections(
+            abstract="Abstract.",
+            introduction="Introduction.",
+            related_work="Related work.",
+            method="### Method Overview\nMethod.",
+            experiments="### Main Results\nResults.",
+            conclusion="Conclusion.",
+        ),
+        "bibliography": [],
+        "artifacts": {
+            "presentation_plan": {
+                "figures": [
+                    {
+                        "label": "fig:method-overview",
+                        "title": "Method Overview",
+                        "section": "Method",
+                        "asset_path": "figures/method_overview.pdf",
+                        "caption": "Overview of the proposed method.",
+                        "evidence": ["Repository evidence."],
+                        "status": "planned",
+                    }
+                ],
+                "tables": [
+                    {
+                        "label": "tab:main-results",
+                        "caption": "Main result table.",
+                        "section": "Experiments",
+                        "columns": 2,
+                        "rows": 2,
+                        "status": "planned",
+                    }
+                ],
+                "open_items": ["Create the method overview figure."],
+            }
+        },
+    }
+
+    LatexComposerAgent().run(state)
+
+    plan_path = state["latex_project_dir"] / "FIGURE_TABLE_PLAN.md"
+    plan = plan_path.read_text(encoding="utf-8")
+    assert plan_path.exists()
+    assert "`fig:method-overview`" in plan
+    assert "Overview of the proposed method." in plan
+    assert "Create the method overview figure." in plan
+    assert state["artifacts"]["presentation_plan_path"] == str(plan_path)
+    assert state["artifacts"]["latex_tables"][0]["label"].startswith("tab:main-results")
+    assert "## Figure and Table Plan" in state["final_markdown"]
+
+
+def test_draft_report_includes_presentation_plan(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="presentation-report-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "artifacts": {
+            "presentation_plan_path": str(tmp_path / "FIGURE_TABLE_PLAN.md"),
+            "presentation_plan": {
+                "figures": [
+                    {
+                        "label": "fig:method-overview",
+                        "section": "Method",
+                        "caption": "Overview of the proposed method.",
+                    }
+                ],
+                "tables": [
+                    {"label": "tab:main-results", "caption": "Main result table."}
+                ],
+                "open_items": ["Create the method overview figure."],
+            }
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Figure and Table Plan" in report
+    assert "- Planned figures: 1" in report
+    assert "`fig:method-overview`" in report
+    assert "Create the method overview figure." in report
 
 
 def test_citation_aliases_convert_to_retained_key():

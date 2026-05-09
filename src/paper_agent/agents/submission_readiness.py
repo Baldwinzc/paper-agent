@@ -154,6 +154,9 @@ class SubmissionReadinessAgent:
         if section_errors:
             sections = ", ".join(section_errors.keys())
             items.append(f"Review fallback sections after rejected LLM output: {sections}.")
+        presentation = artifacts.get("presentation_plan", {})
+        if presentation.get("open_items"):
+            items.append("Prepare planned figures listed in FIGURE_TABLE_PLAN.md before final submission.")
         package_warnings = artifacts.get("submission_package", {}).get("warnings", [])
         for warning in package_warnings[:3]:
             items.append(f"Submission package warning: {warning}")
