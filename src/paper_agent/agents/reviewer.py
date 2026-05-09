@@ -84,7 +84,15 @@ class ReviewerAgent:
         sections = state.get("sections")
 
         for innovation in innovations:
-            if "Needs manual confirmation" in innovation.risk or "Insufficient" in innovation.risk:
+            if "Needs manual confirmation" in innovation.risk:
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue=f"{innovation.name} needs author novelty confirmation.",
+                        suggestion="Confirm novelty and wording before final submission.",
+                    )
+                )
+            elif "Insufficient" in innovation.risk:
                 findings.append(
                     ReviewFinding(
                         severity="major",

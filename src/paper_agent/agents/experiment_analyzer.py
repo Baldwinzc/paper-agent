@@ -167,6 +167,8 @@ class ExperimentAnalyzerAgent:
     def _table_summaries(self, raw: str, metrics: list[str]) -> list[ExperimentTableSummary]:
         summaries: list[ExperimentTableSummary] = []
         for table in extract_markdown_tables(raw):
+            if self._looks_like_statistical_test_table(table):
+                continue
             summary = self._table_summary(table, metrics)
             if summary and summary.comparisons:
                 summaries.append(summary)
@@ -502,6 +504,13 @@ class ExperimentAnalyzerAgent:
                 )
             )
         return evidence
+
+    def _looks_like_statistical_test_table(self, table: MarkdownTable) -> bool:
+        source = " ".join([table.caption, *table.headers])
+        return bool(
+            self._p_value_column_index(table.headers) is not None
+            or re.search(r"\b(statistical|significance|p[-\s]?value|wilcoxon|log-rank)\b", source, flags=re.I)
+        )
 
     def _inline_statistical_tests(
         self,

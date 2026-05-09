@@ -1,4 +1,4 @@
-# Synthetic Mock Experiment Results for Hyper-ProtoSurv
+# Synthetic TCGA Mock Experiment Results for Hyper-ProtoSurv
 
 This file is synthetic mock data for pipeline testing only. It is not a real
 experimental result and must not be used as evidence in a submitted paper.
@@ -45,9 +45,15 @@ Metric: Average C-index.
 | 2.0 | 0.686 |
 | 5.0 | 0.679 |
 
+## Statistical Testing
+
+| Comparison | Metric | Test | p-value |
+|---|---|---|---:|
+| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |
+| Hyper-ProtoSurv ours vs ProtoSurv baseline | IBS | Wilcoxon signed-rank | 0.031 |
+
 ## Notes
 
 - The baseline comparison rows are explicit in the main-results tables.
 - These synthetic numbers are intentionally plausible but fabricated for testing.
 - Replace this file with real result tables before using any generated paper text.
-

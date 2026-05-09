@@ -675,6 +675,30 @@ def test_experiment_analyzer_extracts_sensitivity_and_statistical_tests():
     assert any("Statistical test evidence includes 1 comparisons" in item for item in state["experiments"].observations)
 
 
+def test_hyper_protosurv_mock_example_covers_full_experiment_contract():
+    raw = (Path(__file__).resolve().parents[1] / "examples" / "hyper_protosurv_mock_experiments.md").read_text(
+        encoding="utf-8"
+    )
+
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="hyper-protosurv-mock",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    assert state["experiments"].datasets == ["BLCA", "BRCA", "LGG", "LUAD", "UCEC"]
+    assert len(state["experiments"].result_tables) == 2
+    assert len(state["experiments"].ablation_evidence) == 4
+    assert len(state["experiments"].sensitivity_evidence) == 1
+    assert len(state["experiments"].statistical_tests) == 2
+    assert state["experiments"].statistical_tests[0].significant
+    assert not state["experiments"].missing_details
+
+
 def test_section_writer_uses_structured_result_tables():
     raw = """
     | Method | BLCA C-index | BRCA C-index |
@@ -1464,6 +1488,31 @@ def test_reviewer_flags_placeholders():
     reviewed = ReviewerAgent().run(state)
 
     assert any("placeholders" in finding.issue for finding in reviewed["review_findings"])
+
+
+def test_reviewer_treats_manual_novelty_confirmation_as_warning():
+    state = {
+        "experiments": ExperimentSummary(result_tables=[ExperimentTableSummary(caption="Main")]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive hypergraph prototypes",
+                motivation="Baseline limitation.",
+                technical_idea="Adaptive hypergraph prototypes.",
+                evidence=["Repository and experiment evidence."],
+                risk="Needs manual confirmation that the contribution is novel and not overclaimed.",
+            )
+        ],
+        "sections": DraftSections(
+            method="### Innovation 1: Adaptive hypergraph prototypes\nAdaptive hypergraph prototypes are used."
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    finding = next(finding for finding in reviewed["review_findings"] if "novelty confirmation" in finding.issue)
+    assert finding.severity == "minor"
+    assert not any(finding.severity == "major" for finding in reviewed["review_findings"])
 
 
 def test_reviewer_flags_only_unresolved_bibliography_seeds():

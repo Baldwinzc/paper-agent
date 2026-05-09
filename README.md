@@ -151,6 +151,9 @@ paper-writing path itself can call the model. The command writes both
 `RUN_SUMMARY.json` for automation and `ACCEPTANCE_REPORT.md` for a concise
 human-readable pass/fail view of the input contract, LLM-written sections,
 evidence checks, LaTeX package status, compile check, and output paths.
+The bundled `examples\hyper_protosurv_mock_experiments.md` file is synthetic
+TCGA-style data for this smoke path only; replace it with real experiment tables
+for any research draft.
 
 ## Acceptance Flow
 
@@ -208,6 +211,21 @@ same boolean in `/api/papers/draft` JSON payloads. The CLI prints
 `LLM self-review: llm`, `unavailable`, `disabled`, or `error` after each draft
 run, and the API returns the same summary under `llm_self_review`.
 
+To run the local TCGA showcase with complete synthetic result evidence instead
+of cohort metadata only:
+
+```powershell
+$env:PAPER_AGENT_RUN_LATEX_COMPILE="1"
+python -m paper_agent.cli sample-hyper-protosurv `
+  --example-root D:\code\agent\example `
+  --experiment-results examples\hyper_protosurv_mock_experiments.md `
+  --output-dir outputs\hyper-protosurv-tcga-mock `
+  --zip outputs\hyper-protosurv-tcga-mock-overleaf.zip
+```
+
+This should parse main result tables, ablations, sensitivity analysis, and
+statistical tests. It is a pipeline demonstration, not scientific evidence.
+
 Use a manually downloaded official template when automatic fetching is blocked:
 
 ```powershell
@@ -246,9 +264,10 @@ For a free Overleaf account, upload the generated zip through
 `New Project > Upload Project`. The zip contains `main.tex`, `references.bib`, and
 upload notes; add real BibTeX entries before submission.
 
-The bundled `examples/hyper_protosurv_mock_experiments.md` file contains legacy
-synthetic mock numbers for parser testing only. Do not pass it to the sample command
-unless you are deliberately testing mock-result behavior.
+The bundled `examples/hyper_protosurv_mock_experiments.md` file contains
+synthetic TCGA-style mock numbers for parser and end-to-end pipeline testing
+only. Do not pass it to the sample command unless you are deliberately testing
+mock-result behavior.
 
 ## Design Principles
 
