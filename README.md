@@ -44,6 +44,7 @@ The current scaffold supports:
 - Draft quality report (`DRAFT_REPORT.md`) included in Overleaf-ready exports.
 - JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
+- Structured ablation parsing that links variant drops back to likely innovation points.
 
 ## Run Locally
 
@@ -155,7 +156,9 @@ real result file supplied by the user. The preferred format is documented in
 `docs/EXPERIMENT_RESULTS.md`: use a Markdown table with one method column and
 numeric dataset-metric columns such as `BLCA C-index` or `BRCA IBS`. The analyzer
 extracts baseline value, proposed-method value, signed improvement, and whether
-higher or lower is better. If you only want to run the built-in local TCGA
+higher or lower is better. Ablation tables with a `Variant` column are parsed as
+full-method versus removed-component evidence and surfaced in the draft report.
+If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.
 

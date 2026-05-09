@@ -93,6 +93,10 @@ Experiment result files should expose real trained-model tables with method rows
 and dataset-metric columns. The analyzer stores per-column comparisons, signed
 improvements, and metric direction so generated result prose can be traced back
 to exact user-supplied values.
+Ablation tables are parsed separately from main results. The workflow stores
+variant-vs-full signed drops and maps component names to likely innovation
+threads, so Method traceability and draft reports can show which contribution is
+supported by which supplied ablation row.
 
 ## Phases
 

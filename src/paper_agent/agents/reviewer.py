@@ -52,6 +52,15 @@ class ReviewerAgent:
         "WSI",
         "WSIS",
     }
+    STRONG_ABLATION_TOKENS = {
+        "attention",
+        "bidirectional",
+        "cross-attention",
+        "hcon",
+        "l_rec",
+        "reconstruction",
+        "wasserstein",
+    }
 
     def run(self, state: PaperState) -> PaperState:
         findings: list[ReviewFinding] = []
@@ -79,7 +88,7 @@ class ReviewerAgent:
             )
 
         if sections and innovations:
-            traceability = self._innovation_traceability(sections.method, innovations)
+            traceability = self._innovation_traceability(sections.method, innovations, experiments)
             state.setdefault("artifacts", {})["innovation_traceability"] = traceability
             omitted = [item for item in traceability if not item["mentioned_in_method"]]
             if omitted:
@@ -364,6 +373,17 @@ class ReviewerAgent:
                         f"{comparison.signed_improvement:+.3f}",
                     ]
                 )
+        for ablation in experiments.ablation_evidence:
+            result_values.extend(
+                [
+                    f"{ablation.reference_value:.3f}",
+                    f"{ablation.variant_value:.3f}",
+                    f"{ablation.signed_drop:+.3f}",
+                    ablation.reference,
+                    ablation.variant,
+                    *ablation.supports,
+                ]
+            )
         return "\n".join(
             [
                 experiments.raw_preview,
@@ -513,16 +533,70 @@ class ReviewerAgent:
                     break
         return hits
 
-    def _innovation_traceability(self, method_text: str, innovations) -> list[dict[str, object]]:
-        return [
-            {
-                "name": innovation.name,
-                "mentioned_in_method": self._innovation_mentioned(method_text, innovation),
-                "evidence_count": len(innovation.evidence),
-                "evidence_preview": innovation.evidence[:2],
-            }
-            for innovation in innovations
-        ]
+    def _innovation_traceability(self, method_text: str, innovations, experiments=None) -> list[dict[str, object]]:
+        ablation_evidence = experiments.ablation_evidence if experiments else []
+        traceability = []
+        for innovation in innovations:
+            matches = self._matching_ablation_evidence(innovation, ablation_evidence)
+            traceability.append(
+                {
+                    "name": innovation.name,
+                    "mentioned_in_method": self._innovation_mentioned(method_text, innovation),
+                    "evidence_count": len(innovation.evidence),
+                    "evidence_preview": innovation.evidence[:2],
+                    "ablation_evidence_count": len(matches),
+                    "ablation_evidence_preview": [
+                        self._format_ablation_evidence(item) for item in matches[:2]
+                    ],
+                }
+            )
+        return traceability
+
+    def _matching_ablation_evidence(self, innovation, ablation_evidence) -> list:
+        innovation_text = f"{innovation.name} {innovation.technical_idea}"
+        innovation_tokens = self._expanded_content_tokens(innovation_text)
+        if not innovation_tokens:
+            return []
+        matches = []
+        for item in ablation_evidence:
+            variant_tokens = self._expanded_content_tokens(item.variant)
+            support_tokens = self._expanded_content_tokens(" ".join(item.supports))
+            overlap = innovation_tokens & (variant_tokens | support_tokens)
+            strong_overlap = overlap & self.STRONG_ABLATION_TOKENS
+            phrase_match = any(
+                self._ablation_support_matches(support, innovation_text, innovation_tokens)
+                for support in item.supports
+            )
+            if phrase_match or strong_overlap or len(overlap) >= 2:
+                matches.append(item)
+        return matches
+
+    def _ablation_support_matches(
+        self,
+        support: str,
+        innovation_text: str,
+        innovation_tokens: set[str],
+    ) -> bool:
+        normalized_support = support.lower()
+        normalized_innovation = innovation_text.lower()
+        if normalized_support in normalized_innovation:
+            return True
+        support_tokens = self._expanded_content_tokens(support)
+        if len(support_tokens & innovation_tokens) >= 2:
+            return True
+        return bool((support_tokens & innovation_tokens) & self.STRONG_ABLATION_TOKENS)
+
+    def _expanded_content_tokens(self, text: str) -> set[str]:
+        expanded = re.sub(r"[-_]+", " ", text)
+        return set(self._content_tokens(text)) | set(self._content_tokens(expanded))
+
+    def _format_ablation_evidence(self, item) -> str:
+        metric = f" {item.metric}" if item.metric else ""
+        dataset = item.dataset or "reported column"
+        return (
+            f"{item.variant} on {dataset}{metric}: {item.reference_value:.3f} -> "
+            f"{item.variant_value:.3f} (signed drop {item.signed_drop:+.3f})"
+        )
 
     def _innovation_mentioned(self, method_text: str, innovation) -> bool:
         lowered_method = method_text.lower()

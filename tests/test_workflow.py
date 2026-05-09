@@ -24,7 +24,7 @@ from paper_agent.agents.reference_resolver import ReferenceResolverAgent
 from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.reviewer import ReviewerAgent
 from paper_agent.agents.section_writer import SectionWriterAgent
-from paper_agent.state import BaselineSummary, CodeSummary, DraftSections, ExperimentSummary
+from paper_agent.state import AblationEvidence, BaselineSummary, CodeSummary, DraftSections, ExperimentSummary
 
 
 os.environ.setdefault("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", "1")
@@ -503,6 +503,43 @@ def test_experiment_analyzer_uses_nearby_metric_text_for_tables():
     assert round(tables[1].comparisons[0].signed_improvement, 3) == 0.013
 
 
+def test_experiment_analyzer_extracts_ablation_evidence():
+    raw = """
+    ## Ablation Results
+
+    Metric: Average C-index across BLCA and BRCA.
+
+    | Variant | Average C-index | Delta vs Full |
+    |---|---:|---:|
+    | Full Hyper-ProtoSurv | 0.690 | 0.000 |
+    | w/o OT-driven adaptive hyperedges | 0.674 | -0.016 |
+    | w/o bidirectional hyperedge update | 0.678 | -0.012 |
+    | mean-pool fusion instead of cross-attention | 0.681 | -0.009 |
+    | w/o L_rec | 0.672 | -0.018 |
+    """
+
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    evidence = state["experiments"].ablation_evidence
+    assert len(evidence) == 4
+    assert state["artifacts"]["experiment_ablation_evidence"]
+    assert evidence[0].reference == "Full Hyper-ProtoSurv"
+    assert evidence[0].variant == "w/o OT-driven adaptive hyperedges"
+    assert evidence[0].metric == "C-INDEX"
+    assert evidence[0].dataset == "Average"
+    assert round(evidence[0].signed_drop, 3) == 0.016
+    assert "adaptive hypergraph prototype learning" in evidence[0].supports
+    assert any("Ablation evidence includes 4 component comparisons" in item for item in state["experiments"].observations)
+
+
 def test_section_writer_uses_structured_result_tables():
     raw = """
     | Method | BLCA C-index | BRCA C-index |
@@ -546,6 +583,39 @@ def test_section_writer_uses_structured_result_tables():
         for item in reviewed["artifacts"]["factual_consistency"]
     }
     assert consistency["unsupported_experiment_numbers"]["status"] == "ok"
+
+
+def test_section_writer_uses_ablation_evidence():
+    experiments = ExperimentSummary(
+        datasets=["BLCA"],
+        metrics=["C-INDEX"],
+        ablation_evidence=[
+            AblationEvidence(
+                table_caption="Ablation Results",
+                dataset="Average",
+                metric="C-INDEX",
+                reference="Full Hyper-ProtoSurv",
+                variant="w/o bidirectional hyperedge update",
+                reference_value=0.690,
+                variant_value=0.678,
+                signed_drop=0.012,
+                supports=["bidirectional hyperedge updates"],
+            )
+        ],
+    )
+
+    sections = SectionWriterAgent()._run_fallback(
+        {
+            "request": PaperRequest(project_name="demo", target_venue="TPAMI"),
+            "experiments": experiments,
+            "innovations": [],
+            "artifacts": {},
+        }
+    )
+
+    assert "### Ablation Evidence" in sections.experiments
+    assert "w/o bidirectional hyperedge update" in sections.experiments
+    assert "signed drop +0.012" in sections.experiments
 
 
 def test_zip_latex_project_contains_overleaf_files(tmp_path):
@@ -1448,6 +1518,36 @@ def test_draft_report_includes_factual_consistency(tmp_path):
     assert "`unsupported_metrics`: ok" in report
 
 
+def test_draft_report_includes_ablation_evidence(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="ablation-report-demo", target_venue="TPAMI"),
+        "experiments": ExperimentSummary(
+            ablation_evidence=[
+                AblationEvidence(
+                    table_caption="Ablation Results",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference="Full Hyper-ProtoSurv",
+                    variant="w/o L_rec",
+                    reference_value=0.690,
+                    variant_value=0.672,
+                    signed_drop=0.018,
+                    supports=["reconstruction regularization"],
+                )
+            ]
+        ),
+        "latex_project_dir": tmp_path,
+        "artifacts": {},
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Ablation Evidence" in report
+    assert "w/o L_rec" in report
+    assert "reconstruction regularization" in report
+
+
 def test_draft_report_includes_baseline_evidence(tmp_path):
     state = {
         "request": PaperRequest(project_name="baseline-report-demo", target_venue="TPAMI"),
@@ -2127,6 +2227,69 @@ def test_reviewer_flags_method_missing_innovation():
     assert not reviewed["artifacts"]["innovation_traceability"][1]["mentioned_in_method"]
 
 
+def test_reviewer_links_ablation_evidence_to_innovation():
+    state = {
+        "experiments": ExperimentSummary(
+            ablation_evidence=[
+                AblationEvidence(
+                    table_caption="Ablation Results",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference="Full Hyper-ProtoSurv",
+                    variant="w/o bidirectional hyperedge update",
+                    reference_value=0.690,
+                    variant_value=0.678,
+                    signed_drop=0.012,
+                    supports=["bidirectional hyperedge updates"],
+                ),
+                AblationEvidence(
+                    table_caption="Ablation Results",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference="Full Hyper-ProtoSurv",
+                    variant="w/o L_rec",
+                    reference_value=0.690,
+                    variant_value=0.672,
+                    signed_drop=0.018,
+                    supports=["reconstruction regularization"],
+                )
+            ]
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Bidirectional hyperedge updates",
+                motivation="Static hyperedges miss reciprocal dependencies.",
+                technical_idea="Use bidirectional hyperedge updates for WSI survival modeling.",
+                evidence=["Repository contains a bidirectional update block."],
+            ),
+            InnovationPoint(
+                name="Innovation 2: Survival reconstruction objective",
+                motivation="The loss should preserve survival supervision and feature recovery.",
+                technical_idea="Combine a Cox survival term with reconstruction regularization.",
+                evidence=["Repository exposes L_surv and L_rec."],
+            )
+        ],
+        "sections": DraftSections(
+            method=(
+                "### Bidirectional hyperedge updates\n"
+                "The model updates hyperedges in both directions.\n"
+                "### Survival reconstruction objective\n"
+                "The objective combines survival prediction and reconstruction regularization."
+            )
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    traceability = reviewed["artifacts"]["innovation_traceability"]
+    assert traceability[0]["mentioned_in_method"]
+    assert traceability[0]["ablation_evidence_count"] == 1
+    assert "signed drop +0.012" in traceability[0]["ablation_evidence_preview"][0]
+    assert traceability[1]["ablation_evidence_count"] == 1
+    assert "w/o L_rec" in traceability[1]["ablation_evidence_preview"][0]
+
+
 def test_draft_report_includes_innovation_traceability(tmp_path):
     state = {
         "request": PaperRequest(project_name="traceability-demo", target_venue="TPAMI"),
@@ -2138,6 +2301,9 @@ def test_draft_report_includes_innovation_traceability(tmp_path):
                     "mentioned_in_method": True,
                     "evidence_count": 1,
                     "evidence_preview": ["Method notes mention adaptive prototype calibration."],
+                    "ablation_evidence_preview": [
+                        "w/o adaptive prototype calibration on Average C-INDEX: 0.690 -> 0.674 (signed drop +0.016)"
+                    ],
                 },
                 {
                     "name": "Innovation 2: Survival-aware objective",
@@ -2155,6 +2321,7 @@ def test_draft_report_includes_innovation_traceability(tmp_path):
     assert "## Innovation Traceability" in report
     assert "missing from Method" in report
     assert "Repository exposes L_surv and L_rec." in report
+    assert "signed drop +0.016" in report
 
 
 def test_citation_aliases_convert_to_retained_key():

@@ -6,6 +6,7 @@ import re
 
 from paper_agent.tables import MarkdownTable, extract_markdown_tables
 from paper_agent.state import (
+    AblationEvidence,
     ExperimentComparison,
     ExperimentSummary,
     ExperimentTableSummary,
@@ -43,9 +44,10 @@ class ExperimentAnalyzerAgent:
         metrics = sorted({self._normalize_metric(m.group(1)) for m in self.METRIC_RE.finditer(raw)})
         datasets = self._extract_datasets(raw, metrics)
         result_tables = self._table_summaries(raw, metrics)
+        ablation_evidence = self._ablation_evidence(raw, metrics)
         result_findings = [self._table_result_finding(table) for table in result_tables]
         result_findings = [finding for finding in result_findings if finding]
-        observations = self._observations(raw, result_findings)
+        observations = self._observations(raw, result_findings, ablation_evidence)
         missing = []
         if not datasets:
             missing.append("Dataset names are not explicit.")
@@ -59,6 +61,7 @@ class ExperimentAnalyzerAgent:
             datasets=datasets,
             metrics=metrics,
             result_tables=result_tables,
+            ablation_evidence=ablation_evidence,
             observations=observations,
             missing_details=missing,
         )
@@ -66,14 +69,26 @@ class ExperimentAnalyzerAgent:
         state["artifacts"]["experiment_result_tables"] = [
             table.model_dump() for table in result_tables
         ]
+        state["artifacts"]["experiment_ablation_evidence"] = [
+            item.model_dump() for item in ablation_evidence
+        ]
         return state
 
-    def _observations(self, raw: str, result_findings: list[str]) -> list[str]:
+    def _observations(
+        self,
+        raw: str,
+        result_findings: list[str],
+        ablation_evidence: list[AblationEvidence],
+    ) -> list[str]:
         lowered = raw.lower()
         observations = list(result_findings)
         if any(word in lowered for word in ["improve", "gain", "提升", "优于", "better"]):
             observations.append("The provided results suggest an improvement over at least one baseline.")
-        if any(word in lowered for word in ["ablation", "消融", "w/o", "without"]):
+        if ablation_evidence:
+            observations.append(
+                f"Ablation evidence includes {len(ablation_evidence)} component comparisons."
+            )
+        elif any(word in lowered for word in ["ablation", "消融", "w/o", "without"]):
             observations.append("Ablation evidence appears to be available.")
         if any(word in lowered for word in ["case", "visual", "example"]):
             observations.append("Case-study or qualitative evidence appears to be available.")
@@ -176,6 +191,108 @@ class ExperimentAnalyzerAgent:
             comparisons=comparisons,
         )
 
+    def _ablation_evidence(self, raw: str, metrics: list[str]) -> list[AblationEvidence]:
+        evidence: list[AblationEvidence] = []
+        for table in extract_markdown_tables(raw):
+            if not self._looks_like_ablation_table(table):
+                continue
+            evidence.extend(self._ablation_table_evidence(table, metrics))
+        return evidence
+
+    def _looks_like_ablation_table(self, table: MarkdownTable) -> bool:
+        source = " ".join([table.caption, *table.headers, *(" ".join(row) for row in table.rows)])
+        return bool(
+            re.search(
+                r"\b(ablation|variant|w/o|without|ablat(?:e|ed|ion)|instead|minus)\b",
+                source,
+                flags=re.I,
+            )
+        )
+
+    def _ablation_table_evidence(
+        self,
+        table: MarkdownTable,
+        metrics: list[str],
+    ) -> list[AblationEvidence]:
+        method_index = self._method_column_index(table.headers)
+        reference = self._find_row(
+            table.rows,
+            method_index,
+            ["full", "ours", "proposed", "our method", "paper-agent", "hyper-protosurv"],
+        )
+        if not reference:
+            return []
+
+        reference_name = reference[method_index] if method_index < len(reference) else "Full method"
+        default_metric = self._table_metric(table, metrics)
+        evidence: list[AblationEvidence] = []
+        for column_index, header in enumerate(table.headers):
+            if column_index == method_index or re.search(r"\b(delta|diff|change)\b", header, re.I):
+                continue
+            reference_value = self._numeric_value(
+                reference[column_index] if column_index < len(reference) else ""
+            )
+            if reference_value is None:
+                continue
+            dataset, metric = self._column_context(header, default_metric)
+            higher_is_better = not self._lower_is_better(
+                " ".join([header, table.caption]),
+                metric,
+            )
+            for row in table.rows:
+                if row is reference:
+                    continue
+                variant_name = row[method_index] if method_index < len(row) else ""
+                if not self._is_ablation_variant(variant_name):
+                    continue
+                variant_value = self._numeric_value(row[column_index] if column_index < len(row) else "")
+                if variant_value is None:
+                    continue
+                signed_drop = (
+                    reference_value - variant_value
+                    if higher_is_better
+                    else variant_value - reference_value
+                )
+                evidence.append(
+                    AblationEvidence(
+                        table_caption=table.caption,
+                        dataset=dataset,
+                        metric=metric,
+                        reference=reference_name,
+                        variant=variant_name,
+                        reference_value=reference_value,
+                        variant_value=variant_value,
+                        signed_drop=signed_drop,
+                        higher_is_better=higher_is_better,
+                        supports=self._ablation_supports(variant_name),
+                    )
+                )
+        return evidence
+
+    def _is_ablation_variant(self, name: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(w/o|without|no|ablat(?:e|ed|ion)|remove(?:d)?|minus|instead)\b",
+                name,
+                flags=re.I,
+            )
+        )
+
+    def _ablation_supports(self, variant_name: str) -> list[str]:
+        lowered = variant_name.lower()
+        supports: list[str] = []
+        if re.search(r"\b(ot|wasserstein|adaptive|hyperedge|prototype)\b", lowered):
+            supports.append("adaptive hypergraph prototype learning")
+        if re.search(r"\b(bidirectional|bhe|hcon|hyperedge update)\b", lowered):
+            supports.append("bidirectional hyperedge updates")
+        if re.search(r"\b(cross-attention|attention|fusion|mean-pool|pool)\b", lowered):
+            supports.append("cross-attention fusion")
+        if re.search(r"\b(l_rec|reconstruction|rec|reconstruct)\b", lowered):
+            supports.append("reconstruction regularization")
+        if re.search(r"\b(loss|objective|cox|survival)\b", lowered):
+            supports.append("survival-aware objective")
+        return list(dict.fromkeys(supports))
+
     def _table_metric(self, table: MarkdownTable, metrics: list[str]) -> str:
         source = " ".join([table.caption, *table.headers])
         match = self.METRIC_RE.search(source)
@@ -198,6 +315,7 @@ class ExperimentAnalyzerAgent:
         )
 
     def _column_context(self, header: str, default_metric: str) -> tuple[str, str]:
+        original_header = header.strip()
         metric_match = self.METRIC_RE.search(header)
         metric = self._normalize_metric(metric_match.group(1)) if metric_match else default_metric
         dataset = header
@@ -205,7 +323,9 @@ class ExperimentAnalyzerAgent:
             dataset = (header[: metric_match.start()] + header[metric_match.end() :]).strip()
         dataset = re.sub(r"\b(score|value|mean|std|avg|average)\b", " ", dataset, flags=re.I)
         dataset = re.sub(r"[^A-Za-z0-9_-]+", " ", dataset).strip()
-        return dataset or header.strip(), metric
+        if not dataset and re.search(r"\b(avg|average|mean)\b", original_header, flags=re.I):
+            dataset = "Average"
+        return dataset or original_header, metric
 
     def _dominant_metric(self, comparisons: list[ExperimentComparison]) -> str:
         metrics = [comparison.metric for comparison in comparisons if comparison.metric]

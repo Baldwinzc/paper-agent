@@ -186,6 +186,7 @@ class SectionWriterAgent:
         )
         missing = [self._paper_prose(item).rstrip(".") for item in missing_details]
         result_tables = experiments.result_tables if experiments else []
+        ablation_evidence = experiments.ablation_evidence if experiments else []
 
         if result_tables:
             main_results = (
@@ -238,7 +239,11 @@ class SectionWriterAgent:
                 "added when the supplied evidence supports them."
             )
 
-        return f"{setup}\n\n{main_results}\n\n{completion}"
+        sections = [setup, main_results]
+        if ablation_evidence:
+            sections.append(self._ablation_evidence_text(ablation_evidence))
+        sections.append(completion)
+        return "\n\n".join(sections)
 
     def _structured_main_results_text(self, result_tables) -> str:
         table_sentences = []
@@ -279,6 +284,33 @@ class SectionWriterAgent:
             f"{dataset}{metric}: {comparison.method_value:.3f} vs "
             f"{comparison.baseline_value:.3f} ({comparison.signed_improvement:+.3f}, "
             f"{direction} is better)"
+        )
+
+    def _ablation_evidence_text(self, ablation_evidence) -> str:
+        selected = sorted(
+            ablation_evidence,
+            key=lambda item: abs(item.signed_drop),
+            reverse=True,
+        )[:5]
+        sentences = []
+        for item in selected:
+            metric = f" {item.metric}" if item.metric else ""
+            dataset = item.dataset or "the reported column"
+            direction = "higher" if item.higher_is_better else "lower"
+            support = (
+                "; supports " + ", ".join(item.supports[:2])
+                if item.supports
+                else ""
+            )
+            sentences.append(
+                f"{item.variant} changes {dataset}{metric} from "
+                f"{item.reference_value:.3f} to {item.variant_value:.3f} "
+                f"(signed drop {item.signed_drop:+.3f}, {direction} is better{support})"
+            )
+        return (
+            "### Ablation Evidence\n"
+            + "; ".join(sentences)
+            + ". These component-level statements are limited to the supplied ablation tables."
         )
 
     def _conclusion_text(self, innovations, experiments, result_summary: str) -> str:

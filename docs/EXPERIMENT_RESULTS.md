@@ -60,7 +60,10 @@ Metric: C-index. Higher is better.
 | w/o reconstruction loss | 0.659 | 0.678 |
 ```
 
-The current analyzer uses baseline-vs-ours tables for automatic result claims.
-Ablation tables are retained in LaTeX and flagged as available evidence, but the
-agent should not write strong component conclusions until ablation support is
-made explicit and verified.
+The analyzer reads these as component-level evidence against the full method. It
+stores the reference value, variant value, signed drop, metric direction, and a
+lightweight support tag such as `bidirectional hyperedge updates` or
+`reconstruction regularization`. The draft then uses those records to write a
+bounded ablation paragraph and to connect component evidence back to innovation
+traceability. The agent should still avoid claims beyond the exact supplied
+variant rows.

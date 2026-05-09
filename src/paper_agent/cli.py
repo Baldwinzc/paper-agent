@@ -421,6 +421,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "reference_unresolved": reference_verification.get("unresolved_count", 0),
         "related_work_candidates": len(artifacts.get("related_work_candidates", [])),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
+        "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),
         "latex_tables": artifacts.get("latex_table_count", 0),
         "undefined_citation_keys": artifacts.get("undefined_citation_keys", []),
         "template_source": getattr(state.get("venue_template"), "template_source", ""),

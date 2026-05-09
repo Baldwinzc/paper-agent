@@ -66,11 +66,25 @@ class ExperimentTableSummary(BaseModel):
     comparisons: list[ExperimentComparison] = Field(default_factory=list)
 
 
+class AblationEvidence(BaseModel):
+    table_caption: str = ""
+    dataset: str = ""
+    metric: str = ""
+    reference: str = ""
+    variant: str = ""
+    reference_value: float
+    variant_value: float
+    signed_drop: float
+    higher_is_better: bool = True
+    supports: list[str] = Field(default_factory=list)
+
+
 class ExperimentSummary(BaseModel):
     raw_preview: str = ""
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
     result_tables: list[ExperimentTableSummary] = Field(default_factory=list)
+    ablation_evidence: list[AblationEvidence] = Field(default_factory=list)
     observations: list[str] = Field(default_factory=list)
     missing_details: list[str] = Field(default_factory=list)
 

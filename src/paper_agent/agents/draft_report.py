@@ -80,6 +80,17 @@ class DraftReportAgent:
                         f"(signed improvement {comparison.signed_improvement:+.3f})"
                     )
 
+        if experiments and experiments.ablation_evidence:
+            lines.extend(["", "## Ablation Evidence", ""])
+            for item in experiments.ablation_evidence[:8]:
+                metric = f" {item.metric}" if item.metric else ""
+                support = f"; supports: {', '.join(item.supports)}" if item.supports else ""
+                lines.append(
+                    f"- {item.variant}: {item.reference_value:.3f} -> "
+                    f"{item.variant_value:.3f} on {item.dataset or 'reported column'}{metric} "
+                    f"(signed drop {item.signed_drop:+.3f}){support}"
+                )
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])
@@ -88,6 +99,8 @@ class DraftReportAgent:
                 lines.append(f"- `{item.get('name')}`: {status}; evidence items: {item.get('evidence_count', 0)}")
                 for evidence in item.get("evidence_preview", [])[:2]:
                     lines.append(f"  Evidence: {evidence}")
+                for evidence in item.get("ablation_evidence_preview", [])[:2]:
+                    lines.append(f"  Ablation: {evidence}")
 
         related_candidates = artifacts.get("related_work_candidates", [])
         if related_candidates:
