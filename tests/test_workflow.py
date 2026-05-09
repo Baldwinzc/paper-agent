@@ -3445,6 +3445,113 @@ def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp
     assert state["artifacts"]["submission_package"]["checks"]["missing_graphics"] == []
 
 
+def test_latex_composer_generates_method_figures_from_code_evidence(tmp_path):
+    state = {
+        "request": PaperRequest(
+            project_name="generated-method-figures-demo",
+            target_venue="TPAMI",
+        ),
+        "venue_template": VenueTemplate(venue="TPAMI", family="ieee_journal"),
+        "outline": PaperOutline(title_candidates=["Generated Method Figures Demo"]),
+        "sections": DraftSections(
+            abstract="Abstract.",
+            introduction="Introduction.",
+            related_work="Related work.",
+            method="### Method Overview\nMethod.\n\n### Prototype Hypergraph\nConstruction.",
+            experiments="Experiments.",
+            conclusion="Conclusion.",
+        ),
+        "bibliography": [],
+        "code": CodeSummary(
+            likely_method_files=["data_preparation/hypergraph_construction_wb.py"],
+            implementation_evidence=[
+                "data_preparation/hypergraph_construction_wb.py:146 "
+                "(OT/Wasserstein hypergraph construction) X_bar = ot.lp.free_support_barycenter(",
+                "models/HCoN/model.py:55 (BHE/HCoN module) self.hcon = HCoN(...)",
+            ],
+            method_claims=["Construct adaptive hyperedges and exchange node-hyperedge context."],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=["Wasserstein hypergraph construction evidence."],
+            ),
+            InnovationPoint(
+                name="Innovation 2: Bidirectional hyperedge convolution",
+                motivation="Context exchange should be explicit.",
+                technical_idea="Use bidirectional hyperedge convolution to exchange node and hyperedge context.",
+                evidence=["HCoN implementation evidence."],
+            ),
+        ],
+        "artifacts": {
+            "code_baseline_comparison": {
+                "code_only_terms": [
+                    "optimal transport geometry",
+                    "hypergraph modeling",
+                    "bidirectional hyperedge convolution",
+                ],
+                "innovation_seeds": [
+                    "Construct adaptive prototype geometry with optimal-transport evidence.",
+                    "Use bidirectional hyperedge convolution to exchange node- and hyperedge-level context.",
+                ],
+            },
+            "presentation_plan": {
+                "figures": [
+                    {
+                        "label": "fig:method-overview",
+                        "title": "Method Overview",
+                        "section": "Method",
+                        "asset_path": "figures/method_overview.pdf",
+                        "caption": "Overview of the proposed method.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
+                    {
+                        "label": "fig:prototype-hypergraph",
+                        "title": "Adaptive Prototype Hypergraph Construction",
+                        "section": "Method",
+                        "asset_path": "figures/prototype_hypergraph.pdf",
+                        "caption": "Adaptive prototype and hypergraph construction.",
+                        "evidence": [],
+                        "status": "planned",
+                    },
+                ],
+                "tables": [],
+                "open_items": [
+                    "Create or attach the planned figure asset `figures/method_overview.pdf` for `fig:method-overview`.",
+                    "Create or attach the planned figure asset `figures/prototype_hypergraph.pdf` for `fig:prototype-hypergraph`.",
+                ],
+            },
+        },
+    }
+
+    LatexComposerAgent().run(state)
+
+    method_pdf = state["latex_project_dir"] / "figures" / "method_overview.pdf"
+    hypergraph_pdf = state["latex_project_dir"] / "figures" / "prototype_hypergraph.pdf"
+    tex = state["latex_output_path"].read_text(encoding="utf-8")
+    plan = (state["latex_project_dir"] / "FIGURE_TABLE_PLAN.md").read_text(encoding="utf-8")
+    assert method_pdf.exists()
+    assert method_pdf.read_bytes().startswith(b"%PDF-1.4")
+    assert hypergraph_pdf.exists()
+    assert hypergraph_pdf.read_bytes().startswith(b"%PDF-1.4")
+    assert r"\includegraphics[width=\columnwidth]{figures/method_overview.pdf}" in tex
+    assert r"\includegraphics[width=\columnwidth]{figures/prototype_hypergraph.pdf}" in tex
+    assert state["artifacts"]["generated_figure_count"] == 2
+    assert {item["label"] for item in state["artifacts"]["generated_figures"]} == {
+        "fig:method-overview",
+        "fig:prototype-hypergraph",
+    }
+    assert "Status: generated" in plan
+    assert state["artifacts"]["presentation_plan"]["open_items"] == []
+
+    SubmissionPackageValidatorAgent().run(state)
+    assert not state["artifacts"]["submission_package"]["errors"]
+    assert state["artifacts"]["submission_package"]["checks"]["missing_graphics"] == []
+
+
 def test_draft_report_includes_presentation_plan(tmp_path):
     state = {
         "request": PaperRequest(project_name="presentation-report-demo", target_venue="TPAMI"),

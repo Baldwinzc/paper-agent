@@ -8,7 +8,11 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from paper_agent.figures import write_bar_chart_pdf
+from paper_agent.figures import (
+    write_bar_chart_pdf,
+    write_flow_diagram_pdf,
+    write_prototype_hypergraph_pdf,
+)
 from paper_agent.state import PaperState, VenueTemplate
 from paper_agent.tables import extract_markdown_tables, markdown_table_to_latex
 
@@ -480,30 +484,56 @@ class LatexComposerAgent:
         if not figures:
             return
         experiments = state.get("experiments")
-        if not experiments:
-            return
 
         generated: list[dict[str, str]] = []
         for figure in figures:
             label = figure.get("label")
-            if label == "fig:main-results":
-                bars = self._main_result_bars(experiments)
-            elif label == "fig:ablation-summary":
-                bars = self._ablation_bars(experiments)
-            else:
-                bars = []
-            if not bars:
-                continue
             asset_path = str(figure.get("asset_path") or "")
             if not asset_path:
                 continue
             output_path = output_root / asset_path
-            write_bar_chart_pdf(
-                output_path,
-                title=str(figure.get("title") or label),
-                bars=bars,
-                y_label="Signed improvement" if label == "fig:main-results" else "Signed drop",
-            )
+
+            if label == "fig:method-overview":
+                steps = self._method_overview_steps(state)
+                if len(steps) < 2:
+                    continue
+                write_flow_diagram_pdf(
+                    output_path,
+                    title=str(figure.get("title") or label),
+                    steps=steps,
+                    footer=self._method_overview_footer(state),
+                )
+            elif label == "fig:prototype-hypergraph":
+                if not self._has_prototype_hypergraph_evidence(state):
+                    continue
+                write_prototype_hypergraph_pdf(
+                    output_path,
+                    title=str(figure.get("title") or label),
+                    notes=self._prototype_hypergraph_notes(state),
+                )
+            elif label == "fig:main-results" and experiments:
+                bars = self._main_result_bars(experiments)
+                if not bars:
+                    continue
+                write_bar_chart_pdf(
+                    output_path,
+                    title=str(figure.get("title") or label),
+                    bars=bars,
+                    y_label="Signed improvement",
+                )
+            elif label == "fig:ablation-summary" and experiments:
+                bars = self._ablation_bars(experiments)
+                if not bars:
+                    continue
+                write_bar_chart_pdf(
+                    output_path,
+                    title=str(figure.get("title") or label),
+                    bars=bars,
+                    y_label="Signed drop",
+                )
+            else:
+                continue
+
             figure["status"] = "generated"
             figure["asset_exists"] = True
             figure["generated_path"] = str(output_path)
@@ -521,6 +551,71 @@ class LatexComposerAgent:
             for item in plan.get("open_items", [])
             if not any(generated_item["asset_path"] in item for generated_item in generated)
         ]
+
+    def _method_overview_steps(self, state: PaperState) -> list[str]:
+        innovations = state.get("innovations", [])
+        if not innovations:
+            return []
+        steps = ["WSI patch features"]
+        for innovation in innovations[:3]:
+            label = re.sub(r"^Innovation\s+\d+:\s*", "", innovation.name, flags=re.I)
+            steps.append(label or innovation.technical_idea)
+        steps.append("Survival risk prediction")
+        return list(dict.fromkeys(self._figure_step_text(step) for step in steps if step))
+
+    def _method_overview_footer(self, state: PaperState) -> str:
+        innovations = state.get("innovations", [])
+        evidence = [
+            item
+            for innovation in innovations
+            for item in innovation.evidence[:1]
+        ]
+        return "Evidence: " + "; ".join(evidence[:2]) if evidence else ""
+
+    def _has_prototype_hypergraph_evidence(self, state: PaperState) -> bool:
+        text_parts: list[str] = []
+        for innovation in state.get("innovations", []):
+            text_parts.extend([innovation.name, innovation.technical_idea, *innovation.evidence])
+        code = state.get("code")
+        if code:
+            text_parts.extend(code.likely_method_files)
+            text_parts.extend(code.implementation_evidence)
+            text_parts.extend(code.method_claims)
+        comparison = state.get("artifacts", {}).get("code_baseline_comparison", {})
+        if isinstance(comparison, dict):
+            text_parts.extend(str(term) for term in comparison.get("code_only_terms", []))
+            text_parts.extend(str(seed) for seed in comparison.get("innovation_seeds", []))
+        lowered = " ".join(text_parts).lower()
+        return any(
+            token in lowered
+            for token in ["hypergraph", "hyperedge", "optimal transport", "wasserstein", "barycenter"]
+        )
+
+    def _prototype_hypergraph_notes(self, state: PaperState) -> list[str]:
+        notes = []
+        for innovation in state.get("innovations", []):
+            if self._contains_any(
+                f"{innovation.name} {innovation.technical_idea}",
+                ["hypergraph", "hyperedge", "transport", "wasserstein", "barycenter"],
+            ):
+                notes.append(re.sub(r"^Innovation\s+\d+:\s*", "", innovation.name, flags=re.I))
+        code = state.get("code")
+        if code:
+            notes.extend(
+                evidence
+                for evidence in code.implementation_evidence[:2]
+                if self._contains_any(evidence, ["hypergraph", "hyperedge", "transport", "wasserstein"])
+            )
+        return notes[:3]
+
+    def _figure_step_text(self, text: str) -> str:
+        text = re.sub(r"\[[^\]]+\]", "", text)
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        return text[:70].rstrip()
+
+    def _contains_any(self, text: str, needles: list[str]) -> bool:
+        lowered = text.lower()
+        return any(needle in lowered for needle in needles)
 
     def _main_result_bars(self, experiments) -> list[tuple[str, float]]:
         bars: list[tuple[str, float]] = []
