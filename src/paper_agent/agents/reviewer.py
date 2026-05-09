@@ -45,12 +45,26 @@ class ReviewerAgent:
         "IBS",
         "IEEE",
         "INDEX",
+        "II",
+        "III",
+        "IV",
+        "IX",
+        "L_",
+        "L_REC",
         "LLM",
         "OT",
+        "OTSU",
         "PDF",
+        "TCGA",
         "TPAMI",
+        "UNI",
+        "VI",
+        "VII",
+        "VIII",
         "WSI",
         "WSIS",
+        "XI",
+        "XII",
     }
     STRONG_ABLATION_TOKENS = {
         "attention",
@@ -348,7 +362,7 @@ class ReviewerAgent:
         checks.append(
             self._consistency_item(
                 "unsupported_method_threads",
-                self._unsupported_method_threads(sections.method, innovations),
+                self._unsupported_method_threads(sections.method, innovations, experiments),
             )
         )
         return checks
@@ -426,6 +440,10 @@ class ReviewerAgent:
         if not experiments or not experiments.metrics:
             return []
         allowed = {self._normalize_metric(metric) for metric in experiments.metrics}
+        if "IBS" in allowed:
+            allowed.add("BRIER SCORE")
+        if "BRIER SCORE" in allowed:
+            allowed.add("IBS")
         mentioned = {
             self._normalize_metric(match.group(1))
             for match in re.finditer(self.METRIC_PATTERN, text, flags=re.I)
@@ -463,7 +481,7 @@ class ReviewerAgent:
             normalized = value.lstrip("+")
         return normalized + suffix
 
-    def _unsupported_method_threads(self, method_text: str, innovations) -> list[str]:
+    def _unsupported_method_threads(self, method_text: str, innovations, experiments=None) -> list[str]:
         if not innovations:
             return []
         unsupported = []
@@ -471,9 +489,25 @@ class ReviewerAgent:
             if self._generic_method_heading(heading):
                 continue
             subsection = f"{heading}\n{body}"
-            if not any(self._innovation_mentioned(subsection, innovation) for innovation in innovations):
+            innovation_supported = any(
+                self._innovation_mentioned(subsection, innovation)
+                for innovation in innovations
+            )
+            ablation_supported = self._method_thread_supported_by_ablation(subsection, experiments)
+            if not innovation_supported and not ablation_supported:
                 unsupported.append(heading)
         return unsupported
+
+    def _method_thread_supported_by_ablation(self, subsection: str, experiments) -> bool:
+        if not experiments or not experiments.ablation_evidence:
+            return False
+        subsection_tokens = self._expanded_content_tokens(subsection)
+        for item in experiments.ablation_evidence:
+            evidence_tokens = self._expanded_content_tokens(" ".join([item.variant, *item.supports]))
+            overlap = subsection_tokens & evidence_tokens
+            if (overlap & self.STRONG_ABLATION_TOKENS) or len(overlap) >= 2:
+                return True
+        return False
 
     def _markdown_subsections(self, text: str) -> list[tuple[str, str]]:
         sections: list[tuple[str, str]] = []

@@ -1417,6 +1417,29 @@ def test_reviewer_accepts_supported_experiment_facts():
     assert not any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
 
 
+def test_reviewer_treats_ibs_as_brier_score_evidence():
+    state = {
+        "experiments": ExperimentSummary(
+            raw_preview="| Method | BLCA IBS |\n|---|---:|\n| Ours | 0.171 |\n",
+            datasets=["BLCA"],
+            metrics=["IBS"],
+        ),
+        "innovations": [],
+        "sections": DraftSections(
+            experiments="We evaluate on BLCA using the integrated Brier score (IBS)."
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+
+    assert consistency["unsupported_metrics"]["status"] == "ok"
+
+
 def test_reviewer_flags_method_threads_without_innovation_support():
     state = {
         "experiments": ExperimentSummary(),
@@ -1447,6 +1470,51 @@ def test_reviewer_flags_method_threads_without_innovation_support():
 
     assert consistency["unsupported_method_threads"]["values"] == ["Contrastive memory bank"]
     assert any("not supported by supplied evidence" in f.issue for f in reviewed["review_findings"])
+
+
+def test_reviewer_accepts_method_thread_supported_by_ablation_evidence():
+    state = {
+        "experiments": ExperimentSummary(
+            ablation_evidence=[
+                AblationEvidence(
+                    table_caption="Ablation Results",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    reference="Full Hyper-ProtoSurv",
+                    variant="mean-pool fusion instead of cross-attention",
+                    reference_value=0.690,
+                    variant_value=0.681,
+                    signed_drop=0.009,
+                    supports=["cross-attention fusion"],
+                )
+            ]
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive hypergraph prototype learning",
+                motivation="The baseline uses static prototypes.",
+                technical_idea="Construct adaptive hyperedges from prototype geometry.",
+                evidence=["Code constructs adaptive hyperedges."],
+            )
+        ],
+        "sections": DraftSections(
+            method=(
+                "### Adaptive hypergraph prototype learning\n"
+                "The method constructs adaptive hyperedges.\n\n"
+                "### Cross-Attention Prototype Fusion and Survival Prediction\n"
+                "The model uses cross-attention fusion before survival prediction."
+            )
+        ),
+        "artifacts": {},
+    }
+
+    reviewed = ReviewerAgent().run(state)
+    consistency = {
+        item["check"]: item
+        for item in reviewed["artifacts"]["factual_consistency"]
+    }
+
+    assert consistency["unsupported_method_threads"]["status"] == "ok"
 
 
 def test_reviewer_flags_outline_language():
@@ -1916,6 +1984,7 @@ def test_llm_section_prompt_blocks_performance_claims_when_results_missing(monke
     joined_rules = " ".join(payload["hard_rules"])
     assert "experiment evidence is incomplete" in joined_rules
     assert "Do not mention C-index" in joined_rules
+    assert "Do not invent preprocessing accuracies" in joined_rules
     assert "Do not include writer instructions" in joined_rules
     assert "Do not copy numeric citations" in joined_rules
     assert payload["missing_experiment_details"] == ["Evaluation metrics are not explicit."]
@@ -1974,6 +2043,40 @@ def test_llm_section_rejects_placeholders_and_writer_instructions():
         assert "draft instructions or placeholders" in str(exc)
     else:
         raise AssertionError("Expected placeholder-heavy LLM section to be rejected.")
+
+
+def test_llm_section_rejects_unsupported_experiment_claims_with_results():
+    client = FakeLLMClient(
+        "Patch-level tissue classification achieves 92.5% accuracy before survival training."
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            raw_preview=(
+                "| Method | BLCA C-index |\n"
+                "|---|---:|\n"
+                "| baseline | 0.646 |\n"
+                "| ours | 0.671 |\n"
+            ),
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+        ),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    try:
+        SectionWriterAgent(llm_client=client)._run_llm_section(state, "experiments")
+    except ValueError as exc:
+        message = str(exc)
+        assert "unsupported experiment claims" in message
+        assert "92.5%" in message
+        assert "ACCURACY" in message
+    else:
+        raise AssertionError("Expected unsupported LLM experiment claim to be rejected.")
 
 
 def test_llm_section_cleaner_removes_numeric_citations_only():
@@ -2108,7 +2211,11 @@ def test_reviewer_accepts_dataset_tokens_present_in_experiment_evidence():
         raw_preview="TCGA cohort summary built from BLCA and BRCA CSV files.",
         datasets=["BLCA", "BRCA"],
     )
-    text = "The available cohort summary is organized around TCGA, BLCA, and BRCA cases."
+    text = (
+        "The available cohort summary is organized around TCGA, BLCA, and BRCA cases "
+        "using UNI feature embeddings, OTSU thresholding, and L_{rec} regularization. "
+        "The average C-index across the five cohorts is reported in Table III."
+    )
 
     unsupported = ReviewerAgent()._unsupported_datasets(text, experiments)
 

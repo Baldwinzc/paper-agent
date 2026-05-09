@@ -53,6 +53,7 @@ class SectionWriterAgent:
             r"\bonce final (?:experimental )?results are available\b|\bthe table should\b",
         ),
     ]
+    EXPERIMENT_CLAIM_SECTIONS = {"abstract", "introduction", "experiments", "conclusion"}
 
     SECTION_SPECS = {
         "abstract": {
@@ -541,6 +542,11 @@ class SectionWriterAgent:
             section_text, section_name, missing_experiment_details
         )
         self._raise_if_procedural_language(section_text, section_name)
+        self._raise_if_unsupported_experiment_claims(
+            section_text,
+            section_name,
+            experiments,
+        )
         return section_text
 
     def _raise_if_missing_results_overclaimed(
@@ -588,11 +594,43 @@ class SectionWriterAgent:
             f"{', '.join(matched)}"
         )
 
+    def _raise_if_unsupported_experiment_claims(
+        self,
+        section_text: str,
+        section_name: str,
+        experiments,
+    ) -> None:
+        if section_name not in self.EXPERIMENT_CLAIM_SECTIONS or not experiments:
+            return
+
+        from paper_agent.agents.reviewer import ReviewerAgent
+
+        reviewer = ReviewerAgent()
+        evidence_text = reviewer._evidence_text(experiments)
+        issues = {
+            "datasets": reviewer._unsupported_datasets(section_text, experiments),
+            "metrics": reviewer._unsupported_metrics(section_text, experiments),
+            "numbers": reviewer._unsupported_numbers(section_text, evidence_text),
+        }
+        issues = {key: values for key, values in issues.items() if values}
+        if not issues:
+            return
+        details = "; ".join(
+            f"{key}: {', '.join(values[:5])}"
+            for key, values in issues.items()
+        )
+        raise ValueError(
+            f"LLM {section_name} section included unsupported experiment claims: {details}"
+        )
+
     def _llm_hard_rules(self, missing_experiment_details: list[str]) -> list[str]:
         rules = [
             "Write the Method section from innovation points, not raw code diffs.",
             "Use code and baseline only as evidence.",
             "Do not invent experiment numbers.",
+            "Do not invent preprocessing accuracies, classifier accuracies, hidden validation "
+            "scores, hardware details, optimizer settings, or dataset properties absent from "
+            "the supplied evidence.",
             "If details are missing, write cautious paper prose that says the evidence is pending "
             "instead of fabricating details.",
             "Do not include writer instructions, TODOs, TBDs, bracketed placeholders, or text "
