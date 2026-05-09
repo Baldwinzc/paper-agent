@@ -20,6 +20,42 @@ from paper_agent.tables import extract_markdown_tables, markdown_table_to_latex
 class LatexComposerAgent:
     """Composes draft sections into a venue-compatible LaTeX project."""
 
+    CORE_LATEX_PACKAGES = {
+        "algorithm",
+        "algorithmic",
+        "amsfonts",
+        "amsmath",
+        "amssymb",
+        "array",
+        "babel",
+        "balance",
+        "booktabs",
+        "calc",
+        "caption",
+        "cite",
+        "color",
+        "dblfloatfix",
+        "enumitem",
+        "epsfig",
+        "float",
+        "fontenc",
+        "geometry",
+        "graphicx",
+        "hyperref",
+        "ifthen",
+        "inputenc",
+        "mathtools",
+        "microtype",
+        "multirow",
+        "natbib",
+        "stfloats",
+        "subfigure",
+        "textcomp",
+        "times",
+        "url",
+        "xcolor",
+    }
+
     def run(self, state: PaperState) -> PaperState:
         request = state["request"]
         venue_template = state["venue_template"]
@@ -103,7 +139,12 @@ class LatexComposerAgent:
             ),
         }
         if venue_template.sample_main_tex:
-            rendered = self._render_from_sample_main(Path(venue_template.sample_main_tex), template_values)
+            rendered = self._render_from_sample_main(
+                Path(venue_template.sample_main_tex),
+                template_values,
+                output_root,
+                state,
+            )
         else:
             rendered = template.render(**template_values)
         self._write_project_helpers(output_root, venue_template, state)
@@ -142,9 +183,11 @@ class LatexComposerAgent:
     ) -> str:
         converted_lines = []
         for line in text.splitlines():
-            if line.startswith("### "):
-                title = line[4:].strip()
-                converted_lines.append(r"\subsection{" + self._escape_inline(title) + "}")
+            heading = re.match(r"^(#{3,6})\s+(.+?)\s*$", line)
+            if heading:
+                command = r"\subsection" if len(heading.group(1)) == 3 else r"\subsubsection"
+                title = heading.group(2).strip()
+                converted_lines.append(command + "{" + self._escape_inline(title) + "}")
             else:
                 converted_lines.append(
                     self._escape_inline(
@@ -275,7 +318,13 @@ class LatexComposerAgent:
                 continue
             shutil.copy2(path, destination)
 
-    def _render_from_sample_main(self, sample_main: Path, values: dict[str, str]) -> str:
+    def _render_from_sample_main(
+        self,
+        sample_main: Path,
+        values: dict[str, str],
+        output_root: Path,
+        state: PaperState,
+    ) -> str:
         sample_text = sample_main.read_text(encoding="utf-8", errors="ignore")
         begin_match = re.search(r"\\begin\{document\}", sample_text)
         if not begin_match:
@@ -286,6 +335,9 @@ class LatexComposerAgent:
         preamble = self._ensure_package(preamble, "amsmath")
         preamble = self._ensure_package(preamble, "graphicx")
         preamble = self._ensure_package(preamble, "booktabs")
+        preamble, dropped_packages = self._drop_missing_template_packages(preamble, output_root)
+        if dropped_packages:
+            state.setdefault("artifacts", {})["dropped_missing_template_packages"] = dropped_packages
 
         return "\n\n".join(
             [
@@ -361,6 +413,41 @@ class LatexComposerAgent:
         if re.search(rf"\\usepackage(?:\[[^\]]*\])?\{{[^}}]*\b{re.escape(package)}\b[^}}]*\}}", preamble):
             return preamble
         return preamble + "\n" + rf"\usepackage{{{package}}}"
+
+    def _drop_missing_template_packages(self, preamble: str, output_root: Path) -> tuple[str, list[str]]:
+        dropped: list[str] = []
+
+        def replace(match: re.Match[str]) -> str:
+            options = match.group(1) or ""
+            packages = [item.strip() for item in match.group(2).split(",") if item.strip()]
+            keep = []
+            for package in packages:
+                if self._package_available(package, output_root):
+                    keep.append(package)
+                else:
+                    dropped.append(package)
+            if not keep:
+                return ""
+            if keep == packages:
+                return match.group(0)
+            return rf"\usepackage{options}{{{','.join(keep)}}}"
+
+        cleaned = re.sub(
+            r"\\usepackage(\[[^\]]*\])?\{([^}]+)\}",
+            replace,
+            preamble,
+        )
+        return cleaned, list(dict.fromkeys(dropped))
+
+    def _package_available(self, package: str, output_root: Path) -> bool:
+        if package in self.CORE_LATEX_PACKAGES:
+            return True
+        package_path = Path(package)
+        candidates = [
+            output_root / f"{package}.sty",
+            output_root / f"{package_path.name}.sty",
+        ]
+        return any(candidate.is_file() for candidate in candidates)
 
     def _write_project_helpers(
         self,
@@ -729,4 +816,17 @@ class LatexComposerAgent:
         return "\n".join(lines)
 
     def _bibtex_escape(self, text: str) -> str:
-        return text.replace("\\", r"\textbackslash{}").replace("{", r"\{").replace("}", r"\}")
+        replacements = {
+            "\\": r"\textbackslash{}",
+            "{": r"\{",
+            "}": r"\}",
+            "&": r"\&",
+            "%": r"\%",
+            "$": r"\$",
+            "#": r"\#",
+            "_": r"\_",
+        }
+        escaped = text
+        for old, new in replacements.items():
+            escaped = escaped.replace(old, new)
+        return escaped

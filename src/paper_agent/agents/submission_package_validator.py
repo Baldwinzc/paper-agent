@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
@@ -25,6 +26,7 @@ class SubmissionPackageValidatorAgent:
         "standalone",
     }
     GRAPHIC_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
+    COMPILE_TIMEOUT_SECONDS = 180
 
     def run(self, state: PaperState) -> PaperState:
         state.setdefault("artifacts", {})["submission_package"] = self._validate(state)
@@ -157,9 +159,10 @@ class SubmissionPackageValidatorAgent:
         }
 
     def _compile_check(self, project_dir: Path, main_tex: Path, warnings: list[str]) -> dict[str, object]:
-        latexmk = shutil.which("latexmk")
-        pdflatex = shutil.which("pdflatex")
-        tool = latexmk or pdflatex or ""
+        latexmk = self._find_executable("latexmk")
+        pdflatex = self._find_executable("pdflatex")
+        tectonic = self._find_executable("tectonic")
+        tool = latexmk or pdflatex or tectonic or ""
         if not tool:
             warnings.append("No local LaTeX compiler was found; static package checks were run only.")
             return {"mode": "not_run", "tool": "", "status": "tool_unavailable"}
@@ -174,11 +177,18 @@ class SubmissionPackageValidatorAgent:
                 "-halt-on-error",
                 main_tex.name,
             ]
-        else:
+        elif pdflatex:
             command = [
                 pdflatex,
                 "-interaction=nonstopmode",
                 "-halt-on-error",
+                main_tex.name,
+            ]
+        else:
+            command = [
+                tectonic,
+                "--keep-logs",
+                "--keep-intermediates",
                 main_tex.name,
             ]
         try:
@@ -187,11 +197,13 @@ class SubmissionPackageValidatorAgent:
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.COMPILE_TIMEOUT_SECONDS,
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            warnings.append("LaTeX compile check timed out after 60 seconds.")
+            warnings.append(
+                f"LaTeX compile check timed out after {self.COMPILE_TIMEOUT_SECONDS} seconds."
+            )
             return {"mode": "compile", "tool": Path(tool).name, "status": "timeout"}
         status = "passed" if completed.returncode == 0 else "failed"
         if status == "failed":
@@ -202,6 +214,22 @@ class SubmissionPackageValidatorAgent:
             "status": status,
             "returncode": completed.returncode,
         }
+
+    def _find_executable(self, name: str) -> str:
+        found = shutil.which(name)
+        if found:
+            return found
+
+        executable = f"{name}.exe" if os.name == "nt" else name
+        candidates = [
+            Path(sys.prefix) / "Library" / "bin" / executable,
+            Path(sys.prefix) / "Scripts" / executable,
+            Path(sys.prefix) / "bin" / executable,
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        return ""
 
     def _zip_check(self, state: PaperState, errors: list[str], warnings: list[str]) -> dict[str, object]:
         zip_path = Path(state["latex_zip_path"]) if state.get("latex_zip_path") else None

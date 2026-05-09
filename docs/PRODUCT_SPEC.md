@@ -93,6 +93,8 @@ explicit blocking items and next actions for the author.
 The LaTeX submission package is statically validated before reporting: the agent
 checks `main.tex`, `references.bib`, citation-key closure, referenced graphics,
 required zip entries, and optional local LaTeX compilation when enabled.
+Compile validation supports `latexmk`, `pdflatex`, and `tectonic`; `tectonic` is
+the preferred lightweight local option because it can fetch TeX assets on demand.
 The presentation planner records evidence-bound figure and table plans with
 labels, captions, target sections, suggested asset paths, and open items in
 `FIGURE_TABLE_PLAN.md` so authors can add visual assets without the draft

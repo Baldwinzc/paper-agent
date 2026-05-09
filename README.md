@@ -34,6 +34,8 @@ The current scaffold supports:
 - Overleaf-ready zip export for free Overleaf upload workflows.
 - Submission-package validation for `main.tex`, `references.bib`, citation keys,
   referenced graphics, optional local compile checks, and generated zip contents.
+- Optional real LaTeX compilation through `latexmk`, `pdflatex`, or lightweight
+  `tectonic` when `PAPER_AGENT_RUN_LATEX_COMPILE=1` is set.
 - Figure/table planning with labels, captions, target sections, and asset open
   items written to `FIGURE_TABLE_PLAN.md`.
 - Dependency-free PDF generation for method overview, prototype-hypergraph,

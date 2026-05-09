@@ -3197,6 +3197,55 @@ def test_submission_package_validator_flags_missing_graphic(tmp_path):
     assert package["checks"]["missing_graphics"] == ["figures/missing-figure"]
 
 
+def test_submission_package_validator_uses_tectonic_when_enabled(tmp_path, monkeypatch):
+    project_dir = tmp_path / "latex"
+    project_dir.mkdir()
+    main_tex = project_dir / "main.tex"
+    main_tex.write_text(
+        "\n".join(
+            [
+                r"\documentclass{article}",
+                r"\title{Demo}",
+                r"\begin{document}",
+                r"\begin{abstract}A concise abstract.\end{abstract}",
+                r"\bibliography{references}",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    commands = []
+
+    def fake_find(self, name):
+        return "C:/tools/tectonic.exe" if name == "tectonic" else ""
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("PAPER_AGENT_RUN_LATEX_COMPILE", "1")
+    monkeypatch.setattr(SubmissionPackageValidatorAgent, "_find_executable", fake_find)
+    monkeypatch.setattr(
+        "paper_agent.agents.submission_package_validator.subprocess.run",
+        fake_run,
+    )
+
+    warnings = []
+    result = SubmissionPackageValidatorAgent()._compile_check(project_dir, main_tex, warnings)
+
+    assert result["status"] == "passed"
+    assert result["tool"] == "tectonic.exe"
+    assert commands[0][0] == [
+        "C:/tools/tectonic.exe",
+        "--keep-logs",
+        "--keep-intermediates",
+        "main.tex",
+    ]
+    assert commands[0][1]["cwd"] == project_dir
+    assert commands[0][1]["timeout"] == SubmissionPackageValidatorAgent.COMPILE_TIMEOUT_SECONDS
+    assert warnings == []
+
+
 def test_draft_report_includes_submission_package_validation(tmp_path):
     state = {
         "request": PaperRequest(project_name="package-report-demo", target_venue="TPAMI"),
@@ -3404,6 +3453,59 @@ def test_latex_composer_writes_figure_table_plan(tmp_path):
     assert state["artifacts"]["presentation_plan_path"] == str(plan_path)
     assert state["artifacts"]["latex_tables"][0]["label"].startswith("tab:main-results")
     assert "## Figure and Table Plan" in state["final_markdown"]
+
+
+def test_latex_composer_converts_nested_markdown_headings():
+    composer = LatexComposerAgent()
+
+    latex = composer._latex_escape("### Main Module\nText.\n\n#### Inner Block\nDetails.")
+
+    assert r"\subsection{Main Module}" in latex
+    assert r"\subsubsection{Inner Block}" in latex
+    assert r"\#\#\#\#" not in latex
+
+
+def test_latex_composer_drops_missing_local_template_packages(tmp_path):
+    sample = tmp_path / "sample.tex"
+    sample.write_text(
+        "\n".join(
+            [
+                r"\documentclass{IEEEtran}",
+                r"\usepackage{officialstyle}",
+                r"\usepackage{amsmath,missinglocal}",
+                r"\begin{document}",
+                r"Template body",
+                r"\end{document}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = {"artifacts": {}}
+    values = {
+        "title": "Demo",
+        "abstract": "Abstract.",
+        "introduction": "Intro.",
+        "related_work": "Related.",
+        "method": "Method.",
+        "experiments": "Experiments.",
+        "conclusion": "Conclusion.",
+    }
+
+    rendered = LatexComposerAgent()._render_from_sample_main(sample, values, tmp_path, state)
+
+    assert r"\usepackage{officialstyle}" not in rendered
+    assert "missinglocal" not in rendered
+    assert r"\usepackage{amsmath}" in rendered
+    assert state["artifacts"]["dropped_missing_template_packages"] == [
+        "officialstyle",
+        "missinglocal",
+    ]
+
+
+def test_latex_composer_escapes_bibtex_special_characters():
+    escaped = LatexComposerAgent()._bibtex_escape("category=baseline_mentioned & 50% #1")
+
+    assert escaped == r"category=baseline\_mentioned \& 50\% \#1"
 
 
 def test_latex_composer_generates_result_figures_and_inserts_existing_assets(tmp_path):
