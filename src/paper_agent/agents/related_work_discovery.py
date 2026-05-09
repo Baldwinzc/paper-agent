@@ -84,6 +84,7 @@ class RelatedWorkDiscoveryAgent:
         artifacts["related_work_candidates"] = [
             self._candidate_artifact(entry) for entry in merged if "category=" in entry.note
         ]
+        self._update_reference_verification(artifacts, merged)
         if errors:
             artifacts["related_work_discovery_errors"] = errors
         return state
@@ -427,6 +428,57 @@ class RelatedWorkDiscoveryAgent:
             "query": entry.query,
             "category": category_match.group(1) if category_match else "unknown",
             "cited_by_count": int(cited_match.group(1)) if cited_match else 0,
+        }
+
+    def _update_reference_verification(
+        self,
+        artifacts: dict[str, Any],
+        entries: list[CitationEntry],
+    ) -> None:
+        resolved_keys = []
+        unresolved_seed_keys = []
+        needs_manual_check_keys = []
+        for entry in entries:
+            if self._is_resolved(entry):
+                resolved_keys.append(entry.key)
+                needs_manual_check_keys.append(entry.key)
+            elif self._is_seed_entry(entry):
+                unresolved_seed_keys.append(entry.key)
+            else:
+                needs_manual_check_keys.append(entry.key)
+        verification = {
+            "resolved_count": len(resolved_keys),
+            "unresolved_count": len(unresolved_seed_keys),
+            "resolved_keys": resolved_keys,
+            "unresolved_seed_keys": unresolved_seed_keys,
+            "needs_manual_check_keys": needs_manual_check_keys,
+        }
+        artifacts["reference_verification"] = verification
+        artifacts["reference_resolver_resolved"] = verification["resolved_count"]
+        artifacts["reference_resolver_unresolved"] = verification["unresolved_count"]
+
+    def _is_resolved(self, entry: CitationEntry) -> bool:
+        has_metadata = bool(entry.year and entry.year != "TODO")
+        has_real_authors = bool(
+            entry.authors
+            and not any(self._is_placeholder_author(author) for author in entry.authors)
+        )
+        return bool(entry.doi or (has_metadata and has_real_authors))
+
+    def _is_seed_entry(self, entry: CitationEntry) -> bool:
+        note = entry.note.lower()
+        return (
+            "seed" in note
+            or "placeholder" in note
+            or "replace with real" in note
+            or any(self._is_placeholder_author(author) for author in entry.authors)
+        )
+
+    def _is_placeholder_author(self, author: str) -> bool:
+        return author.lower() in {
+            "baseline authors",
+            "related work authors",
+            "to be completed",
         }
 
     def _field_query(self, state: PaperState) -> str:

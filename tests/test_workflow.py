@@ -1008,6 +1008,35 @@ def test_bibliography_uses_technical_queries_for_innovation_threads():
     assert not any("the legacy" in query for query in queries)
 
 
+def test_bibliography_skips_compound_threads_covered_by_existing_terms():
+    state = {
+        "request": PaperRequest(
+            project_name="citation-demo",
+            target_venue="TPAMI",
+            keywords=["whole-slide images", "survival prediction", "hypergraph learning"],
+        ),
+        "baseline": BaselineSummary(
+            title="Baseline",
+            related_terms=["prototype learning"],
+        ),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive hypergraph prototype learning",
+                technical_idea="Adaptive hypergraph prototype learning with bidirectional updates.",
+                motivation="The baseline uses static prototypes.",
+            )
+        ],
+        "artifacts": {},
+    }
+
+    state = BibliographyAgent().run(state)
+
+    queries = [entry.query for entry in state["bibliography"]]
+    assert any("hypergraph learning" in query for query in queries)
+    assert any("prototype learning" in query for query in queries)
+    assert not any("hypergraph learning prototype learning" in query for query in queries)
+
+
 def test_reference_resolver_enriches_seed_entry(monkeypatch):
     def fake_query(self, query):
         return {
@@ -1300,6 +1329,10 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
     assert any("Predicting cancer outcomes" in item.get("query", "") for item in state["artifacts"]["related_work_candidates"])
     assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
     assert state["artifacts"]["citation_keys"]
+    verification = state["artifacts"]["reference_verification"]
+    assert verification["resolved_count"] == len(state["artifacts"]["related_work_candidates"])
+    assert verification["unresolved_seed_keys"] == []
+    assert verification["needs_manual_check_keys"] == ["baseline", *verification["resolved_keys"]]
 
 
 def test_related_work_discovery_extracts_baseline_mentioned_queries():

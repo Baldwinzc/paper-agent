@@ -117,7 +117,33 @@ class BibliographyAgent:
             if normalized.lower() in self.BROAD_TERMS and normalized.lower() not in explicit_keywords:
                 continue
             filtered.append(normalized)
-        return list(dict.fromkeys(filtered))[:8]
+        return self._deduplicate_redundant_threads(list(dict.fromkeys(filtered)))[:8]
+
+    def _deduplicate_redundant_threads(self, terms: list[str]) -> list[str]:
+        selected: list[str] = []
+        covered_tokens: set[str] = set()
+        for term in terms:
+            tokens = self._thread_tokens(term)
+            if len(tokens) >= 2 and tokens <= covered_tokens:
+                continue
+            selected.append(term)
+            covered_tokens.update(tokens)
+        return selected
+
+    def _thread_tokens(self, term: str) -> set[str]:
+        filler = {
+            "image",
+            "images",
+            "learning",
+            "prediction",
+            "slide",
+            "whole",
+        }
+        return {
+            token
+            for token in re.findall(r"[a-zA-Z0-9]+", term.lower())
+            if len(token) > 2 and token not in filler
+        }
 
     def _innovation_research_terms(self, innovation) -> list[str]:
         text = self._strip_innovation_prefix(
