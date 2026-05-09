@@ -25,24 +25,31 @@ class ReferenceResolverAgent:
             state.setdefault("artifacts", {})["reference_resolver_mode"] = "disabled"
             return state
 
+        artifacts = state.setdefault("artifacts", {})
         resolved: list[CitationEntry] = []
         errors: dict[str, str] = {}
+        trace: list[dict[str, object]] = []
         for entry in state.get("bibliography", []):
             try:
-                resolved.append(self._resolve_entry(entry))
+                resolved_entry = self._resolve_entry(entry)
             except Exception as exc:
                 errors[entry.key] = str(exc)
-                resolved.append(entry)
+                resolved_entry = entry
+            resolved.append(resolved_entry)
+            trace.append(self._trace_item(entry, resolved_entry, errors.get(entry.key, "")))
 
         resolved = self._deduplicate_by_doi(resolved, state)
         state["bibliography"] = resolved
-        artifacts = state.setdefault("artifacts", {})
         verification = self._verification_summary(resolved)
         artifacts["reference_resolver_mode"] = "openalex"
         artifacts["reference_resolver_resolved"] = verification["resolved_count"]
         artifacts["reference_resolver_unresolved"] = verification["unresolved_count"]
         artifacts["reference_verification"] = verification
         artifacts["citation_keys"] = [entry.key for entry in resolved]
+        artifacts["reference_resolution_trace"] = self._annotate_trace_with_deduplication(
+            trace,
+            artifacts.get("citation_key_aliases", {}),
+        )
         if errors:
             artifacts["reference_resolver_errors"] = errors
         return state
@@ -263,6 +270,63 @@ class ReferenceResolverAgent:
         if aliases:
             state.setdefault("artifacts", {})["citation_key_aliases"] = aliases
         return deduped
+
+    def _trace_item(
+        self,
+        original: CitationEntry,
+        resolved: CitationEntry,
+        error: str = "",
+    ) -> dict[str, object]:
+        return {
+            "key": original.key,
+            "query": original.query or original.title,
+            "input_title": original.title,
+            "resolved_title": resolved.title,
+            "status": self._resolution_status(resolved, error),
+            "source": self._resolution_source(resolved),
+            "year": resolved.year,
+            "venue": resolved.venue,
+            "doi": resolved.doi,
+            "url": resolved.url,
+            "authors": resolved.authors[:5],
+            "note": resolved.note,
+            "error": error,
+        }
+
+    def _resolution_status(self, entry: CitationEntry, error: str = "") -> str:
+        if error:
+            return "error"
+        if self._is_resolved(entry):
+            return "resolved"
+        if self._is_seed_entry(entry):
+            return "unresolved_seed"
+        return "needs_manual_check"
+
+    def _resolution_source(self, entry: CitationEntry) -> str:
+        note = entry.note.lower()
+        if "openalex" in note:
+            return "openalex"
+        if "semantic scholar" in note:
+            return "semantic_scholar"
+        return "seed"
+
+    def _annotate_trace_with_deduplication(
+        self,
+        trace: list[dict[str, object]],
+        aliases: dict[str, str],
+    ) -> list[dict[str, object]]:
+        annotated = []
+        for item in trace:
+            key = str(item.get("key", ""))
+            retained_key = aliases.get(key, key)
+            annotated.append(
+                {
+                    **item,
+                    "retained": retained_key == key,
+                    "retained_key": retained_key,
+                }
+            )
+        return annotated
 
     def _verification_summary(self, entries: list[CitationEntry]) -> dict[str, object]:
         resolved_keys = []

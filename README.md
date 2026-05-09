@@ -31,7 +31,7 @@ The current scaffold supports:
 - Markdown experiment table conversion to `booktabs` LaTeX tables.
 - Seed BibTeX generation with explicit reviewer warnings for unresolved references.
 - Optional OpenAlex/Semantic Scholar metadata resolution with resolved/unresolved
-  bibliography verification counts.
+  bibliography verification counts and per-seed resolution traces.
 - Technical-query extraction for innovation-derived bibliography seeds, avoiding
   raw `Innovation 1` citation keys.
 - Optional OpenAlex related-work discovery from baseline references, papers citing

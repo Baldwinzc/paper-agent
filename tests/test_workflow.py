@@ -837,6 +837,12 @@ def test_reference_resolver_enriches_seed_entry(monkeypatch):
     assert "journal = {IEEE Transactions}" in bibtex
     assert state["artifacts"]["reference_resolver_resolved"] >= 1
     assert state["artifacts"]["reference_verification"]["resolved_count"] >= 1
+    trace = state["artifacts"]["reference_resolution_trace"]
+    assert trace
+    assert trace[0]["status"] == "resolved"
+    assert trace[0]["source"] == "openalex"
+    assert trace[0]["doi"] == "10.1234/example"
+    assert trace[0]["retained"]
 
 
 def test_reference_resolver_selects_best_openalex_candidate(monkeypatch):
@@ -982,6 +988,9 @@ def test_reference_resolver_deduplicates_repeated_dois(monkeypatch):
     dois = [entry.doi for entry in state["bibliography"] if entry.doi]
     assert dois == ["10.1234/shared"]
     assert state["artifacts"]["citation_key_aliases"]
+    trace = state["artifacts"]["reference_resolution_trace"]
+    assert any(not item["retained"] for item in trace)
+    assert all(item["retained_key"] in state["artifacts"]["citation_keys"] for item in trace)
 
 
 def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
@@ -1586,6 +1595,49 @@ def test_draft_report_includes_factual_consistency(tmp_path):
     assert "`unsupported_metrics`: ok" in report
 
 
+def test_draft_report_includes_reference_resolution_trace(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="reference-trace-demo", target_venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "bibliography": [
+            CitationEntry(
+                key="resolved",
+                title="Resolved Paper",
+                authors=["Ada Lovelace"],
+                year="2024",
+                doi="10.1234/resolved",
+            )
+        ],
+        "artifacts": {
+            "reference_verification": {
+                "resolved_count": 1,
+                "unresolved_count": 0,
+                "resolved_keys": ["resolved"],
+                "unresolved_seed_keys": [],
+            },
+            "reference_resolution_trace": [
+                {
+                    "key": "seed",
+                    "query": "whole slide image survival prediction",
+                    "resolved_title": "Resolved Paper",
+                    "status": "resolved",
+                    "source": "openalex",
+                    "doi": "10.1234/resolved",
+                    "retained": False,
+                    "retained_key": "resolved",
+                }
+            ],
+        },
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "Reference resolution trace:" in report
+    assert "`seed`: resolved via openalex; merged into `resolved`; doi: 10.1234/resolved" in report
+    assert "Query: whole slide image survival prediction" in report
+
+
 def test_draft_report_includes_ablation_evidence(tmp_path):
     state = {
         "request": PaperRequest(project_name="ablation-report-demo", target_venue="TPAMI"),
@@ -1865,6 +1917,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "section_writer_section_errors": {"method": "blocked"},
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
+            "reference_resolution_trace": [{"key": "paper", "status": "resolved"}],
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "latex_table_count": 3,
@@ -1879,6 +1932,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["llm_self_review_mode"] == "disabled"
     assert summary["bibliography_entries"] == 1
     assert summary["reference_unresolved"] == 2
+    assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
     assert summary["experiment_result_tables"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"

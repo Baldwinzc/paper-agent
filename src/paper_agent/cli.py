@@ -525,6 +525,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "reference_resolver_mode": artifacts.get("reference_resolver_mode", "not run"),
         "reference_resolved": reference_verification.get("resolved_count", 0),
         "reference_unresolved": reference_verification.get("unresolved_count", 0),
+        "reference_resolution_trace": len(artifacts.get("reference_resolution_trace", [])),
         "related_work_candidates": len(artifacts.get("related_work_candidates", [])),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
         "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),

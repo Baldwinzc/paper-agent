@@ -178,6 +178,20 @@ class DraftReportAgent:
                 year = f", {entry.year}" if entry.year else ""
                 lines.append(f"- `{entry.key}`: {entry.title}{year}{venue}")
 
+        resolution_trace = artifacts.get("reference_resolution_trace", [])
+        if resolution_trace:
+            lines.extend(["", "Reference resolution trace:"])
+            for item in resolution_trace[:10]:
+                source = item.get("source", "unknown")
+                status = item.get("status", "unknown")
+                retained = "" if item.get("retained", True) else f"; merged into `{item.get('retained_key')}`"
+                doi = f"; doi: {item.get('doi')}" if item.get("doi") else ""
+                lines.append(
+                    f"- `{item.get('key')}`: {status} via {source}{retained}{doi}"
+                )
+                lines.append(f"  Query: {item.get('query')}")
+                lines.append(f"  Match: {item.get('resolved_title')}")
+
         aliases = artifacts.get("citation_key_aliases", {})
         if aliases:
             lines.extend(["", "## Citation Aliases", ""])

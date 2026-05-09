@@ -70,6 +70,9 @@ they are added to the bibliography.
 Bibliography metadata is treated as evidence with status. Automatically resolved
 entries are separated from unresolved seed entries, and the draft report keeps both
 counts visible so the author can finish reference cleanup before submission.
+Each resolver attempt also records a trace containing the seed query, matched
+title, source service, DOI, and deduplication target so citation decisions remain
+auditable.
 When bibliography seeds come from innovation points, the system extracts concise
 technical search phrases instead of using raw innovation labels as citation queries.
 Related Work subsections are checked for real citation coverage so unsupported
