@@ -187,6 +187,29 @@ class DraftReportAgent:
                     f"(signed drop {item.signed_drop:+.3f}){support}"
                 )
 
+        if experiments and experiments.sensitivity_evidence:
+            lines.extend(["", "## Sensitivity Evidence", ""])
+            for item in experiments.sensitivity_evidence[:8]:
+                metric = f" {item.metric}" if item.metric else ""
+                dataset = f" on {item.dataset}" if item.dataset else ""
+                direction = "higher is better" if item.higher_is_better else "lower is better"
+                lines.append(
+                    f"- {item.parameter}{dataset}{metric}: best value "
+                    f"{item.best_parameter_value} -> {item.best_metric_value:.3f}; "
+                    f"tested values: {', '.join(item.tested_values[:8])}; {direction}"
+                )
+
+        if experiments and experiments.statistical_tests:
+            lines.extend(["", "## Statistical Test Evidence", ""])
+            for item in experiments.statistical_tests[:8]:
+                metric = f" for {item.metric}" if item.metric else ""
+                test = f" using {item.test}" if item.test else ""
+                significance = "significant" if item.significant else "not significant"
+                lines.append(
+                    f"- {item.comparison}{metric}{test}: {item.p_value_text} "
+                    f"({significance} at alpha={item.alpha:.2f})"
+                )
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])

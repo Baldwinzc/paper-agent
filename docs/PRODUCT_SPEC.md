@@ -129,6 +129,11 @@ Ablation tables are parsed separately from main results. The workflow stores
 variant-vs-full signed drops and maps component names to likely innovation
 threads, so Method traceability and draft reports can show which contribution is
 supported by which supplied ablation row.
+Sensitivity and statistical-test tables are also parsed as structured evidence:
+the workflow records best parameter values, tested ranges, exact p-values, test
+names, and significance at alpha=0.05. The section writer receives these records
+as an evidence contract and must not invent tuning or statistical claims beyond
+the supplied rows.
 
 ## Phases
 

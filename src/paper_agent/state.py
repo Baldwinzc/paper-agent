@@ -79,12 +79,37 @@ class AblationEvidence(BaseModel):
     supports: list[str] = Field(default_factory=list)
 
 
+class SensitivityEvidence(BaseModel):
+    table_caption: str = ""
+    parameter: str = ""
+    metric: str = ""
+    dataset: str = ""
+    best_parameter_value: str = ""
+    best_metric_value: float = 0.0
+    worst_metric_value: float = 0.0
+    tested_values: list[str] = Field(default_factory=list)
+    higher_is_better: bool = True
+
+
+class StatisticalTestEvidence(BaseModel):
+    table_caption: str = ""
+    comparison: str = ""
+    metric: str = ""
+    test: str = ""
+    p_value: float = 0.0
+    p_value_text: str = ""
+    significant: bool = False
+    alpha: float = 0.05
+
+
 class ExperimentSummary(BaseModel):
     raw_preview: str = ""
     datasets: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
     result_tables: list[ExperimentTableSummary] = Field(default_factory=list)
     ablation_evidence: list[AblationEvidence] = Field(default_factory=list)
+    sensitivity_evidence: list[SensitivityEvidence] = Field(default_factory=list)
+    statistical_tests: list[StatisticalTestEvidence] = Field(default_factory=list)
     observations: list[str] = Field(default_factory=list)
     missing_details: list[str] = Field(default_factory=list)
 

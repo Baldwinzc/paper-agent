@@ -220,6 +220,8 @@ class SectionWriterAgent:
         missing = [self._paper_prose(item).rstrip(".") for item in missing_details]
         result_tables = experiments.result_tables if experiments else []
         ablation_evidence = experiments.ablation_evidence if experiments else []
+        sensitivity_evidence = experiments.sensitivity_evidence if experiments else []
+        statistical_tests = experiments.statistical_tests if experiments else []
 
         if result_tables:
             main_results = (
@@ -275,6 +277,10 @@ class SectionWriterAgent:
         sections = [setup, main_results]
         if ablation_evidence:
             sections.append(self._ablation_evidence_text(ablation_evidence))
+        if sensitivity_evidence:
+            sections.append(self._sensitivity_evidence_text(sensitivity_evidence))
+        if statistical_tests:
+            sections.append(self._statistical_test_text(statistical_tests))
         sections.append(completion)
         return "\n\n".join(sections)
 
@@ -344,6 +350,39 @@ class SectionWriterAgent:
             "### Ablation Evidence\n"
             + "; ".join(sentences)
             + ". These component-level statements are limited to the supplied ablation tables."
+        )
+
+    def _sensitivity_evidence_text(self, sensitivity_evidence) -> str:
+        sentences = []
+        for item in sensitivity_evidence[:4]:
+            metric = f" {item.metric}" if item.metric else ""
+            dataset = f" on {item.dataset}" if item.dataset else ""
+            direction = "highest" if item.higher_is_better else "lowest"
+            tested = ", ".join(item.tested_values[:8])
+            sentences.append(
+                f"{item.parameter} is tested over {tested}; the {direction}{dataset}{metric} "
+                f"is {item.best_metric_value:.3f} at {item.best_parameter_value}"
+            )
+        return (
+            "### Sensitivity Analysis\n"
+            + "; ".join(sentences)
+            + ". These statements are limited to the supplied sensitivity tables."
+        )
+
+    def _statistical_test_text(self, statistical_tests) -> str:
+        sentences = []
+        for item in statistical_tests[:5]:
+            metric = f" for {item.metric}" if item.metric else ""
+            test = f" using {item.test}" if item.test else ""
+            significance = "significant" if item.significant else "not significant"
+            sentences.append(
+                f"{item.comparison}{metric}{test} reports {item.p_value_text} "
+                f"({significance} at alpha={item.alpha:.2f})"
+            )
+        return (
+            "### Statistical Testing\n"
+            + "; ".join(sentences)
+            + ". These claims are copied from the supplied statistical-test evidence."
         )
 
     def _conclusion_text(self, innovations, experiments, result_summary: str) -> str:
@@ -811,6 +850,8 @@ class SectionWriterAgent:
         allowed_numbers = self._allowed_experiment_numbers(experiments)
         result_claims = self._allowed_result_claims(experiments)
         ablation_claims = self._allowed_ablation_claims(experiments)
+        sensitivity_claims = self._allowed_sensitivity_claims(experiments)
+        statistical_claims = self._allowed_statistical_test_claims(experiments)
         rules = [
             "Use only these datasets, metrics, numbers, and grounded claims when writing empirical prose.",
             "Do not introduce absent metrics such as accuracy, AUC, F1, or classification performance unless they are listed as allowed metrics.",
@@ -832,6 +873,8 @@ class SectionWriterAgent:
             "allowed_numbers": allowed_numbers,
             "allowed_result_claims": result_claims,
             "allowed_ablation_claims": ablation_claims,
+            "allowed_sensitivity_claims": sensitivity_claims,
+            "allowed_statistical_test_claims": statistical_claims,
             "missing_details": experiments.missing_details,
             "rules": rules,
         }
@@ -856,6 +899,16 @@ class SectionWriterAgent:
                     f"{item.signed_drop:+.3f}",
                 ]
             )
+        for item in experiments.sensitivity_evidence:
+            sources.extend(
+                [
+                    f"{item.best_metric_value:.3f}",
+                    f"{item.worst_metric_value:.3f}",
+                    *item.tested_values,
+                ]
+            )
+        for item in experiments.statistical_tests:
+            sources.extend([item.p_value_text, f"{item.p_value:.3f}", f"{item.alpha:.2f}"])
         for source in sources:
             numbers.extend(
                 match.group(0).strip()
@@ -879,6 +932,31 @@ class SectionWriterAgent:
                     f"{comparison.signed_improvement:+.3f}; {direction}."
                 )
         return claims[:40]
+
+    def _allowed_sensitivity_claims(self, experiments) -> list[str]:
+        claims: list[str] = []
+        for item in experiments.sensitivity_evidence[:12]:
+            metric = item.metric or "reported metric"
+            dataset = item.dataset or "reported column"
+            direction = "higher is better" if item.higher_is_better else "lower is better"
+            claims.append(
+                f"{item.parameter} sensitivity on {dataset} {metric}: best value "
+                f"{item.best_parameter_value} yields {item.best_metric_value:.3f}; "
+                f"tested values {', '.join(item.tested_values)}; {direction}."
+            )
+        return claims
+
+    def _allowed_statistical_test_claims(self, experiments) -> list[str]:
+        claims: list[str] = []
+        for item in experiments.statistical_tests[:12]:
+            metric = f" for {item.metric}" if item.metric else ""
+            test = f" using {item.test}" if item.test else ""
+            significance = "significant" if item.significant else "not significant"
+            claims.append(
+                f"{item.comparison}{metric}{test}: {item.p_value_text}; "
+                f"{significance} at alpha={item.alpha:.2f}."
+            )
+        return claims
 
     def _allowed_ablation_claims(self, experiments) -> list[str]:
         claims: list[str] = []

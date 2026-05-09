@@ -418,6 +418,27 @@ class ReviewerAgent:
                     *ablation.supports,
                 ]
             )
+        for sensitivity in experiments.sensitivity_evidence:
+            result_values.extend(
+                [
+                    sensitivity.parameter,
+                    sensitivity.best_parameter_value,
+                    f"{sensitivity.best_metric_value:.3f}",
+                    f"{sensitivity.worst_metric_value:.3f}",
+                    *sensitivity.tested_values,
+                ]
+            )
+        for test in experiments.statistical_tests:
+            result_values.extend(
+                [
+                    test.comparison,
+                    test.metric,
+                    test.test,
+                    test.p_value_text,
+                    f"{test.p_value:.3f}",
+                    f"{test.alpha:.2f}",
+                ]
+            )
         return "\n".join(
             [
                 experiments.raw_preview,

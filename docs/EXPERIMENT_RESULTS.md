@@ -67,3 +67,43 @@ lightweight support tag such as `bidirectional hyperedge updates` or
 bounded ablation paragraph and to connect component evidence back to innovation
 traceability. The agent should still avoid claims beyond the exact supplied
 variant rows.
+
+## Sensitivity Analysis
+
+Use a parameter column plus one numeric metric column. Names such as `lambda_rec`,
+`alpha`, `dropout`, or `temperature` are recognized as sensitivity parameters.
+
+```markdown
+## Sensitivity Analysis
+
+Metric: Average C-index. Higher is better.
+
+| lambda_rec | Average C-index |
+|---:|---:|
+| 0.1 | 0.681 |
+| 0.5 | 0.687 |
+| 1.0 | 0.690 |
+| 2.0 | 0.686 |
+```
+
+The analyzer records the tested values, the best parameter value, the best metric
+value, and whether higher or lower is better. The draft can then write a bounded
+sensitivity paragraph without inventing additional tuning details.
+
+## Statistical Tests
+
+Use a table with a comparison column and a `p-value` column. Optional `Metric`
+and `Test` columns are preserved.
+
+```markdown
+## Statistical Testing
+
+| Comparison | Metric | Test | p-value |
+|---|---|---|---:|
+| Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |
+```
+
+The analyzer stores the comparison, metric, test name, exact p-value text, and
+whether the result is significant at `alpha=0.05`. The paper agent will not
+invent p-values, confidence intervals, or statistical tests that are not present
+in the supplied results.

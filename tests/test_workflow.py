@@ -36,6 +36,8 @@ from paper_agent.state import (
     ExperimentComparison,
     ExperimentSummary,
     ExperimentTableSummary,
+    SensitivityEvidence,
+    StatisticalTestEvidence,
 )
 
 
@@ -622,6 +624,56 @@ def test_experiment_analyzer_extracts_ablation_evidence():
     assert any("Ablation evidence includes 4 component comparisons" in item for item in state["experiments"].observations)
 
 
+def test_experiment_analyzer_extracts_sensitivity_and_statistical_tests():
+    raw = """
+    ## Sensitivity Analysis
+
+    Metric: Average C-index.
+
+    | lambda_rec | Average C-index |
+    |---:|---:|
+    | 0.1 | 0.681 |
+    | 0.5 | 0.687 |
+    | 1.0 | 0.690 |
+    | 2.0 | 0.686 |
+
+    ## Statistical Testing
+
+    | Comparison | Metric | Test | p-value |
+    |---|---|---|---:|
+    | Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |
+    """
+
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    sensitivity = state["experiments"].sensitivity_evidence
+    tests = state["experiments"].statistical_tests
+    assert len(sensitivity) == 1
+    assert sensitivity[0].parameter == "lambda_rec"
+    assert sensitivity[0].metric == "C-INDEX"
+    assert sensitivity[0].best_parameter_value == "1.0"
+    assert sensitivity[0].best_metric_value == 0.690
+    assert sensitivity[0].tested_values == ["0.1", "0.5", "1.0", "2.0"]
+    assert len(tests) == 1
+    assert tests[0].comparison == "Hyper-ProtoSurv vs ProtoSurv"
+    assert tests[0].metric == "C-INDEX"
+    assert tests[0].test == "Wilcoxon signed-rank"
+    assert tests[0].p_value_text == "p=0.018"
+    assert tests[0].significant
+    assert state["artifacts"]["experiment_sensitivity_evidence"]
+    assert state["artifacts"]["experiment_statistical_tests"]
+    assert any("Sensitivity analysis for lambda_rec" in item for item in state["experiments"].observations)
+    assert any("Statistical test evidence includes 1 comparisons" in item for item in state["experiments"].observations)
+
+
 def test_section_writer_uses_structured_result_tables():
     raw = """
     | Method | BLCA C-index | BRCA C-index |
@@ -665,6 +717,47 @@ def test_section_writer_uses_structured_result_tables():
         for item in reviewed["artifacts"]["factual_consistency"]
     }
     assert consistency["unsupported_experiment_numbers"]["status"] == "ok"
+
+
+def test_section_writer_uses_sensitivity_and_statistical_evidence():
+    raw = """
+    | Method | BLCA C-index |
+    |---|---:|
+    | ProtoSurv baseline | 0.646 |
+    | Hyper-ProtoSurv ours | 0.671 |
+
+    | lambda_rec | Average C-index |
+    |---:|---:|
+    | 0.5 | 0.687 |
+    | 1.0 | 0.690 |
+
+    | Comparison | Metric | Test | p-value |
+    |---|---|---|---:|
+    | Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |
+    """
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    sections = SectionWriterAgent()._run_fallback(
+        {
+            "request": PaperRequest(project_name="demo", target_venue="TPAMI"),
+            "experiments": state["experiments"],
+            "innovations": [],
+            "artifacts": {},
+        }
+    )
+
+    assert "### Sensitivity Analysis" in sections.experiments
+    assert "lambda_rec is tested over 0.5, 1.0" in sections.experiments
+    assert "### Statistical Testing" in sections.experiments
+    assert "p=0.018" in sections.experiments
 
 
 def test_section_writer_uses_ablation_evidence():
@@ -1944,6 +2037,49 @@ def test_draft_report_includes_ablation_evidence(tmp_path):
     assert "reconstruction regularization" in report
 
 
+def test_draft_report_includes_sensitivity_and_statistical_evidence(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="sensitivity-report-demo", target_venue="TPAMI"),
+        "experiments": ExperimentSummary(
+            sensitivity_evidence=[
+                SensitivityEvidence(
+                    table_caption="Sensitivity Analysis",
+                    parameter="lambda_rec",
+                    dataset="Average",
+                    metric="C-INDEX",
+                    best_parameter_value="1.0",
+                    best_metric_value=0.690,
+                    worst_metric_value=0.681,
+                    tested_values=["0.1", "0.5", "1.0"],
+                )
+            ],
+            statistical_tests=[
+                StatisticalTestEvidence(
+                    table_caption="Statistical Testing",
+                    comparison="Hyper-ProtoSurv vs ProtoSurv",
+                    metric="C-INDEX",
+                    test="Wilcoxon signed-rank",
+                    p_value=0.018,
+                    p_value_text="p=0.018",
+                    significant=True,
+                )
+            ],
+        ),
+        "latex_project_dir": tmp_path,
+        "artifacts": {},
+    }
+
+    DraftReportAgent().run(state)
+
+    report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
+    assert "## Sensitivity Evidence" in report
+    assert "lambda_rec" in report
+    assert "best value 1.0 -> 0.690" in report
+    assert "## Statistical Test Evidence" in report
+    assert "Hyper-ProtoSurv vs ProtoSurv" in report
+    assert "p=0.018" in report
+
+
 def test_draft_report_includes_llm_section_successes(tmp_path):
     state = {
         "request": PaperRequest(project_name="llm-section-report-demo", target_venue="TPAMI"),
@@ -2199,6 +2335,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "reference_resolution_trace": [{"key": "paper", "status": "resolved"}],
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
+            "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
+            "experiment_statistical_tests": [{"comparison": "A vs B"}],
             "submission_readiness": {"overall_score": 82, "status": "needs_author_pass"},
             "submission_package": {
                 "status": "needs_attention",
@@ -2251,6 +2389,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
     assert summary["experiment_result_tables"] == 1
+    assert summary["experiment_sensitivity_evidence"] == 1
+    assert summary["experiment_statistical_tests"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
     assert summary["section_writer_llm_successes"] == ["abstract"]
     assert summary["section_writer_repaired_sections"] == ["abstract"]
