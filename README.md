@@ -147,7 +147,10 @@ python -m paper_agent.cli llm-draft-smoke `
 This command uses the configured text model for section drafting and fails if
 fewer than four sections are actually written by the LLM. It keeps template and
 reference network calls offline by default, so the check isolates whether the
-paper-writing path itself can call the model.
+paper-writing path itself can call the model. The command writes both
+`RUN_SUMMARY.json` for automation and `ACCEPTANCE_REPORT.md` for a concise
+human-readable pass/fail view of the input contract, LLM-written sections,
+evidence checks, LaTeX package status, compile check, and output paths.
 
 ## Acceptance Flow
 
@@ -159,6 +162,8 @@ Every meaningful paper-agent test should exercise the full paper-writing path:
 4. Input experiment results when the draft needs result claims.
 5. Output a paper draft, LaTeX project, quality report, run summary, and optional
    Overleaf zip.
+6. For configured-LLM smoke runs, output an acceptance report that states whether
+   the run passed the project-level contract.
 
 Module-level tests are still useful for debugging, but they do not count as a
 paper-generation acceptance test unless this input-output contract is covered.

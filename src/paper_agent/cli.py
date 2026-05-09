@@ -366,8 +366,18 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         zip_path = _write_latex_zip_and_refresh(state, Path(args.zip))
         print(f"Overleaf zip written to {zip_path}")
 
-    summary_path = _write_run_summary(state, output_dir / "RUN_SUMMARY.json", markdown_path)
+    summary = _build_run_summary(state, markdown_path)
+    acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    summary["outputs"]["acceptance_report_path"] = str(acceptance_report_path)
+    summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
+    _write_acceptance_report(
+        summary,
+        acceptance_report_path,
+        min_llm_sections=args.min_llm_sections,
+        require_llm_self_review=args.include_llm_self_review,
+    )
     print(f"Run summary written to {summary_path}")
+    print(f"Acceptance report written to {acceptance_report_path}")
 
     artifacts = state.get("artifacts", {})
     successes = artifacts.get("section_writer_llm_successes", [])
@@ -496,12 +506,233 @@ def _project_root() -> Path:
 
 
 def _write_run_summary(state: dict, summary_path: Path, markdown_path: Path | None = None) -> Path:
+    return _write_run_summary_data(_build_run_summary(state, markdown_path), summary_path)
+
+
+def _write_run_summary_data(summary: dict, summary_path: Path) -> Path:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
-        json.dumps(_build_run_summary(state, markdown_path), indent=2, ensure_ascii=False),
+        json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return summary_path
+
+
+def _write_acceptance_report(
+    summary: dict,
+    report_path: Path,
+    *,
+    min_llm_sections: int = 4,
+    require_llm_self_review: bool = False,
+) -> Path:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        _build_acceptance_report(
+            summary,
+            min_llm_sections=min_llm_sections,
+            require_llm_self_review=require_llm_self_review,
+        ),
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _build_acceptance_report(
+    summary: dict,
+    *,
+    min_llm_sections: int = 4,
+    require_llm_self_review: bool = False,
+) -> str:
+    checks = _acceptance_checks(
+        summary,
+        min_llm_sections=min_llm_sections,
+        require_llm_self_review=require_llm_self_review,
+    )
+    failed = [check for check in checks if check["status"] == "FAIL"]
+    warnings = [check for check in checks if check["status"] == "WARN"]
+    if failed:
+        overall = "FAIL"
+    elif warnings:
+        overall = "PASS_WITH_WARNINGS"
+    else:
+        overall = "PASS"
+
+    inputs = summary.get("inputs", {})
+    outputs = summary.get("outputs", {})
+    lines = [
+        "# Paper Agent Acceptance Report",
+        "",
+        f"- Overall status: {overall}",
+        f"- Project: {summary.get('project_name', '')}",
+        f"- Target venue: {summary.get('target_venue', '')}",
+        "",
+        "## Input Contract",
+        "",
+        f"- Code path: {inputs.get('code_path', '')}",
+        f"- Baseline PDF: {inputs.get('baseline_pdf_path', '')}",
+        f"- Experiment results: {inputs.get('experiment_results_path', '') or inputs.get('experiment_results_source', '')}",
+        f"- Template source: {summary.get('template_source', '')}",
+        "",
+        "## Acceptance Checks",
+        "",
+        "| Check | Status | Detail |",
+        "|---|---|---|",
+    ]
+    for check in checks:
+        lines.append(
+            f"| {check['name']} | {check['status']} | {check['detail']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Outputs",
+            "",
+            f"- Markdown draft: {outputs.get('markdown', '')}",
+            f"- LaTeX project: {outputs.get('latex_project_dir', '')}",
+            f"- Main TeX: {outputs.get('latex_output_path', '')}",
+            f"- Overleaf zip: {outputs.get('latex_zip_path', '')}",
+            f"- Draft report: {outputs.get('draft_report_path', '')}",
+            f"- Figure/table plan: {outputs.get('presentation_plan_path', '')}",
+        ]
+    )
+    if failed:
+        lines.extend(
+            [
+                "",
+                "## Blocking Items",
+                "",
+                *[f"- {check['name']}: {check['detail']}" for check in failed],
+            ]
+        )
+    if warnings:
+        lines.extend(
+            [
+                "",
+                "## Warnings",
+                "",
+                *[f"- {check['name']}: {check['detail']}" for check in warnings],
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _acceptance_checks(
+    summary: dict,
+    *,
+    min_llm_sections: int,
+    require_llm_self_review: bool,
+) -> list[dict[str, str]]:
+    inputs = summary.get("inputs", {})
+    outputs = summary.get("outputs", {})
+    successes = summary.get("section_writer_llm_successes", [])
+    attempted = summary.get("section_writer_llm_attempted_sections", [])
+    section_errors = summary.get("section_writer_section_errors", {})
+    compile_status = summary.get("submission_compile_status", "not_run")
+    compile_tool = summary.get("submission_compile_tool", "")
+    compile_mode = summary.get("submission_compile_mode", "")
+    checks = [
+        _acceptance_item(
+            "Input contract",
+            bool(inputs.get("code_path") and inputs.get("baseline_pdf_path") and inputs.get("target_venue")),
+            (
+                f"code={inputs.get('code_path', '')}; baseline={inputs.get('baseline_pdf_path', '')}; "
+                f"venue={inputs.get('target_venue', '')}"
+            ),
+        ),
+        _acceptance_item(
+            "Experiment input",
+            bool(inputs.get("experiment_results_provided")),
+            f"source={inputs.get('experiment_results_source', 'none')}; path={inputs.get('experiment_results_path', '')}",
+        ),
+        _acceptance_item(
+            "LLM section drafting",
+            len(successes) >= min_llm_sections,
+            f"{len(successes)}/{len(attempted) or '?'} sections succeeded; required >= {min_llm_sections}; successes={', '.join(successes) or 'none'}",
+        ),
+        _acceptance_item(
+            "LLM section errors",
+            not section_errors,
+            "none" if not section_errors else "; ".join(f"{key}: {value}" for key, value in section_errors.items()),
+        ),
+        _acceptance_item(
+            "Evidence guard",
+            summary.get("evidence_guard_findings", 0) == 0,
+            f"{summary.get('evidence_guard_findings', 0)} findings",
+        ),
+        _acceptance_item(
+            "Reviewer",
+            summary.get("review_findings", 0) == 0,
+            f"{summary.get('review_findings', 0)} findings",
+        ),
+        _acceptance_item(
+            "Submission readiness",
+            summary.get("submission_readiness_status") == "reviewable",
+            f"{summary.get('submission_readiness_status', 'not run')} ({summary.get('submission_readiness_score', 0)}/100)",
+            warning_status="WARN",
+        ),
+        _acceptance_item(
+            "Submission package",
+            summary.get("submission_package_status") == "valid"
+            and summary.get("submission_package_errors", 0) == 0,
+            (
+                f"{summary.get('submission_package_status', 'not run')}; "
+                f"errors={summary.get('submission_package_errors', 0)}; "
+                f"warnings={summary.get('submission_package_warnings', 0)}"
+            ),
+        ),
+        _compile_acceptance_item(compile_status, compile_tool, compile_mode),
+        _acceptance_item(
+            "Generated figures",
+            summary.get("generated_figures", 0) >= min(1, summary.get("presentation_figures", 0)),
+            f"{summary.get('generated_figures', 0)}/{summary.get('presentation_figures', 0)} generated",
+            warning_status="WARN",
+        ),
+        _acceptance_item(
+            "Output artifacts",
+            bool(outputs.get("markdown") and outputs.get("latex_output_path") and outputs.get("draft_report_path")),
+            (
+                f"markdown={outputs.get('markdown', '')}; "
+                f"main_tex={outputs.get('latex_output_path', '')}; "
+                f"draft_report={outputs.get('draft_report_path', '')}"
+            ),
+        ),
+    ]
+    if require_llm_self_review:
+        checks.append(
+            _acceptance_item(
+                "LLM self-review",
+                summary.get("llm_self_review_mode") == "llm",
+                f"mode={summary.get('llm_self_review_mode', 'not run')}; unsupported_claims={summary.get('llm_unsupported_claims', 0)}",
+            )
+        )
+    return checks
+
+
+def _acceptance_item(
+    name: str,
+    passed: bool,
+    detail: str,
+    *,
+    warning_status: str = "FAIL",
+) -> dict[str, str]:
+    return {
+        "name": name,
+        "status": "PASS" if passed else warning_status,
+        "detail": _table_safe(str(detail)),
+    }
+
+
+def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
+    detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
+    if status == "passed":
+        return _acceptance_item("LaTeX compile", True, detail)
+    if status in {"disabled", "tool_unavailable", "not_run", ""}:
+        return _acceptance_item("LaTeX compile", False, detail, warning_status="WARN")
+    return _acceptance_item("LaTeX compile", False, detail)
+
+
+def _table_safe(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
@@ -512,6 +743,8 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     readiness = artifacts.get("submission_readiness", {})
     code_baseline_comparison = artifacts.get("code_baseline_comparison", {})
     submission_package = artifacts.get("submission_package", {})
+    submission_checks = submission_package.get("checks", {}) if isinstance(submission_package, dict) else {}
+    compile_check = submission_checks.get("compile", {}) if isinstance(submission_checks, dict) else {}
     presentation_plan = artifacts.get("presentation_plan", {})
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
@@ -541,6 +774,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "submission_package_status": submission_package.get("status", "not run"),
         "submission_package_errors": len(submission_package.get("errors", [])),
         "submission_package_warnings": len(submission_package.get("warnings", [])),
+        "submission_compile_mode": compile_check.get("mode", "not_run"),
+        "submission_compile_status": compile_check.get("status", "not_run"),
+        "submission_compile_tool": compile_check.get("tool", ""),
         "presentation_figures": len(presentation_plan.get("figures", [])),
         "generated_figures": len(artifacts.get("generated_figures", [])),
         "presentation_tables": len(presentation_plan.get("tables", [])),

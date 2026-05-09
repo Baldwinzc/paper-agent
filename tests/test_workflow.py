@@ -2204,6 +2204,13 @@ def test_run_summary_reports_core_metrics(tmp_path):
                 "status": "needs_attention",
                 "errors": ["missing main.tex"],
                 "warnings": ["compile unavailable"],
+                "checks": {
+                    "compile": {
+                        "mode": "compile",
+                        "status": "failed",
+                        "tool": "tectonic.exe",
+                    }
+                },
             },
             "presentation_plan": {
                 "figures": [{"label": "fig:method-overview"}],
@@ -2232,6 +2239,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["submission_package_status"] == "needs_attention"
     assert summary["submission_package_errors"] == 1
     assert summary["submission_package_warnings"] == 1
+    assert summary["submission_compile_status"] == "failed"
+    assert summary["submission_compile_tool"] == "tectonic.exe"
     assert summary["presentation_figures"] == 1
     assert summary["generated_figures"] == 1
     assert summary["presentation_tables"] == 1
@@ -2248,6 +2257,104 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["section_writer_section_errors"] == {"method": "blocked"}
     assert summary["outputs"]["markdown"].endswith("draft.md")
     assert summary["outputs"]["presentation_plan_path"].endswith("FIGURE_TABLE_PLAN.md")
+
+
+def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
+    summary = {
+        "project_name": "hyper-protosurv",
+        "target_venue": "TPAMI",
+        "inputs": {
+            "code_path": "D:/code/agent/example/code/hyper-protosurv",
+            "baseline_pdf_path": "D:/code/agent/example/baseline/baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+            "experiment_results_path": "examples/hyper_protosurv_mock_experiments.md",
+        },
+        "template_source": "built-in",
+        "section_writer_llm_attempted_sections": [
+            "abstract",
+            "introduction",
+            "related_work",
+            "method",
+            "experiments",
+            "conclusion",
+        ],
+        "section_writer_llm_successes": [
+            "abstract",
+            "introduction",
+            "related_work",
+            "method",
+            "experiments",
+            "conclusion",
+        ],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 0,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 100,
+        "submission_package_status": "valid",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 0,
+        "submission_compile_mode": "compile",
+        "submission_compile_status": "passed",
+        "submission_compile_tool": "tectonic.exe",
+        "presentation_figures": 4,
+        "generated_figures": 4,
+        "outputs": {
+            "markdown": "outputs/llm-draft-smoke/draft.md",
+            "latex_project_dir": "outputs/hyper-protosurv-llm-smoke",
+            "latex_output_path": "outputs/hyper-protosurv-llm-smoke/main.tex",
+            "latex_zip_path": "outputs/llm-draft-smoke-overleaf.zip",
+            "draft_report_path": "outputs/hyper-protosurv-llm-smoke/DRAFT_REPORT.md",
+            "presentation_plan_path": "outputs/hyper-protosurv-llm-smoke/FIGURE_TABLE_PLAN.md",
+        },
+    }
+
+    report_path = cli_module._write_acceptance_report(
+        summary,
+        tmp_path / "ACCEPTANCE_REPORT.md",
+        min_llm_sections=4,
+    )
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "- Overall status: PASS" in report
+    assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
+    assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report
+    assert "outputs/hyper-protosurv-llm-smoke/main.tex" in report
+
+
+def test_acceptance_report_marks_disabled_compile_as_warning():
+    summary = {
+        "inputs": {
+            "code_path": "code",
+            "baseline_pdf_path": "baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+        },
+        "section_writer_llm_attempted_sections": ["abstract", "method"],
+        "section_writer_llm_successes": ["abstract", "method"],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 0,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 95,
+        "submission_package_status": "valid",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 0,
+        "submission_compile_mode": "not_run",
+        "submission_compile_status": "disabled",
+        "submission_compile_tool": "tectonic.exe",
+        "presentation_figures": 0,
+        "generated_figures": 0,
+        "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
+    }
+
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=2)
+
+    assert "- Overall status: PASS_WITH_WARNINGS" in report
+    assert "| LaTeX compile | WARN | status=disabled; tool=tectonic.exe; mode=not_run |" in report
 
 
 def test_tcga_cohort_summary_uses_dataset_csv_without_performance_claims(tmp_path):
@@ -2944,11 +3051,15 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
 
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "LLM draft smoke passed." in output
+    assert "Acceptance report written to" in output
     assert captured["llm_available"]
     assert captured["request"].skip_llm_self_review
     assert summary["section_writer_llm_successes"] == ["abstract", "method"]
     assert summary["inputs"]["experiment_results_source"] == "file"
+    assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
+    assert "# Paper Agent Acceptance Report" in acceptance_report
     assert zip_path.exists()
 
 
