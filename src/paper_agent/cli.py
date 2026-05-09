@@ -59,6 +59,39 @@ def main() -> None:
     )
     draft.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
     draft.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    draft_network = draft.add_mutually_exclusive_group()
+    draft_network.add_argument(
+        "--online",
+        action="store_true",
+        help="Allow template/reference/related-work network calls for this draft run.",
+    )
+    draft_network.add_argument(
+        "--offline",
+        action="store_true",
+        help="Disable template/reference/related-work network calls for this draft run.",
+    )
+    draft_llm = draft.add_mutually_exclusive_group()
+    draft_llm.add_argument(
+        "--allow-llm",
+        action="store_true",
+        help="Allow configured LLM section calls even if PAPER_AGENT_DISABLE_LLM was set.",
+    )
+    draft_llm.add_argument(
+        "--disable-llm",
+        action="store_true",
+        help="Force deterministic local section drafting for this run.",
+    )
+    draft.add_argument(
+        "--compile-latex",
+        action="store_true",
+        help="Run the local LaTeX compiler during submission validation.",
+    )
+    draft.add_argument(
+        "--min-llm-sections",
+        type=int,
+        default=0,
+        help="Fail the draft command unless at least this many sections are written by the LLM.",
+    )
     draft.add_argument(
         "--skip-llm-self-review",
         action="store_true",
@@ -93,6 +126,11 @@ def main() -> None:
         "--online",
         action="store_true",
         help="Allow template/reference network calls. The default sample run is offline.",
+    )
+    sample.add_argument(
+        "--compile-latex",
+        action="store_true",
+        help="Run the local LaTeX compiler during submission validation.",
     )
     sample.add_argument(
         "--allow-llm",
@@ -130,6 +168,11 @@ def main() -> None:
         "--online",
         action="store_true",
         help="Allow template/reference network calls. The default smoke run keeps those offline.",
+    )
+    llm_draft.add_argument(
+        "--compile-latex",
+        action="store_true",
+        help="Run the local LaTeX compiler during submission validation.",
     )
     args = parser.parse_args()
 
@@ -182,6 +225,9 @@ def main() -> None:
         if acceptance_report_path:
             print(f"Acceptance report written to {acceptance_report_path}")
     elif args.command == "draft":
+        network_mode = _configure_network_mode(args)
+        llm_mode = _configure_llm_mode(args)
+        compile_latex_requested = _configure_latex_compile(args)
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
         request = PaperRequest(
@@ -196,6 +242,13 @@ def main() -> None:
             skip_llm_self_review=args.skip_llm_self_review,
         )
         state = PaperWorkflow().run(request)
+        _record_runtime_modes(
+            state,
+            network_mode=network_mode,
+            llm_mode=llm_mode,
+            compile_latex_requested=compile_latex_requested,
+            min_llm_sections=args.min_llm_sections,
+        )
         state.setdefault("artifacts", {})["experiment_results_source"] = "file"
         state["artifacts"]["experiment_results_path"] = str(Path(args.experiment_results))
         markdown_path = None
@@ -215,6 +268,8 @@ def main() -> None:
         print(f"Template source: {state['venue_template'].template_source}")
         print(f"Bibliography entries: {len(state.get('bibliography', []))}")
         print(f"LaTeX tables: {state.get('artifacts', {}).get('latex_table_count', 0)}")
+        print(f"Network mode: {network_mode}")
+        print(f"LLM mode: {llm_mode}")
         print(f"LLM self-review: {_llm_self_review_mode(state)}")
         print(f"LaTeX written to {state['latex_output_path']}")
         if args.zip:
@@ -225,12 +280,18 @@ def main() -> None:
             summary_path=Path(args.summary) if args.summary else None,
             markdown_path=markdown_path,
             acceptance_report_path=Path(args.acceptance_report) if args.acceptance_report else None,
-            min_llm_sections=0,
+            min_llm_sections=args.min_llm_sections,
         )
         if summary_path:
             print(f"Run summary written to {summary_path}")
         if acceptance_report_path:
             print(f"Acceptance report written to {acceptance_report_path}")
+        successes = state.get("artifacts", {}).get("section_writer_llm_successes", [])
+        if len(successes) < args.min_llm_sections:
+            raise SystemExit(
+                f"Draft failed: expected at least {args.min_llm_sections} LLM-written sections, "
+                f"got {len(successes)}."
+            )
     elif args.command == "sample-hyper-protosurv":
         _run_hyper_protosurv_sample(args)
     elif args.command == "llm-ping":
@@ -269,6 +330,61 @@ def _llm_self_review_mode(state: dict) -> str:
     return str(state.get("artifacts", {}).get("llm_self_review", {}).get("mode", "not run"))
 
 
+NETWORK_DISABLE_ENV_VARS = (
+    "PAPER_AGENT_DISABLE_TEMPLATE_FETCH",
+    "PAPER_AGENT_DISABLE_REFERENCE_RESOLVE",
+    "PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY",
+)
+
+
+def _configure_network_mode(args: argparse.Namespace, *, default_offline: bool = False) -> str:
+    if getattr(args, "online", False):
+        for name in NETWORK_DISABLE_ENV_VARS:
+            os.environ[name] = "0"
+        return "online"
+    if getattr(args, "offline", False) or default_offline:
+        for name in NETWORK_DISABLE_ENV_VARS:
+            os.environ[name] = "1"
+        return "offline"
+    return "environment"
+
+
+def _configure_llm_mode(args: argparse.Namespace, *, default_disabled: bool = False) -> str:
+    if getattr(args, "allow_llm", False):
+        os.environ["PAPER_AGENT_DISABLE_LLM"] = "0"
+        return "enabled"
+    if getattr(args, "disable_llm", False) or default_disabled:
+        os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
+        return "disabled"
+    return "environment"
+
+
+def _configure_latex_compile(args: argparse.Namespace) -> bool:
+    if getattr(args, "compile_latex", False):
+        os.environ["PAPER_AGENT_RUN_LATEX_COMPILE"] = "1"
+        return True
+    return _truthy_env("PAPER_AGENT_RUN_LATEX_COMPILE")
+
+
+def _record_runtime_modes(
+    state: dict,
+    *,
+    network_mode: str,
+    llm_mode: str,
+    compile_latex_requested: bool,
+    min_llm_sections: int = 0,
+) -> None:
+    artifacts = state.setdefault("artifacts", {})
+    artifacts["runtime_network_mode"] = network_mode
+    artifacts["runtime_llm_mode"] = llm_mode
+    artifacts["latex_compile_requested"] = compile_latex_requested
+    artifacts["min_llm_sections"] = min_llm_sections
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _refresh_submission_artifacts(state: dict) -> None:
     SubmissionPackageValidatorAgent().run(state)
     SubmissionReadinessAgent().run(state)
@@ -283,12 +399,9 @@ def _write_latex_zip_and_refresh(state: dict, zip_path: Path) -> Path:
 
 
 def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
-    if not args.allow_llm:
-        os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
-    if not args.online:
-        os.environ["PAPER_AGENT_DISABLE_TEMPLATE_FETCH"] = "1"
-        os.environ["PAPER_AGENT_DISABLE_REFERENCE_RESOLVE"] = "1"
-        os.environ["PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY"] = "1"
+    llm_mode = _configure_llm_mode(args, default_disabled=True)
+    network_mode = _configure_network_mode(args, default_offline=True)
+    compile_latex_requested = _configure_latex_compile(args)
 
     example_root = Path(args.example_root)
     baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
@@ -331,6 +444,12 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         skip_llm_self_review=not args.allow_llm,
     )
     state = PaperWorkflow().run(request)
+    _record_runtime_modes(
+        state,
+        network_mode=network_mode,
+        llm_mode=llm_mode,
+        compile_latex_requested=compile_latex_requested,
+    )
     state.setdefault("artifacts", {})["experiment_results_source"] = experiment_results_source
     state["artifacts"]["experiment_results_path"] = experiment_results_path
 
@@ -355,21 +474,20 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     print(f"Review findings: {len(state.get('review_findings', []))}")
     print(f"Template source: {state['venue_template'].template_source}")
     print(f"Bibliography entries: {len(state.get('bibliography', []))}")
+    print(f"Network mode: {network_mode}")
+    print(f"LLM mode: {llm_mode}")
     print(f"LLM self-review: {_llm_self_review_mode(state)}")
 
 
 def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
+    network_mode = _configure_network_mode(args, default_offline=True)
+    compile_latex_requested = _configure_latex_compile(args)
     config = load_llm_config()
     if not config.configured:
         raise SystemExit(
             "LLM draft smoke requires a configured LLM. Set DEEPSEEK_API_KEY or "
             "OPENAI_API_KEY and TEXT_MODEL, and do not set PAPER_AGENT_DISABLE_LLM=1."
         )
-    if not args.online:
-        os.environ["PAPER_AGENT_DISABLE_TEMPLATE_FETCH"] = "1"
-        os.environ["PAPER_AGENT_DISABLE_REFERENCE_RESOLVE"] = "1"
-        os.environ["PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY"] = "1"
-
     example_root = Path(args.example_root)
     baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
     code_path = example_root / "code" / "hyper-protosurv"
@@ -395,6 +513,13 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         skip_llm_self_review=not args.include_llm_self_review,
     )
     state = PaperWorkflow(llm_client=LLMClient(config)).run(request)
+    _record_runtime_modes(
+        state,
+        network_mode=network_mode,
+        llm_mode="required",
+        compile_latex_requested=compile_latex_requested,
+        min_llm_sections=args.min_llm_sections,
+    )
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
 
@@ -669,6 +794,9 @@ def _build_acceptance_report(
         f"- Baseline PDF: {inputs.get('baseline_pdf_path', '')}",
         f"- Experiment results: {inputs.get('experiment_results_path', '') or inputs.get('experiment_results_source', '')}",
         f"- Template source: {summary.get('template_source', '')}",
+        f"- Network mode: {inputs.get('network_mode', '')}",
+        f"- LLM mode: {inputs.get('llm_mode', '')}",
+        f"- LaTeX compile requested: {inputs.get('latex_compile_requested', False)}",
         "",
         "## Experiment Evidence Coverage",
         "",
@@ -893,6 +1021,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "keywords": list(getattr(request, "keywords", []) or []),
             "template_zip_path": getattr(request, "template_zip_path", "") or "",
             "template_dir_path": getattr(request, "template_dir_path", "") or "",
+            "network_mode": artifacts.get("runtime_network_mode", "environment"),
+            "llm_mode": artifacts.get("runtime_llm_mode", "environment"),
+            "latex_compile_requested": bool(
+                artifacts.get("latex_compile_requested", _truthy_env("PAPER_AGENT_RUN_LATEX_COMPILE"))
+            ),
+            "min_llm_sections": artifacts.get("min_llm_sections", 0),
         },
         "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
         "llm_self_review_mode": llm_review.get("mode", "not run"),

@@ -141,7 +141,8 @@ $env:PYTHONPATH="D:\code\agent\paper-agent\src"
 python -m paper_agent.cli llm-draft-smoke `
   --example-root D:\code\agent\example `
   --experiment-results examples\hyper_protosurv_mock_experiments.md `
-  --output-dir outputs\llm-draft-smoke
+  --output-dir outputs\llm-draft-smoke `
+  --compile-latex
 ```
 
 This command uses the configured text model for section drafting and fails if
@@ -185,7 +186,11 @@ python -m paper_agent.cli draft `
   --output outputs\hyper-protosurv-tcga\draft.md `
   --zip outputs\hyper-protosurv-tcga-overleaf.zip `
   --summary outputs\hyper-protosurv-tcga\RUN_SUMMARY.json `
-  --acceptance-report outputs\hyper-protosurv-tcga\ACCEPTANCE_REPORT.md
+  --acceptance-report outputs\hyper-protosurv-tcga\ACCEPTANCE_REPORT.md `
+  --online `
+  --allow-llm `
+  --compile-latex `
+  --min-llm-sections 4
 ```
 
 For the lower-level `draft` command, `--experiment-results` should point to a
@@ -204,6 +209,14 @@ acceptance report by default: next to the summary when `--summary` is provided,
 otherwise next to the draft Markdown. Override the path with
 `--acceptance-report`.
 
+Use `--online` or `--offline` to explicitly choose whether template fetching,
+reference resolution, and related-work discovery can use network calls. Use
+`--allow-llm` or `--disable-llm` to override the local LLM environment for a
+single run. `--compile-latex` enables the local LaTeX compiler, and
+`--min-llm-sections N` turns a normal draft run into a stricter acceptance run
+that fails unless at least `N` sections were actually written by the configured
+model.
+
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
 the final second-pass reviewer to call the configured model. The CLI maps this
 to the request-level `skip_llm_self_review` flag, so API callers can pass the
@@ -215,16 +228,19 @@ To run the local TCGA showcase with complete synthetic result evidence instead
 of cohort metadata only:
 
 ```powershell
-$env:PAPER_AGENT_RUN_LATEX_COMPILE="1"
 python -m paper_agent.cli sample-hyper-protosurv `
   --example-root D:\code\agent\example `
   --experiment-results examples\hyper_protosurv_mock_experiments.md `
   --output-dir outputs\hyper-protosurv-tcga-mock `
-  --zip outputs\hyper-protosurv-tcga-mock-overleaf.zip
+  --zip outputs\hyper-protosurv-tcga-mock-overleaf.zip `
+  --compile-latex
 ```
 
 This should parse main result tables, ablations, sensitivity analysis, and
 statistical tests. It is a pipeline demonstration, not scientific evidence.
+If you use the synthetic mock file with `--allow-llm`, keep
+`--skip-llm-self-review` for a pipeline demonstration; otherwise the LLM reviewer
+may correctly flag mock performance claims as unsupported for real submission.
 
 Use a manually downloaded official template when automatic fetching is blocked:
 

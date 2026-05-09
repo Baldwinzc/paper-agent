@@ -3262,6 +3262,11 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
     class FakeWorkflow:
         def run(self, request):
             captured["request"] = request
+            captured["disable_template_fetch"] = os.getenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH")
+            captured["disable_reference_resolve"] = os.getenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE")
+            captured["disable_related_work_discovery"] = os.getenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY")
+            captured["disable_llm"] = os.getenv("PAPER_AGENT_DISABLE_LLM")
+            captured["compile_latex"] = os.getenv("PAPER_AGENT_RUN_LATEX_COMPILE")
             return {
                 "request": request,
                 "final_markdown": "# Draft",
@@ -3316,6 +3321,9 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
             str(markdown_path),
             "--summary",
             str(summary_path),
+            "--offline",
+            "--disable-llm",
+            "--compile-latex",
         ],
     )
 
@@ -3327,8 +3335,91 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
     assert "Acceptance report written to" in output
     assert markdown_path.read_text(encoding="utf-8") == "# Draft"
     assert captured["request"].project_name == "hyper-protosurv-tcga"
+    assert captured["disable_template_fetch"] == "1"
+    assert captured["disable_reference_resolve"] == "1"
+    assert captured["disable_related_work_discovery"] == "1"
+    assert captured["disable_llm"] == "1"
+    assert captured["compile_latex"] == "1"
+    assert summary["inputs"]["network_mode"] == "offline"
+    assert summary["inputs"]["llm_mode"] == "disabled"
+    assert summary["inputs"]["latex_compile_requested"]
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
     assert "- Overall status: PASS" in acceptance_report
+
+
+def test_cli_draft_enforces_min_llm_sections(monkeypatch, tmp_path):
+    baseline_dir = tmp_path / "baseline"
+    code_dir = tmp_path / "code"
+    output_dir = tmp_path / "out"
+    latex_dir = tmp_path / "latex"
+    baseline_dir.mkdir()
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (code_dir / "train.py").write_text("class HyperProtoSurv: pass\n", encoding="utf-8")
+    experiment_path = tmp_path / "tcga_results.md"
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| baseline | 0.646 |\n"
+        "| ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+
+    class FakeWorkflow:
+        def run(self, request):
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "partial_llm",
+                    "section_writer_llm_attempted_sections": ["abstract", "method"],
+                    "section_writer_llm_successes": ["abstract"],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "draft",
+            "--project-name",
+            "hyper-protosurv-tcga",
+            "--target-venue",
+            "TPAMI",
+            "--baseline",
+            str(baseline_dir),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--output",
+            str(output_dir / "draft.md"),
+            "--allow-llm",
+            "--min-llm-sections",
+            "2",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "expected at least 2 LLM-written sections" in str(exc)
+    else:
+        raise AssertionError("Expected draft command to fail when LLM section count is too low.")
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "| LLM section drafting | FAIL | 1/2 sections succeeded; required >= 2" in acceptance_report
 
 
 def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_path, capsys):
