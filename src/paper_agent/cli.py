@@ -568,6 +568,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             [],
         ),
         "section_writer_llm_successes": artifacts.get("section_writer_llm_successes", []),
+        "section_writer_repaired_sections": artifacts.get("section_writer_repaired_sections", []),
         "section_writer_section_errors": artifacts.get("section_writer_section_errors", {}),
         "outputs": {
             "markdown": str(markdown_path) if markdown_path else "",

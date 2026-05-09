@@ -1951,6 +1951,7 @@ def test_draft_report_includes_llm_section_successes(tmp_path):
         "artifacts": {
             "section_writer_mode": "partial_llm",
             "section_writer_llm_successes": ["abstract", "method"],
+            "section_writer_repaired_sections": ["method"],
         },
     }
 
@@ -1960,6 +1961,7 @@ def test_draft_report_includes_llm_section_successes(tmp_path):
     assert "- LLM-written sections: 2" in report
     assert "## LLM Section Drafting" in report
     assert "Successful sections: abstract, method" in report
+    assert "Repaired sections: method" in report
 
 
 def test_draft_report_includes_baseline_evidence(tmp_path):
@@ -2190,6 +2192,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "section_writer_mode": "fallback",
             "section_writer_llm_attempted_sections": ["abstract", "method"],
             "section_writer_llm_successes": ["abstract"],
+            "section_writer_repaired_sections": ["abstract"],
             "section_writer_section_errors": {"method": "blocked"},
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
@@ -2241,6 +2244,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["experiment_result_tables"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
     assert summary["section_writer_llm_successes"] == ["abstract"]
+    assert summary["section_writer_repaired_sections"] == ["abstract"]
     assert summary["section_writer_section_errors"] == {"method": "blocked"}
     assert summary["outputs"]["markdown"].endswith("draft.md")
     assert summary["outputs"]["presentation_plan_path"].endswith("FIGURE_TABLE_PLAN.md")
@@ -2381,6 +2385,105 @@ def test_llm_section_writer_records_successful_sections():
         "experiments",
         "conclusion",
     ]
+
+
+def test_llm_section_writer_repairs_rejected_method_once():
+    client = FakeSequenceLLMClient(
+        [
+            "A cautious abstract.",
+            "A cautious introduction.",
+            "A cautious related work section.",
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The baseline uses online prototypes, and the proposed method replaces "
+                "the baseline prototype bank with offline OT prototypes."
+            ),
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The proposed method constructs an offline optimal-transport prototype geometry "
+                "from patch features and uses it as the scaffold for survival representation learning."
+            ),
+            "A cautious experiments section.",
+            "A cautious conclusion.",
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=["data_preparation/hypergraph.py:20"],
+            )
+        ],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client).run(state)
+
+    assert state["artifacts"]["section_writer_mode"] == "llm"
+    assert state["artifacts"]["section_writer_repaired_sections"] == ["method"]
+    assert "method" not in state["artifacts"].get("section_writer_section_errors", {})
+    assert "replaces" not in state["sections"].method
+    assert "offline optimal-transport prototype geometry" in state["sections"].method
+    assert len(client.calls) == 7
+    repair_payload = json.loads(client.calls[4]["messages"][1].content)
+    assert repair_payload["task"] == "Repair the rejected method section."
+    assert "code/baseline differences" in repair_payload["validation_error"]
+    assert "Present the proposed computation as a standalone method." in repair_payload["repair_rules"]
+
+
+def test_llm_section_writer_repairs_method_omitted_innovation():
+    client = FakeSequenceLLMClient(
+        [
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The proposed method constructs optimal-transport prototypes from patch features."
+            ),
+            (
+                "### Adaptive Prototype Geometry\n"
+                "The proposed method constructs optimal-transport prototypes from patch features.\n\n"
+                "### Minimal Survival-Reconstruction Objective\n"
+                "The training objective combines Cox survival prediction with reconstruction evidence "
+                "and leaves legacy regularizers outside the proposed objective."
+            ),
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Prototype geometry should be explicit.",
+                technical_idea="Construct adaptive prototype geometry with optimal transport.",
+                evidence=["data_preparation/hypergraph.py:20"],
+            ),
+            InnovationPoint(
+                name="Innovation 2: Minimal survival-reconstruction objective",
+                motivation="Training should remain compact.",
+                technical_idea="Simplify the training objective by removing unsupported legacy regularizers.",
+                evidence=["utils/loss.py:12"],
+            ),
+        ],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    section = SectionWriterAgent(llm_client=client)._run_llm_section(state, "method")
+
+    assert "Minimal Survival-Reconstruction Objective" in section
+    assert state["artifacts"]["section_writer_repaired_sections"] == ["method"]
+    assert "omitted innovation points" in state["artifacts"]["section_writer_repair_attempts"]["method"]
+    repair_payload = json.loads(client.calls[1]["messages"][1].content)
+    assert "omitted innovation points" in repair_payload["validation_error"]
 
 
 def test_llm_section_rejects_placeholders_and_writer_instructions():

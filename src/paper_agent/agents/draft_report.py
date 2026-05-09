@@ -301,9 +301,12 @@ class DraftReportAgent:
 
         section_errors = artifacts.get("section_writer_section_errors", {})
         section_successes = artifacts.get("section_writer_llm_successes", [])
+        repaired_sections = artifacts.get("section_writer_repaired_sections", [])
         if section_successes:
             lines.extend(["", "## LLM Section Drafting", ""])
             lines.append(f"- Successful sections: {', '.join(section_successes)}")
+            if repaired_sections:
+                lines.append(f"- Repaired sections: {', '.join(repaired_sections)}")
         if section_errors:
             lines.extend(["", "## Section Writer Errors", ""])
             for section, error in section_errors.items():

@@ -102,6 +102,9 @@ can generate simple PDF method overview, prototype-hypergraph, main-result, and
 ablation figures and inserts only those figures whose assets exist in the package.
 When an LLM client is configured, a final LLM self-review pass checks the draft
 against the same evidence bundle and records unsupported claims without editing text.
+If an LLM-written section is rejected by local evidence validators, the section
+writer makes one targeted repair call with the validation error and the rejected
+text before falling back to deterministic prose.
 The reviewer pass can be skipped per CLI run, and a dedicated smoke command
 exercises the configured provider on a tiny evidence bundle before spending a full
 draft-generation call.

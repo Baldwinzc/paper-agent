@@ -27,6 +27,8 @@ The current scaffold supports:
 - Venue template selection and optional remote template download.
 - Remote template artifact caching/extraction when a venue exposes a downloadable zip or style file.
 - Optional OpenAI-compatible LLM calls for higher-quality section drafting.
+- One-shot repair prompts for LLM-written sections rejected by local evidence
+  validators.
 - Draft generation for Abstract, Introduction, Related Work, Method, Experiments framework, and Conclusion.
 - LaTeX composition using a built-in template fallback.
 - Overleaf-ready zip export for free Overleaf upload workflows.

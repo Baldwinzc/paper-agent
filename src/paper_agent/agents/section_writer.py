@@ -508,6 +508,35 @@ class SectionWriterAgent:
         return DraftSections(**values)
 
     def _run_llm_section(self, state: PaperState, section_name: str) -> str:
+        experiments = state.get("experiments")
+        spec = self.SECTION_SPECS[section_name]
+        missing_experiment_details = experiments.missing_details if experiments else []
+        messages = self._section_messages(state, section_name)
+
+        result = self.llm_client.chat(
+            messages,
+            temperature=0.25,
+            max_tokens=spec["max_tokens"],
+        )
+        try:
+            section_text = self._clean_section_text(section_name, result.content)
+            self._validate_llm_section(
+                section_text,
+                section_name,
+                experiments,
+                missing_experiment_details,
+                state.get("innovations", []),
+            )
+            return section_text
+        except (ValueError, json.JSONDecodeError) as exc:
+            return self._repair_llm_section(
+                state,
+                section_name,
+                rejected_text=result.content,
+                validation_error=str(exc),
+            )
+
+    def _section_messages(self, state: PaperState, section_name: str) -> list[ChatMessage]:
         request = state["request"]
         baseline = state.get("baseline")
         code = state.get("code")
@@ -539,32 +568,135 @@ class SectionWriterAgent:
             "output_format": f"Plain text content for {section_name}.",
         }
 
-        result = self.llm_client.chat(
-            [
-                ChatMessage(
-                    role="system",
-                    content=(
-                        "You are a careful academic writing agent for computer science papers. "
-                        "You help draft paper sections from supplied evidence. You avoid overclaiming."
-                    ),
+        return [
+            ChatMessage(
+                role="system",
+                content=(
+                    "You are a careful academic writing agent for computer science papers. "
+                    "You help draft paper sections from supplied evidence. You avoid overclaiming."
                 ),
-                ChatMessage(role="user", content=json.dumps(prompt, ensure_ascii=False)),
-            ],
-            temperature=0.25,
-            max_tokens=spec["max_tokens"],
-        )
-        section_text = self._clean_section_text(section_name, result.content)
+            ),
+            ChatMessage(role="user", content=json.dumps(prompt, ensure_ascii=False)),
+        ]
+
+    def _validate_llm_section(
+        self,
+        section_text: str,
+        section_name: str,
+        experiments,
+        missing_experiment_details: list[str],
+        innovations=None,
+    ) -> None:
         self._raise_if_missing_results_overclaimed(
             section_text, section_name, missing_experiment_details
         )
         self._raise_if_procedural_language(section_text, section_name)
         self._raise_if_method_diff_framing(section_text, section_name)
+        self._raise_if_method_omits_innovations(
+            section_text,
+            section_name,
+            innovations or [],
+            experiments,
+        )
         self._raise_if_unsupported_experiment_claims(
             section_text,
             section_name,
             experiments,
         )
-        return section_text
+
+    def _repair_llm_section(
+        self,
+        state: PaperState,
+        section_name: str,
+        *,
+        rejected_text: str,
+        validation_error: str,
+    ) -> str:
+        experiments = state.get("experiments")
+        spec = self.SECTION_SPECS[section_name]
+        missing_experiment_details = experiments.missing_details if experiments else []
+        repair_result = self.llm_client.chat(
+            self._section_repair_messages(
+                state,
+                section_name,
+                rejected_text=rejected_text,
+                validation_error=validation_error,
+            ),
+            temperature=0.1,
+            max_tokens=spec["max_tokens"],
+        )
+        try:
+            repaired_text = self._clean_section_text(section_name, repair_result.content)
+            self._validate_llm_section(
+                repaired_text,
+                section_name,
+                experiments,
+                missing_experiment_details,
+                state.get("innovations", []),
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"LLM {section_name} section failed validation; initial error: "
+                f"{validation_error}; repair error: {exc}"
+            ) from exc
+
+        artifacts = state.setdefault("artifacts", {})
+        artifacts.setdefault("section_writer_repaired_sections", []).append(section_name)
+        artifacts.setdefault("section_writer_repair_attempts", {})[section_name] = validation_error
+        return repaired_text
+
+    def _section_repair_messages(
+        self,
+        state: PaperState,
+        section_name: str,
+        *,
+        rejected_text: str,
+        validation_error: str,
+    ) -> list[ChatMessage]:
+        experiments = state.get("experiments")
+        missing_experiment_details = experiments.missing_details if experiments else []
+        payload = {
+            "task": f"Repair the rejected {section_name} section.",
+            "validation_error": validation_error,
+            "rejected_section": rejected_text[:6000],
+            "hard_rules": self._llm_hard_rules(missing_experiment_details),
+            "repair_rules": self._section_repair_rules(section_name),
+            "project_name": state["request"].project_name,
+            "target_venue": state["request"].target_venue,
+            "experiment_summary": experiments.model_dump() if experiments else {},
+            "innovations": [item.model_dump() for item in state.get("innovations", [])],
+            "allowed_citation_keys": [entry.key for entry in state.get("bibliography", [])],
+            "output_format": f"Plain text content for {section_name}; no JSON or code fences.",
+        }
+        return [
+            ChatMessage(
+                role="system",
+                content=(
+                    "You repair rejected scientific paper sections. Rewrite the section so it "
+                    "passes the validator. Return only the repaired section text."
+                ),
+            ),
+            ChatMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
+        ]
+
+    def _section_repair_rules(self, section_name: str) -> list[str]:
+        rules = [
+            "Remove unsupported claims instead of softening them with vague language.",
+            "Keep the same section role and do not add TODO, TBD, placeholders, or writer instructions.",
+            "Use only supplied evidence; do not invent numbers, datasets, metrics, citations, or settings.",
+        ]
+        if section_name == "method":
+            rules.extend(
+                [
+                    "Present the proposed computation as a standalone method.",
+                    "Do not mention replacing, removing, modifying, or differing from the baseline or prior method.",
+                    "Use markdown ### headings tied to the accepted innovation points.",
+                    "If the validation error names omitted innovation points, add a compact subsection or paragraph for each omitted point.",
+                ]
+            )
+        if section_name in self.EXPERIMENT_CLAIM_SECTIONS:
+            rules.append("Keep experiment claims bounded to the supplied experiment tables.")
+        return rules
 
     def _raise_if_missing_results_overclaimed(
         self,
@@ -693,6 +825,31 @@ class SectionWriterAgent:
         raise ValueError(
             "LLM method section framed the design as code/baseline differences: "
             + ", ".join(sorted(set(matched)))
+        )
+
+    def _raise_if_method_omits_innovations(
+        self,
+        section_text: str,
+        section_name: str,
+        innovations,
+        experiments,
+    ) -> None:
+        if section_name != "method" or not innovations:
+            return
+
+        from paper_agent.agents.reviewer import ReviewerAgent
+
+        traceability = ReviewerAgent()._innovation_traceability(
+            section_text,
+            innovations,
+            experiments,
+        )
+        omitted = [item["name"] for item in traceability if not item["mentioned_in_method"]]
+        if not omitted:
+            return
+        raise ValueError(
+            "LLM method section omitted innovation points: "
+            + ", ".join(omitted[:4])
         )
 
     def _citation_hint(self, citation_keys: list[str]) -> str:
