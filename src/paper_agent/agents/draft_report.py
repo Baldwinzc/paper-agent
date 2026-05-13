@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from paper_agent.experiment_evidence import classify_experiment_evidence
 from paper_agent.state import PaperState
 
 
@@ -41,7 +42,14 @@ class DraftReportAgent:
             "provided" if (getattr(request, "experiment_results", "") or "").strip() else "none",
         )
         experiment_path = artifacts.get("experiment_results_path", "")
-        experiment_note = self._experiment_evidence_note(str(experiment_source), str(experiment_path))
+        experiment_evidence = classify_experiment_evidence(
+            source=str(experiment_source),
+            path=str(experiment_path),
+            text=getattr(request, "experiment_results", "") or "",
+            result_table_count=len(artifacts.get("experiment_result_tables", [])),
+        )
+        experiment_kind = str(experiment_evidence.get("kind", "unknown"))
+        experiment_note = str(experiment_evidence.get("note", "Review experiment evidence before submission."))
 
         lines = [
             "# Submission Checklist",
@@ -68,7 +76,8 @@ class DraftReportAgent:
             f"- Bibliography entries: {len(bibliography)}",
             f"- References resolved: {verification.get('resolved_count', 0)}",
             f"- References unresolved: {verification.get('unresolved_count', 0)}",
-            f"- Experiment evidence: {experiment_source}{f' ({experiment_path})' if experiment_path else ''}",
+            f"- Experiment source: {experiment_source}{f' ({experiment_path})' if experiment_path else ''}",
+            f"- Experiment evidence kind: {experiment_kind}",
             f"- Evidence note: {experiment_note}",
             "",
             "## Upload Steps",
@@ -140,16 +149,6 @@ class DraftReportAgent:
         if not items:
             items.append("Perform a final human pass on claims, citations, figures, and venue formatting.")
         return list(dict.fromkeys(item for item in items if item))
-
-    def _experiment_evidence_note(self, source: str, path: str) -> str:
-        combined = f"{source} {path}".lower()
-        if any(token in combined for token in ("mock", "synthetic", "fabricated")):
-            return "Synthetic or mock experiment numbers are suitable for pipeline testing only; replace them before submission."
-        if source == "tcga_cohort_csv":
-            return "TCGA cohort CSV summaries describe available data only; add trained-model performance results before empirical claims."
-        if source in {"none", ""}:
-            return "No experiment result file was supplied; keep the Experiments section as a framework."
-        return "Review the supplied experiment file against the final tables and claims."
 
     def _path_or_unknown(self, value: object) -> str:
         return str(value) if value else "not generated"

@@ -15,6 +15,7 @@ from paper_agent.agents.submission_package_validator import SubmissionPackageVal
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
+from paper_agent.experiment_evidence import classify_experiment_evidence
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
 from paper_agent.workflow import PaperWorkflow
@@ -770,6 +771,7 @@ def _build_acceptance_report(
     min_llm_sections: int = 4,
     require_llm_self_review: bool = False,
 ) -> str:
+    experiment_evidence = _summary_experiment_evidence(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -798,6 +800,7 @@ def _build_acceptance_report(
         f"- Code path: {inputs.get('code_path', '')}",
         f"- Baseline PDF: {inputs.get('baseline_pdf_path', '')}",
         f"- Experiment results: {inputs.get('experiment_results_path', '') or inputs.get('experiment_results_source', '')}",
+        f"- Experiment evidence kind: {experiment_evidence.get('kind', 'unknown')}",
         f"- Template source: {summary.get('template_source', '')}",
         f"- Network mode: {inputs.get('network_mode', '')}",
         f"- LLM mode: {inputs.get('llm_mode', '')}",
@@ -870,6 +873,7 @@ def _acceptance_checks(
     compile_mode = summary.get("submission_compile_mode", "")
     review_major = int(summary.get("review_findings_major", summary.get("review_findings", 0)) or 0)
     review_minor = int(summary.get("review_findings_minor", 0) or 0)
+    experiment_evidence = _summary_experiment_evidence(summary)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -883,6 +887,10 @@ def _acceptance_checks(
             "Experiment input",
             bool(inputs.get("experiment_results_provided")),
             f"source={inputs.get('experiment_results_source', 'none')}; path={inputs.get('experiment_results_path', '')}",
+        ),
+        _experiment_source_acceptance_item(
+            str(experiment_evidence.get("kind", "unknown")),
+            str(experiment_evidence.get("note", "")),
         ),
         _acceptance_item(
             "Experiment evidence coverage",
@@ -982,6 +990,15 @@ def _submission_package_acceptance_item(status: str, errors: int, warnings: int)
     return {"name": "Submission package", "status": "PASS", "detail": _table_safe(detail)}
 
 
+def _experiment_source_acceptance_item(kind: str, note: str) -> dict[str, str]:
+    detail = f"kind={kind or 'unknown'}; note={note or 'not recorded'}"
+    if kind in {"real_result_file", "provided_result_text", "structured_state"}:
+        return {"name": "Experiment source integrity", "status": "PASS", "detail": _table_safe(detail)}
+    if kind == "missing":
+        return {"name": "Experiment source integrity", "status": "FAIL", "detail": _table_safe(detail)}
+    return {"name": "Experiment source integrity", "status": "WARN", "detail": _table_safe(detail)}
+
+
 def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
     if status == "passed":
@@ -993,6 +1010,21 @@ def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str
 
 def _table_safe(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _summary_experiment_evidence(summary: dict) -> dict[str, object]:
+    inputs = summary.get("inputs", {})
+    if inputs.get("experiment_evidence_kind"):
+        return {
+            "kind": inputs.get("experiment_evidence_kind", "unknown"),
+            "note": inputs.get("experiment_evidence_note", ""),
+        }
+    return classify_experiment_evidence(
+        source=str(inputs.get("experiment_results_source", "")),
+        path=str(inputs.get("experiment_results_path", "")),
+        text="",
+        result_table_count=int(summary.get("experiment_result_tables", 0) or 0),
+    )
 
 
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
@@ -1014,6 +1046,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     experiment_results_source = artifacts.get(
         "experiment_results_source", "provided" if experiment_results_present else "none"
     )
+    experiment_evidence = classify_experiment_evidence(
+        source=str(experiment_results_source),
+        path=str(artifacts.get("experiment_results_path", "")),
+        text=experiment_results,
+        result_table_count=len(artifacts.get("experiment_result_tables", [])),
+    )
     return {
         "project_name": getattr(request, "project_name", ""),
         "target_venue": getattr(request, "target_venue", ""),
@@ -1024,6 +1062,8 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "experiment_results_provided": experiment_results_present,
             "experiment_results_source": experiment_results_source,
             "experiment_results_path": artifacts.get("experiment_results_path", ""),
+            "experiment_evidence_kind": experiment_evidence.get("kind", "unknown"),
+            "experiment_evidence_note": experiment_evidence.get("note", ""),
             "keywords": list(getattr(request, "keywords", []) or []),
             "template_zip_path": getattr(request, "template_zip_path", "") or "",
             "template_dir_path": getattr(request, "template_dir_path", "") or "",

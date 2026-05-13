@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from paper_agent.experiment_evidence import classify_experiment_evidence
 from paper_agent.state import PaperState
 
 
@@ -11,7 +12,12 @@ class SubmissionReadinessAgent:
     SECTION_NAMES = ("abstract", "introduction", "related_work", "method", "experiments", "conclusion")
 
     def run(self, state: PaperState) -> PaperState:
-        state.setdefault("artifacts", {})["submission_readiness"] = self._readiness(state)
+        artifacts = state.setdefault("artifacts", {})
+        experiment_evidence = self._experiment_evidence(state)
+        artifacts["experiment_evidence"] = experiment_evidence
+        artifacts["experiment_evidence_kind"] = experiment_evidence["kind"]
+        artifacts["experiment_evidence_note"] = experiment_evidence["note"]
+        artifacts["submission_readiness"] = self._readiness(state)
         return state
 
     def _readiness(self, state: PaperState) -> dict[str, object]:
@@ -50,6 +56,11 @@ class SubmissionReadinessAgent:
             score -= min(30, len(experiments.missing_details) * 10)
         elif not experiments.result_tables:
             score -= 15
+        evidence_kind = str(state.get("artifacts", {}).get("experiment_evidence_kind", ""))
+        if evidence_kind in {"synthetic_mock", "data_only", "demo"}:
+            score -= 35
+        elif evidence_kind == "unstructured":
+            score -= 20
 
         findings = state.get("review_findings", [])
         score -= sum(20 if finding.severity == "major" else 5 for finding in findings)
@@ -119,6 +130,16 @@ class SubmissionReadinessAgent:
             items.append("Experiment details are incomplete.")
         if experiments and not experiments.result_tables:
             items.append("No structured trained-model result table was parsed.")
+        evidence = state.get("artifacts", {}).get("experiment_evidence", {})
+        evidence_kind = str(evidence.get("kind", ""))
+        if evidence_kind == "synthetic_mock":
+            items.append("Experiment results are marked as synthetic/mock and cannot support real submission claims.")
+        elif evidence_kind == "data_only":
+            items.append("Experiment input is cohort metadata only; add trained-model performance tables.")
+        elif evidence_kind == "demo":
+            items.append("Inline demo experiment values cannot support real submission claims.")
+        elif evidence_kind == "missing":
+            items.append("Experiment result evidence is missing.")
         for finding in state.get("review_findings", []):
             if finding.severity == "major":
                 items.append(finding.issue)
@@ -163,6 +184,20 @@ class SubmissionReadinessAgent:
         if not items:
             items.append("Perform a final human pass for wording, author metadata, figures, and venue rules.")
         return list(dict.fromkeys(items))[:8]
+
+    def _experiment_evidence(self, state: PaperState) -> dict[str, object]:
+        artifacts = state.get("artifacts", {})
+        request = state.get("request")
+        experiments = state.get("experiments")
+        text = getattr(request, "experiment_results", "") if request else ""
+        source = artifacts.get("experiment_results_source", "provided" if text.strip() else "none")
+        result_table_count = len(experiments.result_tables) if experiments else 0
+        return classify_experiment_evidence(
+            source=str(source),
+            path=str(artifacts.get("experiment_results_path", "")),
+            text=text,
+            result_table_count=result_table_count,
+        )
 
     def _status(self, score: int, blocking_items: list[str]) -> str:
         if blocking_items:

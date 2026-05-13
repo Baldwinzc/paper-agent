@@ -56,6 +56,9 @@ The current scaffold supports:
 - Draft quality report (`DRAFT_REPORT.md`) and author-facing submission checklist
   (`SUBMISSION_CHECKLIST.md`) included in Overleaf-ready exports.
 - Submission-readiness scoring with concrete action items for author review.
+- Experiment-evidence provenance classification in run summaries and acceptance
+  reports, so synthetic/mock inputs and TCGA cohort metadata are not mistaken
+  for real trained-model results.
 - JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 - Structured ablation parsing that links variant drops back to likely innovation points.
@@ -152,7 +155,8 @@ reference network calls offline by default, so the check isolates whether the
 paper-writing path itself can call the model. The command writes both
 `RUN_SUMMARY.json` for automation and `ACCEPTANCE_REPORT.md` for a concise
 human-readable pass/fail view of the input contract, LLM-written sections,
-evidence checks, LaTeX package status, compile check, and output paths.
+experiment-source integrity, evidence checks, LaTeX package status, compile
+check, and output paths.
 The bundled `examples\hyper_protosurv_mock_experiments.md` file is synthetic
 TCGA-style data for this smoke path only; replace it with real experiment tables
 for any research draft.

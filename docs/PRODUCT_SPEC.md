@@ -90,6 +90,10 @@ points to flag unsupported datasets, metrics, numeric results, or Method subsect
 After review, the workflow computes a submission-readiness score across evidence
 grounding, writing completeness, citation readiness, and venue packaging, with
 explicit blocking items and next actions for the author.
+Experiment evidence is classified by provenance. Real result files, structured
+workflow-state results, synthetic/mock files, inline demos, and TCGA
+cohort-metadata summaries are reported separately so a pipeline smoke run is not
+confused with submission-ready empirical evidence.
 The LaTeX submission package is statically validated before reporting: the agent
 checks `main.tex`, `references.bib`, citation-key closure, referenced graphics,
 required zip entries, and optional local LaTeX compilation when enabled.

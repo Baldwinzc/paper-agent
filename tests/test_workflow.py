@@ -2017,6 +2017,64 @@ def test_submission_readiness_flags_blocking_evidence_gaps():
     assert readiness["overall_score"] < 70
 
 
+def test_submission_readiness_blocks_synthetic_experiment_evidence():
+    state = {
+        "request": PaperRequest(
+            project_name="readiness-mock-demo",
+            target_venue="TPAMI",
+            experiment_results=(
+                "This file is synthetic mock data for pipeline testing only.\n\n"
+                "| Method | BLCA C-index |\n"
+                "|---|---:|\n"
+                "| Baseline | 0.640 |\n"
+                "| Ours | 0.671 |\n"
+            ),
+        ),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+            result_tables=[
+                ExperimentTableSummary(
+                    baseline="Baseline",
+                    comparisons=[
+                        ExperimentComparison(
+                            dataset="BLCA",
+                            metric="C-INDEX",
+                            method="Ours",
+                            baseline="Baseline",
+                            method_value=0.671,
+                            baseline_value=0.640,
+                            signed_improvement=0.031,
+                            improved=True,
+                        )
+                    ],
+                )
+            ],
+        ),
+        "sections": DraftSections(
+            abstract="A" * 120,
+            introduction="I" * 120,
+            related_work="R" * 120,
+            method="M" * 120,
+            experiments="E" * 120,
+            conclusion="C" * 120,
+        ),
+        "bibliography": [CitationEntry(key="paper", title="Paper", authors=["Ada"], year="2024")],
+        "venue_template": VenueTemplate(venue="TPAMI"),
+        "review_findings": [],
+        "artifacts": {"reference_verification": {"resolved_count": 1, "unresolved_count": 0}},
+    }
+
+    state = SubmissionReadinessAgent().run(state)
+
+    readiness = state["artifacts"]["submission_readiness"]
+    assert state["artifacts"]["experiment_evidence_kind"] == "synthetic_mock"
+    assert readiness["status"] == "needs_evidence"
+    assert any("synthetic/mock" in item for item in readiness["blocking_items"])
+
+
 def test_draft_report_includes_submission_readiness(tmp_path):
     state = {
         "request": PaperRequest(project_name="readiness-report-demo", target_venue="TPAMI"),
@@ -2476,6 +2534,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["experiment_sensitivity_evidence"] == 1
     assert summary["experiment_statistical_tests"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
+    assert summary["inputs"]["experiment_evidence_kind"] == "structured_state"
     assert summary["section_writer_llm_successes"] == ["abstract"]
     assert summary["section_writer_repaired_sections"] == ["abstract"]
     assert summary["section_writer_section_errors"] == {"method": "blocked"}
@@ -2494,7 +2553,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
             "target_venue": "TPAMI",
             "experiment_results_provided": True,
             "experiment_results_source": "file",
-            "experiment_results_path": "examples/hyper_protosurv_mock_experiments.md",
+            "experiment_results_path": "examples/tcga_real_results.md",
         },
         "template_source": "built-in",
         "section_writer_llm_attempted_sections": [
@@ -2548,11 +2607,47 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     report = report_path.read_text(encoding="utf-8")
 
     assert "- Overall status: PASS" in report
+    assert "| Experiment source integrity | PASS | kind=real_result_file" in report
     assert "- Main result tables: 2" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report
     assert "outputs/hyper-protosurv-llm-smoke/main.tex" in report
+
+
+def test_acceptance_report_warns_for_mock_experiment_source():
+    summary = {
+        "inputs": {
+            "code_path": "code",
+            "baseline_pdf_path": "baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+            "experiment_results_path": "examples/hyper_protosurv_mock_experiments.md",
+        },
+        "section_writer_llm_attempted_sections": [],
+        "section_writer_llm_successes": [],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 0,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 95,
+        "submission_package_status": "valid",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 0,
+        "submission_compile_mode": "compile",
+        "submission_compile_status": "passed",
+        "submission_compile_tool": "tectonic.exe",
+        "experiment_result_tables": 1,
+        "presentation_figures": 0,
+        "generated_figures": 0,
+        "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
+    }
+
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
+
+    assert "- Overall status: PASS_WITH_WARNINGS" in report
+    assert "| Experiment source integrity | WARN | kind=synthetic_mock" in report
 
 
 def test_acceptance_report_marks_disabled_compile_as_warning():
@@ -2563,6 +2658,7 @@ def test_acceptance_report_marks_disabled_compile_as_warning():
             "target_venue": "TPAMI",
             "experiment_results_provided": True,
             "experiment_results_source": "file",
+            "experiment_results_path": "results.md",
         },
         "section_writer_llm_attempted_sections": ["abstract", "method"],
         "section_writer_llm_successes": ["abstract", "method"],
@@ -2577,6 +2673,7 @@ def test_acceptance_report_marks_disabled_compile_as_warning():
         "submission_compile_mode": "not_run",
         "submission_compile_status": "disabled",
         "submission_compile_tool": "tectonic.exe",
+        "experiment_result_tables": 1,
         "presentation_figures": 0,
         "generated_figures": 0,
         "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
@@ -3491,6 +3588,7 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     assert captured["request"].skip_llm_self_review
     assert summary["inputs"]["experiment_results_source"] == "tcga_cohort_csv"
     assert summary["inputs"]["experiment_results_path"].endswith("dataset_csv")
+    assert summary["inputs"]["experiment_evidence_kind"] == "data_only"
     assert summary["llm_self_review_mode"] == "disabled"
     acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "Acceptance report written to" in capsys.readouterr().out
@@ -3543,6 +3641,7 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
                     "section_writer_llm_successes": ["abstract", "method"],
                     "llm_self_review": {"mode": "disabled"},
                     "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
                 },
                 "latex_output_path": latex_dir / "main.tex",
                 "latex_project_dir": latex_dir,
@@ -3581,6 +3680,7 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
     assert captured["request"].skip_llm_self_review
     assert summary["section_writer_llm_successes"] == ["abstract", "method"]
     assert summary["inputs"]["experiment_results_source"] == "file"
+    assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
     assert "# Paper Agent Acceptance Report" in acceptance_report
     assert zip_path.exists()
@@ -3692,8 +3792,9 @@ def test_submission_checklist_flags_tcga_cohort_summary_as_data_only(tmp_path):
     DraftReportAgent().run(state)
 
     checklist = (tmp_path / "SUBMISSION_CHECKLIST.md").read_text(encoding="utf-8")
-    assert "TCGA cohort CSV summaries describe available data only" in checklist
-    assert "add trained-model performance results" in checklist
+    assert "Experiment evidence kind: data_only" in checklist
+    assert "data/cohort metadata only" in checklist
+    assert "add trained-model performance tables" in checklist
 
 
 def test_reviewer_flags_method_missing_innovation():
