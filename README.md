@@ -136,6 +136,17 @@ $env:PYTHONPATH="D:\code\agent\paper-agent\src"
 python -m paper_agent.cli llm-self-review-smoke
 ```
 
+Inspect the active provider/model/key-source configuration before a full run:
+
+```powershell
+python -m paper_agent.cli llm-doctor
+python -m paper_agent.cli llm-doctor --no-live
+```
+
+`llm-doctor` reports the provider host, model, which environment variable
+supplies the API key, timeout/retry settings, and live preflight diagnosis
+without printing the API key itself.
+
 The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.

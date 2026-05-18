@@ -299,6 +299,12 @@ def main() -> None:
     _add_experiment_provenance_options(tcga_draft)
     _add_experiment_artifact_consistency_options(tcga_draft)
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
+    llm_doctor = sub.add_parser("llm-doctor", help="Inspect LLM configuration and provider health.")
+    llm_doctor.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Only print local configuration; do not call the provider.",
+    )
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     sub.add_parser("latex-doctor", help="Check local LaTeX compiler availability and install guidance.")
     llm_draft = sub.add_parser(
@@ -554,6 +560,8 @@ def main() -> None:
         except LLMError as exc:
             raise SystemExit(f"LLM ping failed: {exc}") from exc
         print(result.content.strip())
+    elif args.command == "llm-doctor":
+        _run_llm_doctor(args)
     elif args.command == "llm-self-review-smoke":
         _run_llm_self_review_smoke()
     elif args.command == "latex-doctor":
@@ -582,6 +590,8 @@ NETWORK_DISABLE_ENV_VARS = (
     "PAPER_AGENT_DISABLE_REFERENCE_RESOLVE",
     "PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY",
 )
+LLM_API_KEY_ENV_VARS = ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ARK_API_KEY")
+LLM_BASE_URL_ENV_VARS = ("DEEPSEEK_API_BASE", "OPENAI_API_BASE")
 
 
 def _configure_network_mode(args: argparse.Namespace, *, default_offline: bool = False) -> str:
@@ -702,7 +712,7 @@ def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) 
 
 
 def _llm_preflight_failure_message(config: LLMConfig, context: str, exc: LLMError) -> str:
-    raw = str(exc)
+    raw = _sanitize_llm_error(str(exc), config)
     return (
         f"{context} LLM preflight failed for {_llm_config_label(config)}: "
         f"{_llm_failure_diagnosis(raw)} Raw provider error: {raw}"
@@ -733,6 +743,55 @@ def _llm_failure_diagnosis(raw_error: str) -> str:
     if "transport error" in lowered or "connection" in lowered:
         return "network transport failed before the provider returned a completion."
     return "the provider rejected or failed the health-check request."
+
+
+def _sanitize_llm_error(raw_error: str, config: LLMConfig) -> str:
+    sanitized = raw_error
+    candidates = [config.api_key, *[os.getenv(name, "").strip() for name in LLM_API_KEY_ENV_VARS]]
+    for value in candidates:
+        if value and len(value) >= 4:
+            sanitized = sanitized.replace(value, "[redacted-api-key]")
+    return sanitized
+
+
+def _run_llm_doctor(args: argparse.Namespace) -> None:
+    config = load_llm_config()
+    print("LLM configuration:")
+    print(f"- Provider/model: {_llm_config_label(config)}")
+    print(f"- API key: {_env_source_label(LLM_API_KEY_ENV_VARS)}")
+    print(f"- Base URL source: {_env_source_label(LLM_BASE_URL_ENV_VARS, default_label='default')}")
+    print(f"- Model source: {_env_source_label(('TEXT_MODEL',), default_label='default')}")
+    print(f"- Disabled by PAPER_AGENT_DISABLE_LLM: {_truthy_env('PAPER_AGENT_DISABLE_LLM')}")
+    print(f"- Configured: {config.configured}")
+    print(f"- Timeout: {config.timeout_seconds}s; connect={config.connect_timeout_seconds}s")
+    print(f"- Max retries: {config.max_retries}; retry base={config.retry_base_seconds}s")
+    print(f"- Max tokens: {config.max_tokens}; temperature={config.temperature}")
+    print(f"- Thinking: {config.thinking}; reasoning_effort={config.reasoning_effort or 'not set'}")
+
+    if args.no_live:
+        print("Live preflight: SKIPPED (--no-live)")
+        return
+    if not config.configured:
+        print("Live preflight: FAIL")
+        raise SystemExit(
+            "LLM doctor failed: no configured API key/model. Set DEEPSEEK_API_KEY, "
+            "OPENAI_API_KEY, or ARK_API_KEY plus TEXT_MODEL, and ensure PAPER_AGENT_DISABLE_LLM is not enabled."
+        )
+
+    client = LLMClient(config)
+    try:
+        _llm_preflight_check(client, config, context="LLM doctor")
+    except SystemExit as exc:
+        print("Live preflight: FAIL")
+        raise exc
+    print("Live preflight: PASS")
+
+
+def _env_source_label(names: tuple[str, ...], *, default_label: str = "not set") -> str:
+    for name in names:
+        if os.getenv(name, "").strip():
+            return f"configured via {name}"
+    return default_label
 
 
 def _run_latex_doctor() -> None:

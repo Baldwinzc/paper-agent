@@ -5329,7 +5329,7 @@ def test_llm_preflight_reports_insufficient_balance_without_api_key():
     class FailingClient:
         def chat(self, *args, **kwargs):
             raise cli_module.LLMError(
-                'LLM HTTP 402: {"error":{"message":"Insufficient Balance","code":"invalid_request_error"}}'
+                'LLM HTTP 402: {"error":{"message":"Insufficient Balance for secret-key","code":"invalid_request_error"}}'
             )
 
     config = LLMConfig(
@@ -5346,8 +5346,59 @@ def test_llm_preflight_reports_insufficient_balance_without_api_key():
         assert "balance or quota is insufficient" in message
         assert "deepseek/deepseek-v4-pro" in message
         assert "secret-key" not in message
+        assert "[redacted-api-key]" in message
     else:
         raise AssertionError("Expected LLM preflight to fail on provider 402.")
+
+
+def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor", "--no-live"])
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "LLM configuration:" in output
+    assert "Provider/model: deepseek/deepseek-v4-pro at api.deepseek.com" in output
+    assert "API key: configured via DEEPSEEK_API_KEY" in output
+    assert "Configured: True" in output
+    assert "Live preflight: SKIPPED (--no-live)" in output
+    assert "doctor-secret" not in output
+
+
+def test_cli_llm_doctor_reports_live_failure(monkeypatch, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    class FailingClient:
+        def __init__(self, config):
+            self.config = config
+
+        def chat(self, *args, **kwargs):
+            raise cli_module.LLMError("LLM HTTP 402: Insufficient Balance for doctor-secret")
+
+    monkeypatch.setattr(cli_module, "LLMClient", FailingClient)
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor"])
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        message = str(exc)
+        assert "LLM doctor LLM preflight failed" in message
+        assert "balance or quota is insufficient" in message
+        assert "doctor-secret" not in message
+    else:
+        raise AssertionError("Expected llm-doctor to fail when live provider preflight fails.")
+    output = capsys.readouterr().out
+    assert "LLM configuration:" in output
+    assert "Live preflight: FAIL" in output
 
 
 def test_cli_tcga_draft_stops_before_workflow_on_llm_preflight_failure(monkeypatch, tmp_path):
