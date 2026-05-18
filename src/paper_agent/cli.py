@@ -682,6 +682,59 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) -> None:
+    try:
+        result = client.chat(
+            [
+                ChatMessage(role="system", content="You are a concise API health-check assistant."),
+                ChatMessage(role="user", content="Reply with exactly: paper-agent-ok"),
+            ],
+            temperature=0,
+            max_tokens=16,
+        )
+    except LLMError as exc:
+        raise SystemExit(_llm_preflight_failure_message(config, context, exc)) from exc
+    if result.content.strip() != "paper-agent-ok":
+        raise SystemExit(
+            f"{context} LLM preflight failed: unexpected provider response "
+            f"from {_llm_config_label(config)}: {result.content.strip()[:120]!r}."
+        )
+
+
+def _llm_preflight_failure_message(config: LLMConfig, context: str, exc: LLMError) -> str:
+    raw = str(exc)
+    return (
+        f"{context} LLM preflight failed for {_llm_config_label(config)}: "
+        f"{_llm_failure_diagnosis(raw)} Raw provider error: {raw}"
+    )
+
+
+def _llm_config_label(config: LLMConfig) -> str:
+    parsed = urlparse(config.base_url)
+    host = parsed.netloc or parsed.path.split("/")[0]
+    return f"{_llm_provider_from_host(host)}/{config.model} at {host or 'unknown-host'}"
+
+
+def _llm_failure_diagnosis(raw_error: str) -> str:
+    lowered = raw_error.lower()
+    if "http 402" in lowered or "insufficient balance" in lowered or "insufficient_balance" in lowered:
+        return (
+            "provider account balance or quota is insufficient. Recharge/enable billing, "
+            "switch to another API key, or change provider/model before running generation."
+        )
+    if "http 401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+        return "API authentication failed. Check the configured API key and provider base URL."
+    if "http 403" in lowered or "forbidden" in lowered or "permission" in lowered:
+        return "the API key is not allowed to use this model or endpoint."
+    if "http 404" in lowered or "model_not_found" in lowered or "not found" in lowered:
+        return "the configured model or endpoint was not found. Check TEXT_MODEL and API base URL."
+    if "timed out" in lowered or "timeout" in lowered:
+        return "the provider did not respond before the configured timeout."
+    if "transport error" in lowered or "connection" in lowered:
+        return "network transport failed before the provider returned a completion."
+    return "the provider rejected or failed the health-check request."
+
+
 def _run_latex_doctor() -> None:
     status = _latex_toolchain_status()
     print("LaTeX toolchain:")
@@ -878,6 +931,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
                 "OPENAI_API_KEY and TEXT_MODEL, or pass --disable-llm for a deterministic run."
             )
         llm_client = LLMClient(config)
+        _llm_preflight_check(llm_client, config, context="TCGA draft")
         llm_mode = "required"
         effective_min_llm_sections = args.min_llm_sections
         runtime_llm_config = config
@@ -991,6 +1045,8 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     )
     if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("LLM draft smoke failed: experiment result validation failed in strict mode.")
+    llm_client = LLMClient(config)
+    _llm_preflight_check(llm_client, config, context="LLM draft smoke")
 
     output_dir = Path(args.output_dir)
     project_name = args.project_name or _default_project_name(output_dir)
@@ -1008,7 +1064,7 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         ],
         skip_llm_self_review=not args.include_llm_self_review,
     )
-    state = PaperWorkflow(llm_client=LLMClient(config)).run(request)
+    state = PaperWorkflow(llm_client=llm_client).run(request)
     _record_runtime_modes(
         state,
         network_mode=network_mode,

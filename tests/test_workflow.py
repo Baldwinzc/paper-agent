@@ -5047,6 +5047,7 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
     output_dir = tmp_path / "tcga-real"
     zip_path = tmp_path / "tcga-real.zip"
     monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -5261,6 +5262,7 @@ def test_cli_tcga_submission_grade_forces_full_acceptance_path(monkeypatch, tmp_
     zip_path = tmp_path / "submission-grade.zip"
     monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
     monkeypatch.setattr(cli_module, "_write_latex_zip_and_refresh", fake_write_latex_zip_and_refresh)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -5321,6 +5323,85 @@ def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
         assert "submission-grade runs require the configured LLM" in str(exc)
     else:
         raise AssertionError("Expected submission-grade TCGA draft to reject --disable-llm.")
+
+
+def test_llm_preflight_reports_insufficient_balance_without_api_key():
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise cli_module.LLMError(
+                'LLM HTTP 402: {"error":{"message":"Insufficient Balance","code":"invalid_request_error"}}'
+            )
+
+    config = LLMConfig(
+        api_key="secret-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+    )
+
+    try:
+        cli_module._llm_preflight_check(FailingClient(), config, context="TCGA draft")
+    except SystemExit as exc:
+        message = str(exc)
+        assert "TCGA draft LLM preflight failed" in message
+        assert "balance or quota is insufficient" in message
+        assert "deepseek/deepseek-v4-pro" in message
+        assert "secret-key" not in message
+    else:
+        raise AssertionError("Expected LLM preflight to fail on provider 402.")
+
+
+def test_cli_tcga_draft_stops_before_workflow_on_llm_preflight_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    result_path = results_dir / "tcga_results.md"
+    result_path.write_text("real result placeholder", encoding="utf-8")
+
+    def fake_validate(*args, **kwargs):
+        return {
+            "experiment_evidence": {"real_result_evidence": True},
+            "experiment_contract": {"status": "complete"},
+            "experiment_quality": {"status": "complete"},
+            "experiment_provenance": {"status": "complete"},
+            "experiment_artifact_consistency": {"status": "complete"},
+        }
+
+    def fail_preflight(*args, **kwargs):
+        raise SystemExit("TCGA draft LLM preflight failed for deepseek/deepseek-v4-pro: quota blocked.")
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not be constructed after LLM preflight failure.")
+
+    monkeypatch.setattr(cli_module, "_validate_results_text", fake_validate)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", fail_preflight)
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "LLM preflight failed" in str(exc)
+    else:
+        raise AssertionError("Expected tcga-draft to stop at LLM preflight failure.")
 
 
 def test_cli_tcga_draft_fails_when_default_result_file_is_missing(monkeypatch, tmp_path):
@@ -5413,6 +5494,7 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
     output_dir = tmp_path / "out"
     zip_path = tmp_path / "llm-smoke.zip"
     monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "sys.argv",
         [

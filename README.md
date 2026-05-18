@@ -139,6 +139,9 @@ python -m paper_agent.cli llm-self-review-smoke
 The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.
+Commands that require live LLM generation run a small provider preflight before
+the full workflow. This catches authentication, model, timeout, and provider
+quota errors such as `HTTP 402 Insufficient Balance` before section drafting.
 When a returned unsupported claim can be matched to an exact draft sentence, the
 self-review pass removes that sentence before LaTeX generation. If no exact
 sentence match is available, it asks the configured LLM for a conservative
