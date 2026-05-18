@@ -2720,6 +2720,85 @@ def test_acceptance_report_fails_submission_evidence_for_mock_experiment_source(
     assert "| Experiment source integrity | FAIL | kind=synthetic_mock" in report
 
 
+def test_acceptance_report_fails_submission_evidence_for_invalid_artifact_consistency():
+    summary = {
+        "inputs": {
+            "code_path": "code",
+            "baseline_pdf_path": "baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+            "experiment_results_path": "results.md",
+        },
+        "section_writer_llm_attempted_sections": ["abstract"],
+        "section_writer_llm_successes": ["abstract"],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 0,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 95,
+        "submission_package_status": "valid",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 0,
+        "submission_compile_mode": "compile",
+        "submission_compile_status": "passed",
+        "submission_compile_tool": "tectonic.exe",
+        "experiment_result_tables": 1,
+        "experiment_ablation_evidence": 1,
+        "experiment_sensitivity_evidence": 1,
+        "experiment_statistical_tests": 1,
+        "experiment_contract": {
+            "status": "complete",
+            "errors": [],
+            "warnings": [],
+            "checks": {
+                "result_tables": 1,
+                "numeric_comparisons": 2,
+                "ablation_items": 1,
+                "sensitivity_items": 1,
+                "statistical_tests": 1,
+            },
+        },
+        "experiment_provenance": {
+            "status": "complete",
+            "errors": [],
+            "warnings": [],
+            "checks": {
+                "entries": 1,
+                "local_paths": 1,
+                "fingerprinted_local_paths": 1,
+                "verified_checksums": 1,
+            },
+        },
+        "experiment_artifact_consistency": {
+            "status": "invalid",
+            "errors": ["Artifact value mismatch for main_method ours BLCA C-index."],
+            "warnings": [],
+            "checks": {
+                "paper_values": 2,
+                "matched_values": 1,
+                "missing_values": 0,
+                "mismatched_values": 1,
+                "csv_artifacts": 1,
+            },
+        },
+        "presentation_figures": 0,
+        "generated_figures": 0,
+        "outputs": {
+            "markdown": "draft.md",
+            "latex_output_path": "main.tex",
+            "draft_report_path": "DRAFT_REPORT.md",
+        },
+    }
+
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=1)
+
+    assert "- Overall status: FAIL" in report
+    assert "- Submission evidence status: FAIL" in report
+    assert "| Experiment source integrity | PASS | kind=real_result_file" in report
+    assert "| Experiment artifact consistency | FAIL | invalid; matched=1/2;" in report
+
+
 def test_acceptance_report_marks_disabled_compile_as_warning():
     summary = {
         "inputs": {

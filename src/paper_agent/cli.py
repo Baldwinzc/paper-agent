@@ -1419,6 +1419,9 @@ def _build_acceptance_report(
     submission_evidence_status = _submission_evidence_status(
         experiment_evidence,
         experiment_contract,
+        experiment_quality,
+        experiment_provenance,
+        artifact_consistency,
     )
 
     inputs = summary.get("inputs", {})
@@ -1615,12 +1618,33 @@ def _acceptance_overall(checks: list[dict[str, str]]) -> str:
     return "PASS"
 
 
-def _submission_evidence_status(evidence: dict[str, object], contract: dict[str, object]) -> str:
+def _submission_evidence_status(
+    evidence: dict[str, object],
+    contract: dict[str, object],
+    quality: dict[str, object] | None = None,
+    provenance: dict[str, object] | None = None,
+    artifact_consistency: dict[str, object] | None = None,
+) -> str:
     kind = str(evidence.get("kind", "unknown"))
     contract_status = str(contract.get("status", "unknown"))
-    if kind in {"real_result_file", "provided_result_text", "structured_state"}:
-        return "PASS" if contract_status == "complete" else "WARN"
-    return "FAIL"
+    if kind not in {"real_result_file", "provided_result_text", "structured_state"}:
+        return "FAIL"
+
+    evidence_statuses = [
+        contract_status,
+        str((quality or {}).get("status", "not_configured")),
+        str((provenance or {}).get("status", "not_configured")),
+        str((artifact_consistency or {}).get("status", "not_configured")),
+    ]
+    if any(status == "invalid" for status in evidence_statuses):
+        return "FAIL"
+    if contract_status != "complete":
+        return "WARN"
+    if str((quality or {}).get("status", "not_configured")) == "needs_attention":
+        return "WARN"
+    if str((artifact_consistency or {}).get("status", "not_configured")) == "needs_attention":
+        return "WARN"
+    return "PASS"
 
 
 def _acceptance_item(
