@@ -461,6 +461,7 @@ class DraftReportAgent:
                 f"matched={checks.get('matched_values', 0)}/{checks.get('paper_values', 0)}, "
                 f"missing={checks.get('missing_values', 0)}, "
                 f"mismatched={checks.get('mismatched_values', 0)}, "
+                f"aggregated={checks.get('aggregated_values', 0)}, "
                 f"csv artifacts={checks.get('csv_artifacts', 0)}"
             )
             for match in consistency.get("matches", [])[:5]:
@@ -470,6 +471,7 @@ class DraftReportAgent:
                     f"- Match: {match.get('role')} {match.get('method')} "
                     f"{match.get('dataset')} {match.get('metric')} = {match.get('value')} "
                     f"from {match.get('artifact_path')} row {match.get('row_number')}"
+                    f"; aggregation={match.get('aggregation', '')}; folds={match.get('fold_count', 1)}"
                 )
             for error in consistency.get("errors", [])[:5]:
                 lines.append(f"- Error: {error}")

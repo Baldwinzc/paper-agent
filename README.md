@@ -229,7 +229,8 @@ or other reproducibility records. Local provenance files are fingerprinted with
 SHA-256, and an optional `SHA256` column can enforce checksum matching.
 Add `--require-artifact-consistency` when a local CSV provenance artifact should
 be used to verify that parsed paper-table values match source rows such as
-`method,dataset,metric,value`.
+`method,dataset,metric,value`. Repeated rows for the same method/dataset/metric,
+for example one row per fold, are averaged before comparison.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
 For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:

@@ -229,3 +229,14 @@ Hyper-ProtoSurv ours,BRCA,C-index,0.691
 
 The validator matches method, dataset, and metric labels, then compares numeric
 values with a tolerance of `0.001` to allow normal paper-table rounding.
+If the CSV contains repeated rows for the same method, dataset, and metric, such
+as one row per fold, the validator compares the paper value against the mean of
+those rows and records the fold count and sample standard deviation.
+
+```csv
+method,dataset,metric,fold,seed,value
+ProtoSurv baseline,BLCA,C-index,0,2026,0.640
+ProtoSurv baseline,BLCA,C-index,1,2026,0.652
+Hyper-ProtoSurv ours,BLCA,C-index,0,2026,0.660
+Hyper-ProtoSurv ours,BLCA,C-index,1,2026,0.682
+```

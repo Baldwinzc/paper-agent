@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import re
+import statistics
 from pathlib import Path
 
 from paper_agent.state import ExperimentComparison, ExperimentSummary
@@ -42,6 +43,7 @@ def assess_experiment_artifact_consistency(
         "matched_values": 0,
         "missing_values": 0,
         "mismatched_values": 0,
+        "aggregated_values": 0,
         "tolerance": tolerance,
     }
     if not paper_values:
@@ -61,6 +63,7 @@ def assess_experiment_artifact_consistency(
         values, warning = _read_csv_values(entry)
         if values:
             checks["checkable_csv_artifacts"] += 1
+            checks["aggregated_values"] += sum(1 for value in values if int(value.get("fold_count", 1) or 1) > 1)
             artifact_values.extend(values)
         elif warning:
             parse_warnings.append(warning)
@@ -100,6 +103,9 @@ def assess_experiment_artifact_consistency(
             "artifact_path": best.get("artifact_path", ""),
             "row_number": best.get("row_number", 0),
             "absolute_delta": delta,
+            "aggregation": best.get("aggregation", ""),
+            "fold_count": best.get("fold_count", 1),
+            "artifact_std": best.get("std", 0.0),
         }
         if delta <= tolerance:
             matches.append(record)
@@ -184,7 +190,7 @@ def _read_csv_values(entry: dict[str, object]) -> tuple[list[dict[str, object]],
                     values.append(parsed)
             if not values:
                 return [], f"CSV provenance artifact has no numeric result rows: {entry.get('path', path)}."
-            return values, ""
+            return _aggregate_csv_values(values), ""
     except OSError as exc:
         return [], f"CSV provenance artifact could not be read: {entry.get('path', path)} ({exc})."
 
@@ -193,11 +199,20 @@ def _csv_schema(headers: list[str]) -> dict[str, str] | None:
     method = _find_column(headers, ["method", "model", "variant", "approach"])
     dataset = _find_column(headers, ["dataset", "cohort", "cancer", "project"])
     metric = _find_column(headers, ["metric", "measure"])
+    fold = _find_column(headers, ["fold", "split"])
+    seed = _find_column(headers, ["seed", "run"])
     value = _find_column(headers, ["value", "score", "result", "mean", "estimate"])
     if not value:
         value = _find_metric_value_column(headers)
     if method and dataset and value:
-        return {"method": method, "dataset": dataset, "metric": metric or "", "value": value}
+        return {
+            "method": method,
+            "dataset": dataset,
+            "metric": metric or "",
+            "fold": fold,
+            "seed": seed,
+            "value": value,
+        }
     return None
 
 
@@ -217,10 +232,56 @@ def _csv_row_value(
         "dataset": row.get(schema["dataset"], ""),
         "metric": metric,
         "value": value,
+        "fold": row.get(schema["fold"], "") if schema.get("fold") else "",
+        "seed": row.get(schema["seed"], "") if schema.get("seed") else "",
         "artifact_path": entry.get("path", ""),
         "resolved_path": entry.get("resolved_path", ""),
         "row_number": row_number,
     }
+
+
+def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
+    for value in values:
+        key = (
+            _normalize_label(str(value.get("method", ""))),
+            _normalize_label(str(value.get("dataset", ""))),
+            _normalize_metric(str(value.get("metric", ""))),
+            str(value.get("artifact_path", "")),
+        )
+        groups.setdefault(key, []).append(value)
+
+    aggregated: list[dict[str, object]] = []
+    for group in groups.values():
+        if len(group) == 1:
+            item = dict(group[0])
+            item.setdefault("fold_count", 1)
+            item.setdefault("std", 0.0)
+            item.setdefault("aggregation", "single_row")
+            aggregated.append(item)
+            continue
+        numeric_values = [float(item["value"]) for item in group]
+        row_numbers = [str(item.get("row_number", "")) for item in group if item.get("row_number")]
+        folds = [str(item.get("fold", "")) for item in group if str(item.get("fold", "")).strip()]
+        seeds = [str(item.get("seed", "")) for item in group if str(item.get("seed", "")).strip()]
+        first = group[0]
+        aggregated.append(
+            {
+                "method": first.get("method", ""),
+                "dataset": first.get("dataset", ""),
+                "metric": first.get("metric", ""),
+                "value": sum(numeric_values) / len(numeric_values),
+                "std": statistics.stdev(numeric_values) if len(numeric_values) > 1 else 0.0,
+                "fold_count": len(numeric_values),
+                "folds": list(dict.fromkeys(folds)),
+                "seeds": list(dict.fromkeys(seeds)),
+                "artifact_path": first.get("artifact_path", ""),
+                "resolved_path": first.get("resolved_path", ""),
+                "row_number": ",".join(row_numbers),
+                "aggregation": "mean",
+            }
+        )
+    return aggregated
 
 
 def _find_column(headers: list[str], names: list[str]) -> str:

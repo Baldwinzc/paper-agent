@@ -3717,7 +3717,7 @@ def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tm
     assert "Experiment result provenance: complete" in output
     assert "Provenance fingerprints: 3/3 local files; verified_checksums=3; checksum_mismatches=0" in output
     assert "Experiment artifact consistency: complete" in output
-    assert "Artifact consistency coverage: matched=4/4; missing=0; mismatched=0; csv_artifacts=2" in output
+    assert "Artifact consistency coverage: matched=4/4; missing=0; mismatched=0; aggregated=0; csv_artifacts=2" in output
     assert "Experiment result quality: complete" in output
     assert summary["experiment_quality"]["status"] == "complete"
     assert summary["experiment_provenance"]["status"] == "complete"
@@ -3730,6 +3730,93 @@ def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tm
     assert summary["experiment_provenance"]["entries"][0]["hash_verified"] is True
     assert summary["experiment_artifact_consistency"]["status"] == "complete"
     assert summary["experiment_artifact_consistency"]["checks"]["matched_values"] == 4
+
+
+def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    values_csv = logs_dir / "tcga_folds.csv"
+    values_csv.write_text(
+        "\n".join(
+            [
+                "method,dataset,metric,fold,seed,value",
+                "ProtoSurv baseline,BLCA,C-index,0,2026,0.640",
+                "ProtoSurv baseline,BLCA,C-index,1,2026,0.652",
+                "Hyper-ProtoSurv ours,BLCA,C-index,0,2026,0.660",
+                "Hyper-ProtoSurv ours,BLCA,C-index,1,2026,0.682",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    values_hash = hashlib.sha256(values_csv.read_bytes()).hexdigest()
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "| w/o reconstruction loss | 0.659 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.667 |",
+                "| 1.0 | 0.671 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+                "",
+                "## Result Provenance",
+                "",
+                "| Artifact | Path | SHA256 | Description |",
+                "|---|---|---|---|",
+                f"| Fold-level CSV | logs/tcga_folds.csv | {values_hash} | seed=2026; fold=0..1 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--summary",
+            str(summary_path),
+            "--strict",
+            "--require-provenance",
+            "--require-artifact-consistency",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=2/2; missing=0; mismatched=0; aggregated=2; csv_artifacts=1" in output
+    consistency = summary["experiment_artifact_consistency"]
+    assert consistency["checks"]["aggregated_values"] == 2
+    assert consistency["matches"][0]["aggregation"] == "mean"
+    assert consistency["matches"][0]["fold_count"] == 2
 
 
 def test_cli_validate_results_requires_result_provenance_when_requested(monkeypatch, tmp_path, capsys):
@@ -3940,7 +4027,7 @@ def test_cli_validate_results_fails_on_csv_artifact_value_mismatch(monkeypatch, 
         raise AssertionError("Expected strict validation to fail on artifact value mismatch.")
     output = capsys.readouterr().out
     assert "Experiment artifact consistency: invalid" in output
-    assert "Artifact consistency coverage: matched=1/2; missing=0; mismatched=1; csv_artifacts=1" in output
+    assert "Artifact consistency coverage: matched=1/2; missing=0; mismatched=1; aggregated=0; csv_artifacts=1" in output
     assert "ARTIFACT CONSISTENCY ERROR: Artifact value mismatch for method Hyper-ProtoSurv ours BLCA C-INDEX" in output
 
 

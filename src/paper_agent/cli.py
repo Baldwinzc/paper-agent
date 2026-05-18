@@ -1132,6 +1132,7 @@ def _validate_results_text(
             f"{consistency_checks.get('paper_values', 0)}; "
             f"missing={consistency_checks.get('missing_values', 0)}; "
             f"mismatched={consistency_checks.get('mismatched_values', 0)}; "
+            f"aggregated={consistency_checks.get('aggregated_values', 0)}; "
             f"csv_artifacts={consistency_checks.get('csv_artifacts', 0)}"
         )
         for error in artifact_consistency.get("errors", []):
@@ -1736,6 +1737,7 @@ def _experiment_artifact_consistency_acceptance_items(consistency: dict[str, obj
         f"matched={checks.get('matched_values', 0)}/{checks.get('paper_values', 0)}; "
         f"missing={checks.get('missing_values', 0)}; "
         f"mismatched={checks.get('mismatched_values', 0)}; "
+        f"aggregated={checks.get('aggregated_values', 0)}; "
         f"csv_artifacts={checks.get('csv_artifacts', 0)}"
     )
     status = str(consistency.get("status", "unknown"))
