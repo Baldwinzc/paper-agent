@@ -1552,6 +1552,16 @@ def _build_acceptance_report(
                 *[f"- {check['name']}: {check['detail']}" for check in warnings],
             ]
         )
+    review_details = summary.get("review_finding_details", [])
+    if review_details:
+        lines.extend(["", "## Reviewer Findings", ""])
+        for item in review_details[:10]:
+            if not isinstance(item, dict):
+                continue
+            severity = _table_safe(str(item.get("severity", "")))
+            issue = _table_safe(str(item.get("issue", "")))
+            suggestion = _table_safe(str(item.get("suggestion", "")))
+            lines.append(f"- [{severity}] {issue} Suggestion: {suggestion}")
     return "\n".join(lines) + "\n"
 
 
@@ -2009,6 +2019,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "review_findings": len(review_findings),
         "review_findings_major": review_major,
         "review_findings_minor": review_minor,
+        "review_finding_details": _review_finding_details(review_findings),
         "submission_readiness_score": readiness.get("overall_score", 0),
         "submission_readiness_status": readiness.get("status", "not run"),
         "submission_package_status": submission_package.get("status", "not run"),
@@ -2088,6 +2099,27 @@ def _review_finding_severity(finding: object) -> str:
     if isinstance(finding, dict):
         return str(finding.get("severity", ""))
     return str(getattr(finding, "severity", ""))
+
+
+def _review_finding_details(findings: list[object], *, limit: int = 20) -> list[dict[str, str]]:
+    details = []
+    for finding in findings[:limit]:
+        if isinstance(finding, dict):
+            severity = str(finding.get("severity", ""))
+            issue = str(finding.get("issue", ""))
+            suggestion = str(finding.get("suggestion", ""))
+        else:
+            severity = str(getattr(finding, "severity", ""))
+            issue = str(getattr(finding, "issue", ""))
+            suggestion = str(getattr(finding, "suggestion", ""))
+        details.append(
+            {
+                "severity": severity,
+                "issue": issue,
+                "suggestion": suggestion,
+            }
+        )
+    return details
 
 
 def _run_llm_self_review_smoke() -> None:

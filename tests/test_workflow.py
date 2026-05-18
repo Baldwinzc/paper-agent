@@ -2495,7 +2495,13 @@ def test_run_summary_reports_core_metrics(tmp_path):
         "request": PaperRequest(project_name="summary-demo", target_venue="TPAMI"),
         "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
         "bibliography": [CitationEntry(key="paper", title="Paper")],
-        "review_findings": [SimpleNamespace()],
+        "review_findings": [
+            SimpleNamespace(
+                severity="minor",
+                issue="Reviewer wants more novelty positioning.",
+                suggestion="Add one sentence contrasting the method with ProtoSurv.",
+            )
+        ],
         "latex_project_dir": tmp_path / "latex",
         "latex_output_path": tmp_path / "latex" / "main.tex",
         "latex_zip_path": tmp_path / "paper.zip",
@@ -2548,6 +2554,9 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["project_name"] == "summary-demo"
     assert summary["llm_self_review_mode"] == "disabled"
     assert summary["bibliography_entries"] == 1
+    assert summary["review_findings"] == 1
+    assert summary["review_findings_minor"] == 1
+    assert summary["review_finding_details"][0]["issue"] == "Reviewer wants more novelty positioning."
     assert summary["submission_readiness_score"] == 82
     assert summary["submission_readiness_status"] == "needs_author_pass"
     assert summary["submission_package_status"] == "needs_attention"
@@ -2902,6 +2911,13 @@ def test_acceptance_report_treats_minor_reviewer_and_package_warnings_as_warning
         "review_findings": 1,
         "review_findings_major": 0,
         "review_findings_minor": 1,
+        "review_finding_details": [
+            {
+                "severity": "minor",
+                "issue": "Reviewer wants stronger novelty positioning.",
+                "suggestion": "Add a concise comparison to ProtoSurv in the introduction.",
+            }
+        ],
         "submission_readiness_status": "reviewable",
         "submission_readiness_score": 91,
         "submission_package_status": "needs_attention",
@@ -2925,6 +2941,9 @@ def test_acceptance_report_treats_minor_reviewer_and_package_warnings_as_warning
     assert "- Submission evidence status: WARN" in report
     assert "| Reviewer | WARN | 0 major; 1 minor |" in report
     assert "| Submission package | WARN | needs_attention; errors=0; warnings=2 |" in report
+    assert "## Reviewer Findings" in report
+    assert "- [minor] Reviewer wants stronger novelty positioning." in report
+    assert "Suggestion: Add a concise comparison to ProtoSurv in the introduction." in report
 
 
 def test_tcga_cohort_summary_uses_dataset_csv_without_performance_claims(tmp_path):
