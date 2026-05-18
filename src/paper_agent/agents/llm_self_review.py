@@ -54,6 +54,11 @@ class LLMSelfReviewAgent:
 
         claims = review.get("unsupported_claims", [])
         revisions = self._auto_revise_supported_locations(state, claims)
+        rewrite_revisions, rewrite_errors = self._rewrite_unmatched_claims(state, claims)
+        revisions = [*revisions, *rewrite_revisions]
+        if rewrite_errors:
+            for claim in claims:
+                claim.setdefault("revision_errors", []).extend(rewrite_errors)
         active_claims = [claim for claim in claims if not claim.get("auto_revised")]
         revised_claims = [claim for claim in claims if claim.get("auto_revised")]
         notes = review.get("section_quality_notes", [])
@@ -62,6 +67,7 @@ class LLMSelfReviewAgent:
             "unsupported_claims": active_claims,
             "auto_revised_claims": revised_claims,
             "auto_revisions": revisions,
+            "revision_errors": rewrite_errors,
             "section_quality_notes": notes,
             "repaired_from_invalid_json": repaired_from_invalid_json,
         }
@@ -386,6 +392,160 @@ class LLMSelfReviewAgent:
             state["sections"] = DraftSections(**values)
         return revisions
 
+    def _rewrite_unmatched_claims(
+        self,
+        state: PaperState,
+        claims: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, str]], list[str]]:
+        active_claims = [claim for claim in claims if not claim.get("auto_revised")]
+        if not active_claims or self._rewrite_disabled():
+            return [], []
+        try:
+            result = self.llm_client.chat(
+                self._rewrite_messages(state, active_claims),
+                temperature=0.0,
+                max_tokens=2400,
+                response_format={"type": "json_object"},
+            )
+            revisions = self._parse_rewrite_result(result.content)
+            applied = self._apply_rewrite_revisions(state, active_claims, revisions)
+        except Exception as exc:
+            return [], [str(exc)]
+
+        return applied, []
+
+    def _rewrite_disabled(self) -> bool:
+        value = os.getenv("PAPER_AGENT_DISABLE_LLM_SELF_REWRITE", "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    def _rewrite_messages(self, state: PaperState, claims: list[dict[str, Any]]) -> list[ChatMessage]:
+        sections = state["sections"].model_dump()
+        target_sections = sorted({self._section_name(str(claim.get("section", ""))) for claim in claims})
+        section_payload = {
+            section: sections.get(section, "")
+            for section in target_sections
+            if section in sections
+        }
+        return [
+            ChatMessage(
+                role="system",
+                content=(
+                    "You conservatively revise scientific paper draft sections. Remove or neutralize "
+                    "unsupported factual claims. Do not add datasets, numbers, methods, citations, "
+                    "or positive performance claims. Preserve markdown. Return compact valid JSON only."
+                ),
+            ),
+            ChatMessage(
+                role="user",
+                content=json.dumps(
+                    {
+                        "task": "Rewrite only sections needed to remove unsupported claims.",
+                        "hard_rules": [
+                            "Return the full revised text for each changed section.",
+                            "Keep supported evidence-grounded content.",
+                            "Remove unsupported claims instead of adding new claims.",
+                            "If a section cannot be safely rewritten, omit it.",
+                        ],
+                        "unsupported_claims": claims,
+                        "draft_sections": section_payload,
+                        "output_schema": {
+                            "section_revisions": [
+                                {
+                                    "section": "section name",
+                                    "revised_text": "full revised section text",
+                                    "rationale": "short reason for the edit",
+                                }
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        ]
+
+    def _parse_rewrite_result(self, content: str) -> list[dict[str, str]]:
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("LLM self-rewrite response must be a JSON object.")
+        raw_revisions = data.get("section_revisions", [])
+        if not isinstance(raw_revisions, list):
+            raise ValueError("section_revisions must be a list.")
+        revisions = []
+        for item in raw_revisions:
+            if not isinstance(item, dict):
+                continue
+            revisions.append(
+                {
+                    "section": str(item.get("section", ""))[:80],
+                    "revised_text": str(item.get("revised_text", "")).strip(),
+                    "rationale": str(item.get("rationale", "")).strip()[:500],
+                }
+            )
+        return revisions
+
+    def _apply_rewrite_revisions(
+        self,
+        state: PaperState,
+        claims: list[dict[str, Any]],
+        revisions: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        sections = state.get("sections")
+        if not sections or not revisions:
+            return []
+        values = sections.model_dump()
+        claims_by_section: dict[str, list[dict[str, Any]]] = {}
+        for claim in claims:
+            claims_by_section.setdefault(self._section_name(str(claim.get("section", ""))), []).append(claim)
+
+        applied: list[dict[str, str]] = []
+        for revision in revisions:
+            section_name = self._section_name(revision.get("section", ""))
+            if section_name not in values or section_name not in claims_by_section:
+                continue
+            original_text = str(values.get(section_name, ""))
+            revised_text = revision.get("revised_text", "").strip()
+            section_claims = claims_by_section[section_name]
+            if not self._rewrite_is_safe(original_text, revised_text, section_claims):
+                continue
+            values[section_name] = revised_text
+            for claim in section_claims:
+                claim["auto_revised"] = True
+                claim["revision_action"] = "llm_rewrite_section"
+            applied.append(
+                {
+                    "section": section_name,
+                    "action": "llm_rewrite_section",
+                    "rationale": revision.get("rationale", ""),
+                    "original_chars": str(len(original_text)),
+                    "revised_chars": str(len(revised_text)),
+                }
+            )
+
+        if applied:
+            state["sections"] = DraftSections(**values)
+        return applied
+
+    def _rewrite_is_safe(
+        self,
+        original_text: str,
+        revised_text: str,
+        claims: list[dict[str, Any]],
+    ) -> bool:
+        if not revised_text or self._normalize_for_match(revised_text) == self._normalize_for_match(original_text):
+            return False
+        if len(revised_text) < max(40, int(len(original_text.strip()) * 0.2)):
+            return False
+        revised_norm = self._normalize_for_match(revised_text)
+        for claim in claims:
+            claim_norm = self._normalize_for_match(str(claim.get("claim", "")))
+            if claim_norm and claim_norm in revised_norm:
+                return False
+        return True
+
     def _section_name(self, section: str) -> str:
         lowered = re.sub(r"[^a-z_]+", "_", section.strip().lower()).strip("_")
         aliases = {
@@ -429,7 +589,7 @@ class LLMSelfReviewAgent:
             revised = re.sub(r"\s{2,}", " ", revised).strip()
             return revised, line[start:end].strip()
 
-        spans = list(re.finditer(r"[^.!?。！？]+[.!?。！？]?(?:\s+|$)", line))
+        spans = list(re.finditer(r"[^.!?]+[.!?]?(?:\s+|$)", line))
         if not spans:
             return line, ""
         for match in spans:
@@ -461,7 +621,7 @@ class LLMSelfReviewAgent:
 
     def _is_sentence_boundary(self, line: str, index: int) -> bool:
         char = line[index]
-        if char not in ".!?。！？":
+        if char not in ".!?":
             return False
         if char == ".":
             previous_is_digit = index > 0 and line[index - 1].isdigit()

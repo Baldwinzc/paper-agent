@@ -2386,6 +2386,65 @@ def test_llm_self_review_keeps_finding_when_claim_cannot_be_located(monkeypatch)
     assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
 
 
+def test_llm_self_review_rewrites_unlocated_claim_with_llm(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REWRITE", raising=False)
+    client = FakeSequenceLLMClient(
+        [
+            """
+            {
+              "unsupported_claims": [
+                {
+                  "section": "experiments",
+                  "claim": "The model obtains 0.999 on XYZ.",
+                  "reason": "XYZ and 0.999 are absent from the supplied experiment table.",
+                  "evidence_needed": "Add an experiment row for XYZ with this value.",
+                  "severity": "major"
+                }
+              ],
+              "section_quality_notes": []
+            }
+            """,
+            """
+            {
+              "section_revisions": [
+                {
+                  "section": "experiments",
+                  "revised_text": "The experiments summarize the supplied BLCA C-index evidence and avoid claims about unreported cohorts.",
+                  "rationale": "Removed the unsupported XYZ performance claim while preserving the grounded experiment scope."
+                }
+              ]
+            }
+            """,
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="llm-review-rewrite-demo", target_venue="TPAMI"),
+        "sections": DraftSections(
+            experiments=(
+                "The evaluation suggests unusually broad reliability beyond the reported TCGA cohorts. "
+                "The reported TCGA results are summarized in Table 1."
+            )
+        ),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+
+    review = reviewed["artifacts"]["llm_self_review"]
+    assert review["unsupported_claims"] == []
+    assert review["auto_revisions"][0]["action"] == "llm_rewrite_section"
+    assert review["auto_revised_claims"][0]["revision_action"] == "llm_rewrite_section"
+    assert reviewed["sections"].experiments.startswith("The experiments summarize")
+    assert reviewed.get("review_findings", []) == []
+    assert len(client.calls) == 2
+    rewrite_payload = json.loads(client.calls[1]["messages"][1].content)
+    assert rewrite_payload["output_schema"]["section_revisions"]
+
+
 def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
     client = FakeLLMClient(
@@ -5453,6 +5512,7 @@ def test_llm_self_review_records_bad_json_error(monkeypatch):
 
 def test_llm_self_review_repairs_invalid_json_once(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM_SELF_REWRITE", "1")
     client = FakeSequenceLLMClient(
         [
             '{"unsupported_claims": [{"section": "method", "claim": "Broken',
@@ -5517,7 +5577,7 @@ def test_draft_report_includes_llm_self_review(tmp_path):
 
     report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
     assert "## LLM Self Review" in report
-    assert "Auto revisions: 1 unsupported claim sentence(s) removed." in report
+    assert "Auto revisions: 1 unsupported claim edit(s) applied." in report
     assert "introduction: The method improves every cohort without uncertainty evidence." in report
     assert "experiments: The method obtains 0.999 on XYZ." in report
     assert "Evidence needed: Add the missing experiment result." in report

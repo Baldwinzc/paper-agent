@@ -140,8 +140,11 @@ The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.
 When a returned unsupported claim can be matched to an exact draft sentence, the
-self-review pass removes that sentence before LaTeX generation and records the
-edit under `auto_revisions`; unmatched claims remain as reviewer findings.
+self-review pass removes that sentence before LaTeX generation. If no exact
+sentence match is available, it asks the configured LLM for a conservative
+section rewrite and accepts it only when the unsupported claim is removed.
+Accepted edits are recorded under `auto_revisions`; unresolved claims remain as
+reviewer findings.
 
 Run a configured-LLM acceptance smoke on the local Hyper-ProtoSurv materials:
 
