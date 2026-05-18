@@ -2786,7 +2786,11 @@ def test_acceptance_report_fails_submission_evidence_for_mock_experiment_source(
         "experiment_result_tables": 1,
         "presentation_figures": 0,
         "generated_figures": 0,
-        "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
+        "outputs": {
+            "markdown": "draft.md",
+            "latex_output_path": "main.tex",
+            "draft_report_path": "DRAFT_REPORT.md",
+        },
     }
 
     report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
@@ -2910,6 +2914,42 @@ def test_acceptance_report_marks_disabled_compile_as_warning():
     assert "- Overall status: PASS_WITH_WARNINGS" in report
     assert "- Submission evidence status: WARN" in report
     assert "| LaTeX compile | WARN | status=disabled; tool=tectonic.exe; mode=not_run |" in report
+
+
+def test_acceptance_report_includes_latex_install_hint_when_tool_missing():
+    summary = {
+        "inputs": {
+            "code_path": "code",
+            "baseline_pdf_path": "baseline.pdf",
+            "target_venue": "TPAMI",
+            "experiment_results_provided": True,
+            "experiment_results_source": "file",
+            "experiment_results_path": "results.md",
+        },
+        "section_writer_llm_attempted_sections": [],
+        "section_writer_llm_successes": [],
+        "section_writer_section_errors": {},
+        "evidence_guard_findings": 0,
+        "review_findings": 0,
+        "submission_readiness_status": "reviewable",
+        "submission_readiness_score": 95,
+        "submission_package_status": "needs_attention",
+        "submission_package_errors": 0,
+        "submission_package_warnings": 1,
+        "submission_compile_mode": "not_run",
+        "submission_compile_status": "tool_unavailable",
+        "submission_compile_tool": "",
+        "submission_compile_install_hint": "conda install -n agent -c conda-forge tectonic",
+        "experiment_result_tables": 1,
+        "presentation_figures": 0,
+        "generated_figures": 0,
+        "outputs": {"markdown": "draft.md", "latex_output_path": "main.tex", "draft_report_path": "DRAFT_REPORT.md"},
+    }
+
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
+
+    assert "| LaTeX compile | WARN | status=tool_unavailable; tool=none; mode=not_run;" in report
+    assert "install=conda install -n agent -c conda-forge tectonic" in report
 
 
 def test_acceptance_report_treats_minor_reviewer_and_package_warnings_as_warnings():
@@ -5515,6 +5555,36 @@ def test_submission_package_validator_uses_tectonic_when_enabled(tmp_path, monke
     assert commands[0][1]["errors"] == "replace"
     assert commands[0][1]["timeout"] == SubmissionPackageValidatorAgent.COMPILE_TIMEOUT_SECONDS
     assert warnings == []
+
+
+def test_submission_package_validator_reports_latex_install_hint(monkeypatch, tmp_path):
+    project_dir = tmp_path / "latex"
+    project_dir.mkdir()
+    main_tex = project_dir / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\\begin{document}x\\end{document}",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(SubmissionPackageValidatorAgent, "_find_executable", lambda self, name: "")
+
+    warnings = []
+    result = SubmissionPackageValidatorAgent()._compile_check(project_dir, main_tex, warnings)
+
+    assert result["status"] == "tool_unavailable"
+    assert result["install_hint"] == "conda install -n agent -c conda-forge tectonic"
+    assert warnings == ["No local LaTeX compiler was found; static package checks were run only."]
+
+
+def test_cli_latex_doctor_reports_missing_toolchain(monkeypatch, capsys):
+    monkeypatch.setattr(SubmissionPackageValidatorAgent, "_find_executable", lambda self, name: "")
+    monkeypatch.setattr("sys.argv", ["paper-agent", "latex-doctor"])
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "LaTeX toolchain:" in output
+    assert "- tectonic: not found" in output
+    assert "Install hint: conda install -n agent -c conda-forge tectonic" in output
 
 
 def test_draft_report_includes_submission_package_validation(tmp_path):

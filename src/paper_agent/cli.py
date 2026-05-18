@@ -292,6 +292,7 @@ def main() -> None:
     _add_experiment_artifact_consistency_options(tcga_draft)
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
+    sub.add_parser("latex-doctor", help="Check local LaTeX compiler availability and install guidance.")
     llm_draft = sub.add_parser(
         "llm-draft-smoke",
         help="Run a full local draft smoke test and require configured LLM section calls.",
@@ -547,6 +548,8 @@ def main() -> None:
         print(result.content.strip())
     elif args.command == "llm-self-review-smoke":
         _run_llm_self_review_smoke()
+    elif args.command == "latex-doctor":
+        _run_latex_doctor()
     elif args.command == "llm-draft-smoke":
         _run_llm_draft_smoke(args)
 
@@ -648,6 +651,35 @@ def _llm_provider_from_host(host: str) -> str:
 
 def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _run_latex_doctor() -> None:
+    status = _latex_toolchain_status()
+    print("LaTeX toolchain:")
+    for name, path in status["tools"].items():
+        print(f"- {name}: {path or 'not found'}")
+    if status["available"]:
+        print(f"Preferred compiler: {status['preferred_tool']}")
+        print("Compile checks can be enabled with --compile-latex.")
+    else:
+        print("No local LaTeX compiler found.")
+        print(f"Install hint: {status['install_hint']}")
+
+
+def _latex_toolchain_status() -> dict[str, object]:
+    validator = SubmissionPackageValidatorAgent()
+    tools = {
+        "latexmk": validator._find_executable("latexmk"),
+        "pdflatex": validator._find_executable("pdflatex"),
+        "tectonic": validator._find_executable("tectonic"),
+    }
+    preferred = tools["latexmk"] or tools["pdflatex"] or tools["tectonic"]
+    return {
+        "tools": tools,
+        "available": bool(preferred),
+        "preferred_tool": Path(str(preferred)).name if preferred else "",
+        "install_hint": validator._compile_install_hint(),
+    }
 
 
 def _refresh_submission_artifacts(state: dict) -> None:
@@ -1587,6 +1619,7 @@ def _acceptance_checks(
     compile_status = summary.get("submission_compile_status", "not_run")
     compile_tool = summary.get("submission_compile_tool", "")
     compile_mode = summary.get("submission_compile_mode", "")
+    compile_install_hint = summary.get("submission_compile_install_hint", "")
     review_major = int(summary.get("review_findings_major", summary.get("review_findings", 0)) or 0)
     review_minor = int(summary.get("review_findings_minor", 0) or 0)
     experiment_evidence = _summary_experiment_evidence(summary)
@@ -1654,7 +1687,7 @@ def _acceptance_checks(
             int(summary.get("submission_package_errors", 0) or 0),
             int(summary.get("submission_package_warnings", 0) or 0),
         ),
-        _compile_acceptance_item(compile_status, compile_tool, compile_mode),
+        _compile_acceptance_item(compile_status, compile_tool, compile_mode, str(compile_install_hint)),
         _acceptance_item(
             "Generated figures",
             summary.get("generated_figures", 0) >= min(1, summary.get("presentation_figures", 0)),
@@ -1844,8 +1877,10 @@ def _experiment_artifact_consistency_acceptance_items(consistency: dict[str, obj
     return [{"name": "Experiment artifact consistency", "status": "WARN", "detail": _table_safe(detail)}]
 
 
-def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
+def _compile_acceptance_item(status: str, tool: str, mode: str, install_hint: str = "") -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
+    if install_hint and status == "tool_unavailable":
+        detail += f"; install={install_hint}"
     if status == "passed":
         return _acceptance_item("LaTeX compile", True, detail)
     if status in {"disabled", "tool_unavailable", "not_run", ""}:
@@ -2036,6 +2071,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "submission_compile_mode": compile_check.get("mode", "not_run"),
         "submission_compile_status": compile_check.get("status", "not_run"),
         "submission_compile_tool": compile_check.get("tool", ""),
+        "submission_compile_install_hint": compile_check.get("install_hint", ""),
         "presentation_figures": len(presentation_plan.get("figures", [])),
         "generated_figures": len(artifacts.get("generated_figures", [])),
         "presentation_tables": len(presentation_plan.get("tables", [])),

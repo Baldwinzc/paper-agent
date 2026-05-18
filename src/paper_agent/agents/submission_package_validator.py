@@ -165,7 +165,12 @@ class SubmissionPackageValidatorAgent:
         tool = latexmk or pdflatex or tectonic or ""
         if not tool:
             warnings.append("No local LaTeX compiler was found; static package checks were run only.")
-            return {"mode": "not_run", "tool": "", "status": "tool_unavailable"}
+            return {
+                "mode": "not_run",
+                "tool": "",
+                "status": "tool_unavailable",
+                "install_hint": self._compile_install_hint(),
+            }
         if os.getenv("PAPER_AGENT_RUN_LATEX_COMPILE", "").strip().lower() not in {"1", "true", "yes", "on"}:
             return {"mode": "not_run", "tool": Path(tool).name, "status": "disabled"}
 
@@ -216,6 +221,9 @@ class SubmissionPackageValidatorAgent:
             "status": status,
             "returncode": completed.returncode,
         }
+
+    def _compile_install_hint(self) -> str:
+        return "conda install -n agent -c conda-forge tectonic"
 
     def _find_executable(self, name: str) -> str:
         found = shutil.which(name)

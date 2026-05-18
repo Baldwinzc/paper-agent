@@ -271,6 +271,10 @@ single run. `--compile-latex` enables the local LaTeX compiler, and
 `--min-llm-sections N` turns a normal draft run into a stricter acceptance run
 that fails unless at least `N` sections were actually written by the configured
 model.
+Check the local compiler setup with `python -m paper_agent.cli latex-doctor`.
+If no compiler is installed, the recommended lightweight setup is
+`conda install -n agent -c conda-forge tectonic`; acceptance reports include the
+same install hint when compile checks cannot run.
 
 Add `--skip-llm-self-review` when you want LLM section drafting but do not want
 the final second-pass reviewer to call the configured model. The CLI maps this
