@@ -609,6 +609,15 @@ class DraftReportAgent:
             lines.append(f"- Mode: {llm_review.get('mode', 'unknown')}")
             if llm_review.get("error"):
                 lines.append(f"- Error: {llm_review.get('error')}")
+            revisions = llm_review.get("auto_revisions", [])
+            if revisions:
+                lines.append(f"- Auto revisions: {len(revisions)} unsupported claim sentence(s) removed.")
+                for revision in revisions[:5]:
+                    lines.append(
+                        "- "
+                        f"{revision.get('section', 'unknown')}: "
+                        f"{self._clip(revision.get('removed_text', ''), 180)}"
+                    )
             claims = llm_review.get("unsupported_claims", [])
             if claims:
                 for claim in claims:

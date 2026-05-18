@@ -2342,11 +2342,48 @@ def test_llm_self_review_adds_unsupported_claim_finding(monkeypatch):
     reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
 
     assert reviewed["artifacts"]["llm_self_review"]["mode"] == "llm"
-    assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
-    assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
+    assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"] == []
+    assert reviewed["artifacts"]["llm_self_review"]["auto_revisions"][0]["section"] == "experiments"
+    assert reviewed["artifacts"]["llm_self_review"]["auto_revised_claims"][0]["section"] == "experiments"
+    assert reviewed["sections"].experiments == ""
+    assert reviewed.get("review_findings", []) == []
     assert client.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
     payload = json.loads(client.calls[0]["messages"][1].content)
     assert any("draft datasets" in rule for rule in payload["hard_rules"])
+
+
+def test_llm_self_review_keeps_finding_when_claim_cannot_be_located(monkeypatch):
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
+    client = FakeLLMClient(
+        """
+        {
+          "unsupported_claims": [
+            {
+              "section": "experiments",
+              "claim": "The method obtains 0.999 on XYZ.",
+              "reason": "XYZ and 0.999 are absent from the supplied experiment table.",
+              "evidence_needed": "Add an experiment row for XYZ with this value.",
+              "severity": "major"
+            }
+          ],
+          "section_quality_notes": []
+        }
+        """
+    )
+    state = {
+        "request": PaperRequest(project_name="llm-review-unlocated-demo", target_venue="TPAMI"),
+        "sections": DraftSections(experiments="The reported TCGA results are summarized in Table 1."),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    reviewed = LLMSelfReviewAgent(llm_client=client).run(state)
+
+    assert reviewed["artifacts"]["llm_self_review"]["auto_revisions"] == []
+    assert reviewed["artifacts"]["llm_self_review"]["unsupported_claims"][0]["section"] == "experiments"
+    assert any("LLM self-review flagged unsupported claim" in finding.issue for finding in reviewed["review_findings"])
 
 
 def test_llm_self_review_filters_claims_it_marks_supported(monkeypatch):
@@ -5437,7 +5474,7 @@ def test_llm_self_review_repairs_invalid_json_once(monkeypatch):
     )
     state = {
         "request": PaperRequest(project_name="llm-review-repair-demo", target_venue="TPAMI"),
-        "sections": DraftSections(method="Uses NVIDIA GPUs."),
+        "sections": DraftSections(method="The method describes its computational setup."),
         "artifacts": {},
     }
 
@@ -5456,6 +5493,12 @@ def test_draft_report_includes_llm_self_review(tmp_path):
         "artifacts": {
             "llm_self_review": {
                 "mode": "llm",
+                "auto_revisions": [
+                    {
+                        "section": "introduction",
+                        "removed_text": "The method improves every cohort without uncertainty evidence.",
+                    }
+                ],
                 "unsupported_claims": [
                     {
                         "section": "experiments",
@@ -5474,6 +5517,8 @@ def test_draft_report_includes_llm_self_review(tmp_path):
 
     report = (tmp_path / "DRAFT_REPORT.md").read_text(encoding="utf-8")
     assert "## LLM Self Review" in report
+    assert "Auto revisions: 1 unsupported claim sentence(s) removed." in report
+    assert "introduction: The method improves every cohort without uncertainty evidence." in report
     assert "experiments: The method obtains 0.999 on XYZ." in report
     assert "Evidence needed: Add the missing experiment result." in report
 

@@ -139,6 +139,9 @@ python -m paper_agent.cli llm-self-review-smoke
 The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
 the same JSON review path used at the end of a real draft run.
+When a returned unsupported claim can be matched to an exact draft sentence, the
+self-review pass removes that sentence before LaTeX generation and records the
+edit under `auto_revisions`; unmatched claims remain as reviewer findings.
 
 Run a configured-LLM acceptance smoke on the local Hyper-ProtoSurv materials:
 

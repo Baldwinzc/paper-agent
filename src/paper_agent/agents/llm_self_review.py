@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
-from paper_agent.state import PaperState, ReviewFinding
+from paper_agent.state import DraftSections, PaperState, ReviewFinding
 
 
 class LLMSelfReviewAgent:
@@ -53,17 +53,22 @@ class LLMSelfReviewAgent:
             return state
 
         claims = review.get("unsupported_claims", [])
+        revisions = self._auto_revise_supported_locations(state, claims)
+        active_claims = [claim for claim in claims if not claim.get("auto_revised")]
+        revised_claims = [claim for claim in claims if claim.get("auto_revised")]
         notes = review.get("section_quality_notes", [])
         artifacts["llm_self_review"] = {
             "mode": "llm",
-            "unsupported_claims": claims,
+            "unsupported_claims": active_claims,
+            "auto_revised_claims": revised_claims,
+            "auto_revisions": revisions,
             "section_quality_notes": notes,
             "repaired_from_invalid_json": repaired_from_invalid_json,
         }
-        if claims:
+        if active_claims:
             state["review_findings"] = [
                 *state.get("review_findings", []),
-                *[self._finding_from_claim(item) for item in claims],
+                *[self._finding_from_claim(item) for item in active_claims],
             ]
         return state
 
@@ -342,6 +347,143 @@ class LLMSelfReviewAgent:
             "eliminates",
         ]
         return any(marker in claim_text for marker in implementation_markers)
+
+    def _auto_revise_supported_locations(
+        self,
+        state: PaperState,
+        claims: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        sections = state.get("sections")
+        if not sections or not claims:
+            return []
+
+        values = sections.model_dump()
+        revisions: list[dict[str, str]] = []
+        for claim in claims:
+            section_name = self._section_name(claim.get("section", ""))
+            claim_text = claim.get("claim", "").strip()
+            if section_name not in values or len(claim_text) < 12:
+                continue
+            revised_text, removed_text = self._remove_claim_sentence(
+                str(values.get(section_name, "")),
+                claim_text,
+            )
+            if not removed_text:
+                continue
+            values[section_name] = revised_text
+            claim["auto_revised"] = True
+            claim["revision_action"] = "removed_sentence"
+            revisions.append(
+                {
+                    "section": section_name,
+                    "claim": claim_text[:240],
+                    "action": "removed_sentence",
+                    "removed_text": removed_text[:500],
+                }
+            )
+
+        if revisions:
+            state["sections"] = DraftSections(**values)
+        return revisions
+
+    def _section_name(self, section: str) -> str:
+        lowered = re.sub(r"[^a-z_]+", "_", section.strip().lower()).strip("_")
+        aliases = {
+            "related": "related_work",
+            "relatedwork": "related_work",
+            "related_work": "related_work",
+            "intro": "introduction",
+            "experiment": "experiments",
+            "experimental_results": "experiments",
+        }
+        return aliases.get(lowered, lowered)
+
+    def _remove_claim_sentence(self, text: str, claim: str) -> tuple[str, str]:
+        claim_norm = self._normalize_for_match(claim)
+        if not claim_norm:
+            return text, ""
+
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("#"):
+                continue
+            line_norm = self._normalize_for_match(line)
+            if claim_norm not in line_norm:
+                continue
+            revised_line, removed = self._remove_sentence_from_line(line, claim, claim_norm)
+            if not removed:
+                continue
+            lines[index] = revised_line
+            return self._clean_removed_line_artifacts("\n".join(lines)), removed
+        return text, ""
+
+    def _remove_sentence_from_line(self, line: str, claim: str, claim_norm: str) -> tuple[str, str]:
+        if self._normalize_for_match(line) == claim_norm:
+            return "", line.strip()
+
+        pattern = r"\s+".join(re.escape(part) for part in claim.split())
+        direct = re.search(pattern, line, flags=re.I)
+        if direct:
+            start, end = self._sentence_bounds(line, direct.start(), direct.end())
+            revised = line[:start] + line[end:]
+            revised = re.sub(r"\s{2,}", " ", revised).strip()
+            return revised, line[start:end].strip()
+
+        spans = list(re.finditer(r"[^.!?。！？]+[.!?。！？]?(?:\s+|$)", line))
+        if not spans:
+            return line, ""
+        for match in spans:
+            sentence = match.group(0)
+            if claim_norm not in self._normalize_for_match(sentence):
+                continue
+            revised = line[: match.start()] + line[match.end() :]
+            revised = re.sub(r"\s{2,}", " ", revised).strip()
+            return revised, sentence.strip()
+        return line, ""
+
+    def _sentence_bounds(self, line: str, start: int, end: int) -> tuple[int, int]:
+        left = 0
+        for index in range(start - 1, -1, -1):
+            if self._is_sentence_boundary(line, index):
+                left = index + 1
+                break
+        while left < len(line) and line[left].isspace():
+            left += 1
+
+        right = end
+        if right > 0 and self._is_sentence_boundary(line, right - 1):
+            return left, right
+        for index in range(end, len(line)):
+            if self._is_sentence_boundary(line, index):
+                right = index + 1
+                break
+        return left, right
+
+    def _is_sentence_boundary(self, line: str, index: int) -> bool:
+        char = line[index]
+        if char not in ".!?。！？":
+            return False
+        if char == ".":
+            previous_is_digit = index > 0 and line[index - 1].isdigit()
+            next_is_digit = index + 1 < len(line) and line[index + 1].isdigit()
+            if previous_is_digit and next_is_digit:
+                return False
+        return True
+
+    def _clean_removed_line_artifacts(self, text: str) -> str:
+        lines = text.splitlines()
+        cleaned: list[str] = []
+        blank = False
+        for line in lines:
+            current_blank = not line.strip()
+            if current_blank and blank:
+                continue
+            cleaned.append(line.rstrip())
+            blank = current_blank
+        return "\n".join(cleaned).strip()
+
+    def _normalize_for_match(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text.strip().lower())
 
     def _finding_from_claim(self, claim: dict[str, str]) -> ReviewFinding:
         section = claim.get("section") or "unknown"

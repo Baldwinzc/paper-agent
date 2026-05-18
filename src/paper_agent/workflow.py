@@ -48,10 +48,10 @@ class PaperWorkflow:
             RelatedWorkDiscoveryAgent(),
             SectionWriterAgent(llm_client=llm_client),
             EvidenceGuardAgent(),
+            LLMSelfReviewAgent(llm_client=llm_client),
             LatexComposerAgent(),
             SubmissionPackageValidatorAgent(),
             ReviewerAgent(),
-            LLMSelfReviewAgent(llm_client=llm_client),
             SubmissionReadinessAgent(),
             DraftReportAgent(),
         ]

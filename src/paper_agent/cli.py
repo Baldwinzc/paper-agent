@@ -1563,6 +1563,7 @@ def _build_acceptance_report(
             f"{inputs.get('llm_model', '') or 'not recorded'}"
         ),
         f"- LLM endpoint host: {inputs.get('llm_endpoint_host', '') or 'not recorded'}",
+        f"- LLM self-review auto revisions: {summary.get('llm_self_review_auto_revisions', 0)}",
         f"- LaTeX compile requested: {inputs.get('latex_compile_requested', False)}",
         "",
         "## Experiment Evidence Coverage",
@@ -2093,6 +2094,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
         "llm_self_review_mode": llm_review.get("mode", "not run"),
         "llm_unsupported_claims": len(llm_review.get("unsupported_claims", [])),
+        "llm_self_review_auto_revisions": len(llm_review.get("auto_revisions", [])),
         "review_findings": len(review_findings),
         "review_findings_major": review_major,
         "review_findings_minor": review_minor,
