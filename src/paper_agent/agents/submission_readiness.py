@@ -73,6 +73,10 @@ class SubmissionReadinessAgent:
         if isinstance(quality, dict):
             score -= min(30, len(quality.get("errors", [])) * 10)
             score -= min(10, len(quality.get("warnings", [])) * 3)
+        provenance = state.get("artifacts", {}).get("experiment_provenance", {})
+        if isinstance(provenance, dict):
+            score -= min(30, len(provenance.get("errors", [])) * 10)
+            score -= min(10, len(provenance.get("warnings", [])) * 3)
         return self._clamp(score)
 
     def _writing_completeness_score(self, state: PaperState) -> int:
@@ -144,6 +148,10 @@ class SubmissionReadinessAgent:
         if isinstance(quality, dict):
             for error in quality.get("errors", [])[:3]:
                 items.append(f"Experiment result quality error: {error}")
+        provenance = state.get("artifacts", {}).get("experiment_provenance", {})
+        if isinstance(provenance, dict):
+            for error in provenance.get("errors", [])[:3]:
+                items.append(f"Experiment result provenance error: {error}")
         evidence = state.get("artifacts", {}).get("experiment_evidence", {})
         evidence_kind = str(evidence.get("kind", ""))
         if evidence_kind == "synthetic_mock":
@@ -203,6 +211,10 @@ class SubmissionReadinessAgent:
         if isinstance(quality, dict):
             for warning in quality.get("warnings", [])[:3]:
                 items.append(f"Experiment result quality warning: {warning}")
+        provenance = artifacts.get("experiment_provenance", {})
+        if isinstance(provenance, dict):
+            for warning in provenance.get("warnings", [])[:3]:
+                items.append(f"Experiment result provenance warning: {warning}")
         package_warnings = artifacts.get("submission_package", {}).get("warnings", [])
         for warning in package_warnings[:3]:
             items.append(f"Submission package warning: {warning}")

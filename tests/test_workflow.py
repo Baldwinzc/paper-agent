@@ -2621,6 +2621,19 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
         "experiment_ablation_evidence": 4,
         "experiment_sensitivity_evidence": 1,
         "experiment_statistical_tests": 1,
+        "experiment_provenance": {
+            "status": "complete",
+            "errors": [],
+            "warnings": [],
+            "entries": [{"path": "logs/tcga_folds.csv", "kind": "local", "exists": True}],
+            "checks": {
+                "tables": 1,
+                "entries": 1,
+                "local_paths": 1,
+                "remote_references": 0,
+                "missing_paths": 0,
+            },
+        },
         "presentation_figures": 4,
         "generated_figures": 4,
         "outputs": {
@@ -2645,6 +2658,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "- Submission evidence status: PASS" in report
     assert "| Experiment source integrity | PASS | kind=real_result_file" in report
     assert "| Experiment result contract | PASS | complete; main=2;" in report
+    assert "| Experiment result provenance | PASS | complete; entries=1;" in report
     assert "- Main result tables: 2" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
@@ -3516,6 +3530,7 @@ def test_cli_experiment_template_writes_contract_template(monkeypatch, tmp_path,
     assert "| Method | BLCA C-index | BRCA C-index |" in text
     assert "## Ablation Study" in text
     assert "## Statistical Testing" in text
+    assert "## Result Provenance" in text
     assert "TODO" in text
 
 
@@ -3582,6 +3597,153 @@ def test_cli_validate_results_writes_summary_for_complete_file(monkeypatch, tmp_
     assert summary["experiment_evidence"]["kind"] == "real_result_file"
     assert summary["experiment_contract"]["status"] == "complete"
     assert summary["experiment_contract"]["checks"]["numeric_comparisons"] == 5
+
+
+def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "tcga_folds.csv").write_text("fold,seed,cindex\n0,2026,0.671\n", encoding="utf-8")
+    (logs_dir / "tcga_eval.log").write_text("seed=2026 fold=0..4\n", encoding="utf-8")
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index |",
+                "|---|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.681 |",
+                "| w/o reconstruction loss | 0.665 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.676 |",
+                "| 1.0 | 0.681 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |",
+                "",
+                "## Result Provenance",
+                "",
+                "| Artifact | Path | Description |",
+                "|---|---|---|",
+                "| Fold-level CSV | logs/tcga_folds.csv | seed=2026; fold=0..4 |",
+                "| Evaluation log | logs/tcga_eval.log | seed=2026; fold=0..4 |",
+                "| Tracker export | wandb://entity/project/run-1 | final metrics snapshot |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--summary",
+            str(summary_path),
+            "--strict",
+            "--require-provenance",
+            "--expected-dataset",
+            "BLCA",
+            "--expected-dataset",
+            "BRCA",
+            "--expected-metric",
+            "C-INDEX",
+            "--expected-method",
+            "Hyper-ProtoSurv",
+            "--expected-baseline",
+            "ProtoSurv",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Experiment result provenance: complete" in output
+    assert "Experiment result quality: complete" in output
+    assert summary["experiment_quality"]["status"] == "complete"
+    assert summary["experiment_provenance"]["status"] == "complete"
+    assert summary["experiment_provenance"]["checks"]["entries"] == 3
+    assert summary["experiment_provenance"]["checks"]["local_paths"] == 2
+    assert summary["experiment_provenance"]["checks"]["remote_references"] == 1
+
+
+def test_cli_validate_results_requires_result_provenance_when_requested(monkeypatch, tmp_path, capsys):
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "| w/o reconstruction loss | 0.659 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.667 |",
+                "| 1.0 | 0.671 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--strict",
+            "--require-provenance",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict validation to fail without provenance.")
+    output = capsys.readouterr().out
+    assert "Experiment result provenance: invalid" in output
+    assert "PROVENANCE ERROR: Missing result provenance table." in output
 
 
 def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_path, capsys):

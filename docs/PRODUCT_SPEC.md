@@ -146,6 +146,10 @@ Result-file quality checks can compare parsed datasets, metrics, proposed-method
 names, and baseline names against a declared target. The TCGA draft entrypoint
 uses BLCA, BRCA, LGG, LUAD, UCEC, C-index, Hyper-ProtoSurv, and ProtoSurv as its
 default alignment target before spending LLM calls.
+Result-file provenance checks can require a dedicated source-artifact table that
+links paper-facing numbers to local logs, fold-level result files, seed records,
+or remote tracker exports. Missing local artifacts become blocking evidence
+errors when provenance is required.
 
 ## Phases
 

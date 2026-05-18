@@ -39,21 +39,30 @@ class ExperimentAnalyzerAgent:
         "MOCK",
         "EXPERIMENT",
         "RESULTS",
+        "CSV",
+        "LOG",
+        "URL",
+        "URI",
+        "JSON",
+        "YAML",
+        "WANDB",
+        "OSS",
     }
 
     def run(self, state: PaperState) -> PaperState:
         request: PaperRequest = state["request"]
         raw = request.experiment_results.strip()
-        metrics = sorted({self._normalize_metric(m.group(1)) for m in self.METRIC_RE.finditer(raw)})
-        datasets = self._extract_datasets(raw, metrics)
-        result_tables = self._table_summaries(raw, metrics)
-        ablation_evidence = self._ablation_evidence(raw, metrics)
-        sensitivity_evidence = self._sensitivity_evidence(raw, metrics)
-        statistical_tests = self._statistical_test_evidence(raw, metrics)
+        analysis_raw = self._experiment_analysis_text(raw)
+        metrics = sorted({self._normalize_metric(m.group(1)) for m in self.METRIC_RE.finditer(analysis_raw)})
+        datasets = self._extract_datasets(analysis_raw, metrics)
+        result_tables = self._table_summaries(analysis_raw, metrics)
+        ablation_evidence = self._ablation_evidence(analysis_raw, metrics)
+        sensitivity_evidence = self._sensitivity_evidence(analysis_raw, metrics)
+        statistical_tests = self._statistical_test_evidence(analysis_raw, metrics)
         result_findings = [self._table_result_finding(table) for table in result_tables]
         result_findings = [finding for finding in result_findings if finding]
         observations = self._observations(
-            raw,
+            analysis_raw,
             result_findings,
             ablation_evidence,
             sensitivity_evidence,
@@ -64,7 +73,7 @@ class ExperimentAnalyzerAgent:
             missing.append("Dataset names are not explicit.")
         if not metrics:
             missing.append("Evaluation metrics are not explicit.")
-        if not any(table.baseline for table in result_tables) and "baseline" not in raw.lower():
+        if not any(table.baseline for table in result_tables) and "baseline" not in analysis_raw.lower():
             missing.append("Baseline comparison rows should be made explicit.")
 
         summary = ExperimentSummary(
@@ -94,6 +103,29 @@ class ExperimentAnalyzerAgent:
         ]
         state["artifacts"]["experiment_contract"] = validate_experiment_contract(summary)
         return state
+
+    def _experiment_analysis_text(self, raw: str) -> str:
+        lines: list[str] = []
+        skip_section = False
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                skip_section = self._looks_like_provenance_heading(stripped)
+                if skip_section:
+                    continue
+            if skip_section:
+                continue
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _looks_like_provenance_heading(self, heading: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(provenance|source artifact|source artifacts|result source|result sources|reproducibility)\b",
+                heading,
+                flags=re.I,
+            )
+        )
 
     def _observations(
         self,

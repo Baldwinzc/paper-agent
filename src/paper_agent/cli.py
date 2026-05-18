@@ -18,6 +18,7 @@ from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
 from paper_agent.experiment_contract import experiment_results_template, validate_experiment_contract
 from paper_agent.experiment_evidence import classify_experiment_evidence
+from paper_agent.experiment_provenance import assess_experiment_provenance
 from paper_agent.experiment_quality import assess_experiment_quality, tcga_experiment_quality_kwargs
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
@@ -67,6 +68,17 @@ def _add_experiment_quality_options(parser: argparse.ArgumentParser) -> None:
         "--expected-baseline",
         default="",
         help="Expected baseline row name for result-file quality checks.",
+    )
+
+
+def _add_experiment_provenance_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--require-provenance",
+        action="store_true",
+        help=(
+            "Require a result provenance table whose local artifact paths resolve. "
+            "Use this for submission-grade result files."
+        ),
     )
 
 
@@ -153,6 +165,7 @@ def main() -> None:
         help="Fail before generation unless the experiment result file is real and contract-complete.",
     )
     _add_experiment_contract_options(draft)
+    _add_experiment_provenance_options(draft)
     sample = sub.add_parser(
         "sample-hyper-protosurv",
         help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
@@ -204,6 +217,7 @@ def main() -> None:
         help="Fail before generation unless the experiment input is real and contract-complete.",
     )
     _add_experiment_contract_options(sample)
+    _add_experiment_provenance_options(sample)
     tcga_draft = sub.add_parser(
         "tcga-draft",
         help="Run the local Hyper-ProtoSurv TCGA paper path with a real result file.",
@@ -259,6 +273,7 @@ def main() -> None:
     tcga_draft.add_argument("--keyword", action="append", default=[], help="Additional keyword; can be repeated.")
     _add_experiment_contract_options(tcga_draft)
     _add_experiment_quality_options(tcga_draft)
+    _add_experiment_provenance_options(tcga_draft)
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     llm_draft = sub.add_parser(
@@ -306,6 +321,7 @@ def main() -> None:
         help="Fail before LLM generation unless the experiment input is real and contract-complete.",
     )
     _add_experiment_contract_options(llm_draft)
+    _add_experiment_provenance_options(llm_draft)
     experiment_template = sub.add_parser(
         "experiment-template",
         help="Write a fill-in Markdown template for real experiment result files.",
@@ -332,6 +348,7 @@ def main() -> None:
     )
     _add_experiment_contract_options(validate_results)
     _add_experiment_quality_options(validate_results)
+    _add_experiment_provenance_options(validate_results)
     args = parser.parse_args()
 
     if args.command == "validate-results":
@@ -340,6 +357,7 @@ def main() -> None:
             summary_path=Path(args.summary) if args.summary else None,
             **_experiment_contract_kwargs(args),
             **_experiment_quality_kwargs(args),
+            **_experiment_provenance_kwargs(args),
         )
         if args.strict and not _validated_results_are_strictly_acceptable(summary):
             raise SystemExit("Experiment result validation failed in strict mode.")
@@ -417,6 +435,7 @@ def main() -> None:
             experiment_path,
             experiment_results,
             **_experiment_contract_kwargs(args),
+            **_experiment_provenance_kwargs(args),
         )
         if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
             raise SystemExit("Draft failed: experiment result validation failed in strict mode.")
@@ -629,6 +648,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         experiment_results,
         source=experiment_results_source,
         **_experiment_contract_kwargs(args),
+        **_experiment_provenance_kwargs(args),
     )
     if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("Sample failed: experiment result validation failed in strict mode.")
@@ -720,6 +740,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         experiment_results,
         **_experiment_contract_kwargs(args),
         **_experiment_quality_kwargs(args, tcga_defaults=True),
+        **_experiment_provenance_kwargs(args),
     )
     if not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("TCGA draft failed: experiment result validation failed in strict mode.")
@@ -842,6 +863,7 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         experiment_path,
         experiment_results,
         **_experiment_contract_kwargs(args),
+        **_experiment_provenance_kwargs(args),
     )
     if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("LLM draft smoke failed: experiment result validation failed in strict mode.")
@@ -937,6 +959,7 @@ def _validate_results_file(
     expected_metrics: list[str] | None = None,
     expected_method: str = "",
     expected_baseline: str = "",
+    require_provenance: bool = False,
 ) -> dict:
     path = _resolve_project_relative_path(str(path))
     if not path.is_file():
@@ -955,6 +978,7 @@ def _validate_results_file(
         expected_metrics=expected_metrics,
         expected_method=expected_method,
         expected_baseline=expected_baseline,
+        require_provenance=require_provenance,
     )
 
 
@@ -971,6 +995,7 @@ def _validate_results_text(
     expected_metrics: list[str] | None = None,
     expected_method: str = "",
     expected_baseline: str = "",
+    require_provenance: bool = False,
 ) -> dict:
     state = ExperimentAnalyzerAgent().run(
         {
@@ -1001,6 +1026,11 @@ def _validate_results_text(
         expected_method=expected_method,
         expected_baseline=expected_baseline,
     )
+    provenance = assess_experiment_provenance(
+        raw,
+        result_path=path,
+        require_provenance=require_provenance,
+    )
     summary = {
         "path": str(path),
         "source": source,
@@ -1008,6 +1038,7 @@ def _validate_results_text(
         "experiment_contract": contract,
         "experiment_contract_requirements": contract.get("requirements", {}),
         "experiment_quality": quality,
+        "experiment_provenance": provenance,
         "datasets": experiments.datasets,
         "metrics": experiments.metrics,
         "missing_details": experiments.missing_details,
@@ -1045,6 +1076,11 @@ def _validate_results_text(
             print(f"QUALITY ERROR: {error}")
         for warning in quality.get("warnings", []):
             print(f"QUALITY WARNING: {warning}")
+    print(f"Experiment result provenance: {provenance.get('status', 'unknown')}")
+    for error in provenance.get("errors", []):
+        print(f"PROVENANCE ERROR: {error}")
+    for warning in provenance.get("warnings", []):
+        print(f"PROVENANCE WARNING: {warning}")
     if summary_path:
         _write_run_summary_data(summary, summary_path)
         print(f"Validation summary written to {summary_path}")
@@ -1073,6 +1109,12 @@ def _experiment_quality_kwargs(
     }
 
 
+def _experiment_provenance_kwargs(args: argparse.Namespace) -> dict[str, bool]:
+    return {
+        "require_provenance": bool(getattr(args, "require_provenance", False)),
+    }
+
+
 def _record_result_preflight(state: dict, result_preflight: dict | None) -> None:
     if not result_preflight:
         return
@@ -1083,6 +1125,7 @@ def _record_result_preflight(state: dict, result_preflight: dict | None) -> None
         {},
     )
     artifacts["experiment_quality"] = result_preflight.get("experiment_quality", {})
+    artifacts["experiment_provenance"] = result_preflight.get("experiment_provenance", {})
 
 
 def _validated_results_are_strictly_acceptable(summary: dict) -> bool:
@@ -1092,6 +1135,7 @@ def _validated_results_are_strictly_acceptable(summary: dict) -> bool:
         evidence.get("real_result_evidence")
         and contract.get("status") == "complete"
         and summary.get("experiment_quality", {}).get("status", "complete") != "invalid"
+        and summary.get("experiment_provenance", {}).get("status", "complete") != "invalid"
     )
 
 
@@ -1290,6 +1334,7 @@ def _build_acceptance_report(
     experiment_evidence = _summary_experiment_evidence(summary)
     experiment_contract = _summary_experiment_contract(summary)
     experiment_quality = _summary_experiment_quality(summary)
+    experiment_provenance = _summary_experiment_provenance(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -1336,6 +1381,7 @@ def _build_acceptance_report(
         f"- Statistical test items: {summary.get('experiment_statistical_tests', 0)}",
         f"- Result contract: {experiment_contract.get('status', 'unknown')}",
         f"- Result quality: {experiment_quality.get('status', 'not_configured')}",
+        f"- Result provenance: {experiment_provenance.get('status', 'not_configured')}",
         "",
         "## Acceptance Checks",
         "",
@@ -1400,6 +1446,7 @@ def _acceptance_checks(
     experiment_evidence = _summary_experiment_evidence(summary)
     experiment_contract = _summary_experiment_contract(summary)
     experiment_quality = _summary_experiment_quality(summary)
+    experiment_provenance = _summary_experiment_provenance(summary)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -1431,6 +1478,7 @@ def _acceptance_checks(
         ),
         _experiment_contract_acceptance_item(experiment_contract),
         *_experiment_quality_acceptance_items(experiment_quality),
+        *_experiment_provenance_acceptance_items(experiment_provenance),
         _acceptance_item(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
@@ -1582,6 +1630,27 @@ def _experiment_quality_acceptance_items(quality: dict[str, object]) -> list[dic
     return [{"name": "Experiment result quality", "status": "WARN", "detail": _table_safe(detail)}]
 
 
+def _experiment_provenance_acceptance_items(provenance: dict[str, object]) -> list[dict[str, str]]:
+    if provenance.get("status") == "not_configured":
+        return []
+    checks = provenance.get("checks", {})
+    if not isinstance(checks, dict):
+        checks = {}
+    detail = (
+        f"{provenance.get('status', 'unknown')}; "
+        f"entries={checks.get('entries', 0)}; "
+        f"local_paths={checks.get('local_paths', 0)}; "
+        f"remote_refs={checks.get('remote_references', 0)}; "
+        f"missing_paths={checks.get('missing_paths', 0)}"
+    )
+    status = str(provenance.get("status", "unknown"))
+    if status == "complete":
+        return [{"name": "Experiment result provenance", "status": "PASS", "detail": _table_safe(detail)}]
+    if status == "invalid":
+        return [{"name": "Experiment result provenance", "status": "FAIL", "detail": _table_safe(detail)}]
+    return [{"name": "Experiment result provenance", "status": "WARN", "detail": _table_safe(detail)}]
+
+
 def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
     if status == "passed":
@@ -1653,6 +1722,19 @@ def _summary_experiment_quality(summary: dict) -> dict[str, object]:
     }
 
 
+def _summary_experiment_provenance(summary: dict) -> dict[str, object]:
+    provenance = summary.get("experiment_provenance", {})
+    if isinstance(provenance, dict) and provenance:
+        return provenance
+    return {
+        "status": "not_configured",
+        "errors": [],
+        "warnings": [],
+        "entries": [],
+        "checks": {},
+    }
+
+
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifacts = state.get("artifacts", {})
     request = state.get("request")
@@ -1687,6 +1769,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     experiment_quality = artifacts.get("experiment_quality", {})
     if not isinstance(experiment_quality, dict) or not experiment_quality:
         experiment_quality = _summary_experiment_quality({})
+    experiment_provenance = artifacts.get("experiment_provenance", {})
+    if not isinstance(experiment_provenance, dict) or not experiment_provenance:
+        experiment_provenance = _summary_experiment_provenance({})
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
         "experiment_results_source", "provided" if experiment_results_present else "none"
@@ -1765,6 +1850,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "experiment_quality_status": experiment_quality.get("status", "not_configured"),
         "experiment_quality_errors": len(experiment_quality.get("errors", [])),
         "experiment_quality_warnings": len(experiment_quality.get("warnings", [])),
+        "experiment_provenance": experiment_provenance,
+        "experiment_provenance_status": experiment_provenance.get("status", "not_configured"),
+        "experiment_provenance_errors": len(experiment_provenance.get("errors", [])),
+        "experiment_provenance_warnings": len(experiment_provenance.get("warnings", [])),
         "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),
         "experiment_sensitivity_evidence": len(
             artifacts.get("experiment_sensitivity_evidence", [])

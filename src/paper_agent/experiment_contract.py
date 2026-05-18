@@ -121,5 +121,14 @@ def experiment_results_template(
             "|---|---|---|---:|",
             f"| {method} vs {baseline} | C-index | Wilcoxon signed-rank | TODO |",
             "",
+            "## Result Provenance",
+            "",
+            "List the source artifacts used to produce the numeric tables above.",
+            "",
+            "| Artifact | Path | Description |",
+            "|---|---|---|",
+            "| Fold-level result CSV | TODO | seed=TODO; fold=TODO |",
+            "| Training/evaluation log | TODO | command=TODO; commit=TODO |",
+            "",
         ]
     )

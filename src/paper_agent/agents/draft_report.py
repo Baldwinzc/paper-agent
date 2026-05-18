@@ -415,6 +415,35 @@ class DraftReportAgent:
             for warning in quality.get("warnings", [])[:5]:
                 lines.append(f"- Warning: {warning}")
 
+        provenance = artifacts.get("experiment_provenance", {})
+        if isinstance(provenance, dict) and provenance and provenance.get("status") != "not_configured":
+            checks = provenance.get("checks", {})
+            if not isinstance(checks, dict):
+                checks = {}
+            lines.extend(["", "## Experiment Result Provenance", ""])
+            lines.append(f"- Status: {provenance.get('status', 'unknown')}")
+            lines.append(
+                "- Coverage: "
+                f"tables={checks.get('tables', 0)}, "
+                f"entries={checks.get('entries', 0)}, "
+                f"local paths={checks.get('local_paths', 0)}, "
+                f"remote references={checks.get('remote_references', 0)}, "
+                f"missing paths={checks.get('missing_paths', 0)}"
+            )
+            for entry in provenance.get("entries", [])[:5]:
+                if not isinstance(entry, dict):
+                    continue
+                label = entry.get("name") or entry.get("path") or "artifact"
+                location = entry.get("resolved_path") or entry.get("path") or ""
+                lines.append(
+                    f"- {label}: {entry.get('kind', 'unknown')} "
+                    f"exists={entry.get('exists', 'unknown')} path={location}"
+                )
+            for error in provenance.get("errors", [])[:5]:
+                lines.append(f"- Error: {error}")
+            for warning in provenance.get("warnings", [])[:5]:
+                lines.append(f"- Warning: {warning}")
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])

@@ -71,6 +71,23 @@ The quality report flags missing expected cohorts, missing metrics, and result
 rows whose proposed method or baseline names do not match the declared target.
 `tcga-draft` enables the common TCGA defaults automatically.
 
+For submission-grade result files, also attach provenance for the numeric
+tables. Provenance entries should point to fold-level CSVs, evaluation logs,
+seed records, W&B exports, or other source artifacts. Local paths are resolved
+relative to the result file; remote references such as `https://`, `s3://`,
+`gs://`, `oss://`, and `wandb://` are accepted as external records.
+
+```powershell
+python -m paper_agent.cli validate-results `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --strict `
+  --require-provenance
+```
+
+Without `--require-provenance`, missing provenance is reported as a warning.
+With `--require-provenance`, strict validation fails unless a provenance table is
+present and all local artifact paths exist.
+
 ## Main Result Table
 
 ```markdown
@@ -171,3 +188,21 @@ The analyzer stores the comparison, metric, test name, exact p-value text, and
 whether the result is significant at `alpha=0.05`. The paper agent will not
 invent p-values, confidence intervals, or statistical tests that are not present
 in the supplied results.
+
+## Result Provenance
+
+Use a provenance table to tie the paper-facing numbers to source artifacts.
+
+```markdown
+## Result Provenance
+
+| Artifact | Path | Description |
+|---|---|---|
+| Fold-level result CSV | logs/tcga_folds.csv | seed=2026; folds=0..4 |
+| Evaluation log | logs/tcga_eval.log | command=python eval.py; commit=abc123 |
+| Experiment tracker export | wandb://entity/project/run-id | final metrics snapshot |
+```
+
+The validator records how many provenance entries were found, whether local
+paths exist, and whether seed/fold identifiers are visible in the table. Missing
+local paths are treated as provenance errors.
