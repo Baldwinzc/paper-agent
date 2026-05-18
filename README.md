@@ -209,6 +209,8 @@ higher or lower is better. Ablation tables with a `Variant` column are parsed as
 full-method versus removed-component evidence and surfaced in the draft report.
 Generate a fill-in file with
 `python -m paper_agent.cli experiment-template --output examples\tcga_results_template.md`.
+Validate a completed result file before full paper generation with
+`python -m paper_agent.cli validate-results --experiment-results D:\path\to\tcga_results.md --strict`.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.

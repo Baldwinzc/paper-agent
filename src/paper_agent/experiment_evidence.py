@@ -20,13 +20,14 @@ def classify_experiment_evidence(
     text = text or ""
     table_count = int(result_table_count or 0)
     combined = f"{source} {path} {text[:4000]}".lower()
+    source_and_path = f"{source} {path}".lower()
 
     if source == "tcga_cohort_csv" or _contains_any(
         combined,
         [
             "not a model-performance result file",
             "cohort data summary",
-            "cohort metadata",
+            "cohort metadata only",
             "available cohort data only",
         ],
     ):
@@ -34,15 +35,19 @@ def classify_experiment_evidence(
             "data_only",
             "The input is data/cohort metadata only; add trained-model performance tables before empirical claims.",
         )
-    if _contains_any(
+    if (
+        "mock" in source_and_path
+        or "synthetic" in source_and_path
+        or _contains_any(
         combined,
         [
-            "synthetic",
-            "mock",
+            "synthetic mock",
+            "mock data",
             "fabricated",
             "pipeline testing only",
             "not a real experiment",
         ],
+        )
     ):
         return _result(
             "synthetic_mock",

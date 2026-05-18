@@ -19,6 +19,18 @@ and statistical-test tables are reported as contract warnings when absent; keep
 component, robustness, or significance claims out of the draft until those tables
 are supplied.
 
+Validate a completed result file before running the full paper workflow:
+
+```powershell
+python -m paper_agent.cli validate-results `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --summary outputs\validate-results.json `
+  --strict
+```
+
+`--strict` exits with a non-zero status unless the file is classified as real
+result evidence and the experiment-result contract is complete.
+
 ## Main Result Table
 
 ```markdown

@@ -10,6 +10,7 @@ import statistics
 from pathlib import Path
 
 from paper_agent.agents.draft_report import DraftReportAgent
+from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.submission_package_validator import SubmissionPackageValidatorAgent
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
@@ -189,9 +190,27 @@ def main() -> None:
         default=[],
         help="Dataset/cohort name; can be repeated. Defaults to common TCGA cohorts.",
     )
+    validate_results = sub.add_parser(
+        "validate-results",
+        help="Validate an experiment result file without generating a paper.",
+    )
+    validate_results.add_argument("--experiment-results", required=True)
+    validate_results.add_argument("--summary", default="", help="Optional JSON summary path.")
+    validate_results.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with a non-zero status unless the result source is real and the contract is complete.",
+    )
     args = parser.parse_args()
 
-    if args.command == "experiment-template":
+    if args.command == "validate-results":
+        summary = _validate_results_file(
+            Path(args.experiment_results),
+            summary_path=Path(args.summary) if args.summary else None,
+        )
+        if args.strict and not _validated_results_are_strictly_acceptable(summary):
+            raise SystemExit("Experiment result validation failed in strict mode.")
+    elif args.command == "experiment-template":
         template = experiment_results_template(
             method=args.method,
             baseline=args.baseline,
@@ -604,6 +623,72 @@ def _resolve_project_relative_path(path_value: str) -> Path:
     if path.is_absolute():
         return path
     return _project_root() / path
+
+
+def _validate_results_file(path: Path, summary_path: Path | None = None) -> dict:
+    path = _resolve_project_relative_path(str(path))
+    if not path.is_file():
+        raise SystemExit(f"Experiment results file not found: {path}")
+
+    raw = path.read_text(encoding="utf-8")
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="validate-results",
+                target_venue="unspecified",
+                experiment_results=raw,
+            )
+        }
+    )
+    experiments = state["experiments"]
+    contract = state["artifacts"]["experiment_contract"]
+    evidence = classify_experiment_evidence(
+        source="file",
+        path=str(path),
+        text=raw,
+        result_table_count=len(experiments.result_tables),
+    )
+    summary = {
+        "path": str(path),
+        "experiment_evidence": evidence,
+        "experiment_contract": contract,
+        "datasets": experiments.datasets,
+        "metrics": experiments.metrics,
+        "missing_details": experiments.missing_details,
+        "observations": experiments.observations,
+    }
+
+    checks = contract.get("checks", {})
+    print(f"Experiment results: {path}")
+    print(f"Experiment evidence kind: {evidence.get('kind', 'unknown')}")
+    print(f"Experiment result contract: {contract.get('status', 'unknown')}")
+    print(
+        "Coverage: "
+        f"main={checks.get('result_tables', 0)}; "
+        f"comparisons={checks.get('numeric_comparisons', 0)}; "
+        f"datasets={checks.get('datasets', 0)}; "
+        f"metrics={checks.get('metrics', 0)}; "
+        f"ablation={checks.get('ablation_items', 0)}; "
+        f"sensitivity={checks.get('sensitivity_items', 0)}; "
+        f"statistical={checks.get('statistical_tests', 0)}"
+    )
+    for error in contract.get("errors", []):
+        print(f"ERROR: {error}")
+    for warning in contract.get("warnings", []):
+        print(f"WARNING: {warning}")
+    if summary_path:
+        _write_run_summary_data(summary, summary_path)
+        print(f"Validation summary written to {summary_path}")
+    return summary
+
+
+def _validated_results_are_strictly_acceptable(summary: dict) -> bool:
+    evidence = summary.get("experiment_evidence", {})
+    contract = summary.get("experiment_contract", {})
+    return bool(
+        evidence.get("real_result_evidence")
+        and contract.get("status") == "complete"
+    )
 
 
 def _build_tcga_cohort_summary(dataset_csv_dir: Path) -> str:

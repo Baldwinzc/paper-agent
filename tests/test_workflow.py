@@ -3511,6 +3511,99 @@ def test_cli_experiment_template_writes_contract_template(monkeypatch, tmp_path,
     assert "TODO" in text
 
 
+def test_cli_validate_results_writes_summary_for_complete_file(monkeypatch, tmp_path, capsys):
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index |",
+                "|---|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "",
+                "## Ablation Study",
+                "",
+                "Metric: Average C-index. Higher is better.",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.681 |",
+                "| w/o L_rec | 0.665 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "Metric: Average C-index. Higher is better.",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.1 | 0.671 |",
+                "| 1.0 | 0.681 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "validate-summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--summary",
+            str(summary_path),
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Experiment result contract: complete" in output
+    assert summary["experiment_evidence"]["kind"] == "real_result_file"
+    assert summary["experiment_contract"]["status"] == "complete"
+    assert summary["experiment_contract"]["checks"]["numeric_comparisons"] == 2
+
+
+def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_path, capsys):
+    results_path = tmp_path / "tcga_results_template.md"
+    results_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--strict",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict validation to fail for TODO template.")
+    output = capsys.readouterr().out
+    assert "Experiment evidence kind: unstructured" in output
+    assert "Experiment result contract: invalid" in output
+
+
 def test_cli_draft_enforces_min_llm_sections(monkeypatch, tmp_path):
     baseline_dir = tmp_path / "baseline"
     code_dir = tmp_path / "code"
