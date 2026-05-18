@@ -7,6 +7,18 @@ dataset-metric pair.
 Use real trained-model results only. Cohort metadata is useful for dataset
 description, but it is not evidence for performance claims.
 
+Generate a fill-in template with:
+
+```powershell
+python -m paper_agent.cli experiment-template --output examples\tcga_results_template.md
+```
+
+The committed `examples/tcga_results_template.md` file uses the same structure.
+The validator treats the main result table as required. Ablation, sensitivity,
+and statistical-test tables are reported as contract warnings when absent; keep
+component, robustness, or significance claims out of the draft until those tables
+are supplied.
+
 ## Main Result Table
 
 ```markdown

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from paper_agent.experiment_contract import validate_experiment_contract
 from paper_agent.tables import MarkdownTable, extract_markdown_tables
 from paper_agent.state import (
     AblationEvidence,
@@ -66,7 +67,7 @@ class ExperimentAnalyzerAgent:
         if not any(table.baseline for table in result_tables) and "baseline" not in raw.lower():
             missing.append("Baseline comparison rows should be made explicit.")
 
-        state["experiments"] = ExperimentSummary(
+        summary = ExperimentSummary(
             raw_preview=raw[:2000],
             datasets=datasets,
             metrics=metrics,
@@ -77,6 +78,7 @@ class ExperimentAnalyzerAgent:
             observations=observations,
             missing_details=missing,
         )
+        state["experiments"] = summary
         state.setdefault("artifacts", {})["experiment_result_findings"] = result_findings
         state["artifacts"]["experiment_result_tables"] = [
             table.model_dump() for table in result_tables
@@ -90,6 +92,7 @@ class ExperimentAnalyzerAgent:
         state["artifacts"]["experiment_statistical_tests"] = [
             item.model_dump() for item in statistical_tests
         ]
+        state["artifacts"]["experiment_contract"] = validate_experiment_contract(summary)
         return state
 
     def _observations(

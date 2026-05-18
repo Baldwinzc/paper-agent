@@ -59,6 +59,8 @@ The current scaffold supports:
 - Experiment-evidence provenance classification in run summaries and acceptance
   reports, so synthetic/mock inputs and TCGA cohort metadata are not mistaken
   for real trained-model results.
+- Experiment-result contract validation for main result tables, baseline
+  comparisons, ablations, sensitivity analysis, and statistical tests.
 - JSON run summaries for reproducible smoke runs and showcase artifacts.
 - Innovation traceability checks to confirm Method covers accepted contribution points.
 - Structured ablation parsing that links variant drops back to likely innovation points.
@@ -205,6 +207,8 @@ numeric dataset-metric columns such as `BLCA C-index` or `BRCA IBS`. The analyze
 extracts baseline value, proposed-method value, signed improvement, and whether
 higher or lower is better. Ablation tables with a `Variant` column are parsed as
 full-method versus removed-component evidence and surfaced in the draft report.
+Generate a fill-in file with
+`python -m paper_agent.cli experiment-template --output examples\tcga_results_template.md`.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.

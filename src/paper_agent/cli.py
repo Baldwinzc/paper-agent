@@ -15,6 +15,7 @@ from paper_agent.agents.submission_package_validator import SubmissionPackageVal
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
+from paper_agent.experiment_contract import experiment_results_template, validate_experiment_contract
 from paper_agent.experiment_evidence import classify_experiment_evidence
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
@@ -175,9 +176,35 @@ def main() -> None:
         action="store_true",
         help="Run the local LaTeX compiler during submission validation.",
     )
+    experiment_template = sub.add_parser(
+        "experiment-template",
+        help="Write a fill-in Markdown template for real experiment result files.",
+    )
+    experiment_template.add_argument("--output", default="", help="Optional path to write the template.")
+    experiment_template.add_argument("--method", default="Hyper-ProtoSurv ours")
+    experiment_template.add_argument("--baseline", default="ProtoSurv baseline")
+    experiment_template.add_argument(
+        "--dataset",
+        action="append",
+        default=[],
+        help="Dataset/cohort name; can be repeated. Defaults to common TCGA cohorts.",
+    )
     args = parser.parse_args()
 
-    if args.command == "demo":
+    if args.command == "experiment-template":
+        template = experiment_results_template(
+            method=args.method,
+            baseline=args.baseline,
+            datasets=args.dataset or None,
+        )
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(template, encoding="utf-8")
+            print(f"Experiment result template written to {output_path}")
+        else:
+            print(template)
+    elif args.command == "demo":
         request = PaperRequest(
             project_name="adaptive-baseline-improvement",
             target_venue="IEEE Conference",
@@ -772,6 +799,7 @@ def _build_acceptance_report(
     require_llm_self_review: bool = False,
 ) -> str:
     experiment_evidence = _summary_experiment_evidence(summary)
+    experiment_contract = _summary_experiment_contract(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -812,6 +840,7 @@ def _build_acceptance_report(
         f"- Ablation evidence items: {summary.get('experiment_ablation_evidence', 0)}",
         f"- Sensitivity evidence items: {summary.get('experiment_sensitivity_evidence', 0)}",
         f"- Statistical test items: {summary.get('experiment_statistical_tests', 0)}",
+        f"- Result contract: {experiment_contract.get('status', 'unknown')}",
         "",
         "## Acceptance Checks",
         "",
@@ -874,6 +903,7 @@ def _acceptance_checks(
     review_major = int(summary.get("review_findings_major", summary.get("review_findings", 0)) or 0)
     review_minor = int(summary.get("review_findings_minor", 0) or 0)
     experiment_evidence = _summary_experiment_evidence(summary)
+    experiment_contract = _summary_experiment_contract(summary)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -903,6 +933,7 @@ def _acceptance_checks(
             ),
             warning_status="WARN",
         ),
+        _experiment_contract_acceptance_item(experiment_contract),
         _acceptance_item(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
@@ -999,6 +1030,26 @@ def _experiment_source_acceptance_item(kind: str, note: str) -> dict[str, str]:
     return {"name": "Experiment source integrity", "status": "WARN", "detail": _table_safe(detail)}
 
 
+def _experiment_contract_acceptance_item(contract: dict[str, object]) -> dict[str, str]:
+    checks = contract.get("checks", {})
+    if not isinstance(checks, dict):
+        checks = {}
+    detail = (
+        f"{contract.get('status', 'unknown')}; "
+        f"main={checks.get('result_tables', 0)}; "
+        f"comparisons={checks.get('numeric_comparisons', 0)}; "
+        f"ablation={checks.get('ablation_items', 0)}; "
+        f"sensitivity={checks.get('sensitivity_items', 0)}; "
+        f"statistical={checks.get('statistical_tests', 0)}"
+    )
+    status = str(contract.get("status", "unknown"))
+    if status == "complete":
+        return {"name": "Experiment result contract", "status": "PASS", "detail": _table_safe(detail)}
+    if status == "invalid":
+        return {"name": "Experiment result contract", "status": "FAIL", "detail": _table_safe(detail)}
+    return {"name": "Experiment result contract", "status": "WARN", "detail": _table_safe(detail)}
+
+
 def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
     if status == "passed":
@@ -1027,6 +1078,37 @@ def _summary_experiment_evidence(summary: dict) -> dict[str, object]:
     )
 
 
+def _summary_experiment_contract(summary: dict) -> dict[str, object]:
+    contract = summary.get("experiment_contract", {})
+    if isinstance(contract, dict) and contract:
+        return contract
+    checks = {
+        "result_tables": int(summary.get("experiment_result_tables", 0) or 0),
+        "numeric_comparisons": int(summary.get("experiment_numeric_comparisons", 0) or 0),
+        "datasets": int(summary.get("experiment_datasets", 0) or 0),
+        "metrics": int(summary.get("experiment_metrics", 0) or 0),
+        "ablation_items": int(summary.get("experiment_ablation_evidence", 0) or 0),
+        "sensitivity_items": int(summary.get("experiment_sensitivity_evidence", 0) or 0),
+        "statistical_tests": int(summary.get("experiment_statistical_tests", 0) or 0),
+    }
+    errors = []
+    warnings = []
+    if checks["result_tables"] <= 0:
+        errors.append("Missing main trained-model result table with proposed-method and baseline rows.")
+    if checks["ablation_items"] <= 0:
+        warnings.append("Missing ablation table; component claims should remain provisional.")
+    if checks["sensitivity_items"] <= 0:
+        warnings.append("Missing sensitivity analysis table; hyperparameter robustness claims should be omitted.")
+    if checks["statistical_tests"] <= 0:
+        warnings.append("Missing statistical-test table; significance claims should be omitted.")
+    return {
+        "status": "invalid" if errors else "needs_attention" if warnings else "complete",
+        "errors": errors,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifacts = state.get("artifacts", {})
     request = state.get("request")
@@ -1041,6 +1123,22 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     submission_checks = submission_package.get("checks", {}) if isinstance(submission_package, dict) else {}
     compile_check = submission_checks.get("compile", {}) if isinstance(submission_checks, dict) else {}
     presentation_plan = artifacts.get("presentation_plan", {})
+    experiments = state.get("experiments")
+    experiment_contract = artifacts.get("experiment_contract", {})
+    if not isinstance(experiment_contract, dict) or not experiment_contract:
+        if experiments:
+            experiment_contract = validate_experiment_contract(experiments)
+        else:
+            experiment_contract = _summary_experiment_contract(
+                {
+                    "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
+                    "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),
+                    "experiment_sensitivity_evidence": len(
+                        artifacts.get("experiment_sensitivity_evidence", [])
+                    ),
+                    "experiment_statistical_tests": len(artifacts.get("experiment_statistical_tests", [])),
+                }
+            )
     experiment_results = getattr(request, "experiment_results", "") or ""
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
@@ -1106,6 +1204,16 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "reference_resolution_trace": len(artifacts.get("reference_resolution_trace", [])),
         "related_work_candidates": len(artifacts.get("related_work_candidates", [])),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
+        "experiment_numeric_comparisons": sum(
+            len(table.comparisons)
+            for table in getattr(experiments, "result_tables", []) or []
+        ),
+        "experiment_datasets": len(getattr(experiments, "datasets", []) or []),
+        "experiment_metrics": len(getattr(experiments, "metrics", []) or []),
+        "experiment_contract": experiment_contract,
+        "experiment_contract_status": experiment_contract.get("status", "unknown"),
+        "experiment_contract_errors": len(experiment_contract.get("errors", [])),
+        "experiment_contract_warnings": len(experiment_contract.get("warnings", [])),
         "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),
         "experiment_sensitivity_evidence": len(
             artifacts.get("experiment_sensitivity_evidence", [])

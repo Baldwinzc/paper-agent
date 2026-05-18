@@ -34,6 +34,9 @@ class DraftReportAgent:
         compile_check = package_checks.get("compile", {}) if isinstance(package_checks, dict) else {}
         zip_check = package_checks.get("zip", {}) if isinstance(package_checks, dict) else {}
         verification = artifacts.get("reference_verification", {})
+        contract = artifacts.get("experiment_contract", {})
+        if not isinstance(contract, dict):
+            contract = {}
         bibliography = state.get("bibliography", [])
         review_findings = state.get("review_findings", [])
 
@@ -78,6 +81,7 @@ class DraftReportAgent:
             f"- References unresolved: {verification.get('unresolved_count', 0)}",
             f"- Experiment source: {experiment_source}{f' ({experiment_path})' if experiment_path else ''}",
             f"- Experiment evidence kind: {experiment_kind}",
+            f"- Experiment result contract: {contract.get('status', 'not run')}",
             f"- Evidence note: {experiment_note}",
             "",
             "## Upload Steps",
@@ -97,6 +101,7 @@ class DraftReportAgent:
             package=package if isinstance(package, dict) else {},
             review_findings=review_findings,
             verification=verification if isinstance(verification, dict) else {},
+            contract=contract if isinstance(contract, dict) else {},
             experiment_note=experiment_note,
         )
         lines.extend(f"- {item}" for item in must_review)
@@ -124,12 +129,15 @@ class DraftReportAgent:
         package: dict,
         review_findings: list,
         verification: dict,
+        contract: dict,
         experiment_note: str,
     ) -> list[str]:
         items: list[str] = []
         items.extend(str(item) for item in readiness.get("blocking_items", [])[:5])
         items.extend(str(item) for item in package.get("errors", [])[:5])
         items.extend(str(item) for item in package.get("warnings", [])[:5])
+        items.extend(f"Experiment result contract error: {item}" for item in contract.get("errors", [])[:3])
+        items.extend(f"Experiment result contract warning: {item}" for item in contract.get("warnings", [])[:3])
 
         major_findings = [
             self._finding_text(finding)
@@ -359,6 +367,25 @@ class DraftReportAgent:
                     f"- {item.comparison}{metric}{test}: {item.p_value_text} "
                     f"({significance} at alpha={item.alpha:.2f})"
                 )
+
+        contract = artifacts.get("experiment_contract", {})
+        if contract:
+            checks = contract.get("checks", {})
+            lines.extend(["", "## Experiment Result Contract", ""])
+            lines.append(f"- Status: {contract.get('status', 'unknown')}")
+            if isinstance(checks, dict):
+                lines.append(
+                    "- Coverage: "
+                    f"main tables={checks.get('result_tables', 0)}, "
+                    f"comparisons={checks.get('numeric_comparisons', 0)}, "
+                    f"ablations={checks.get('ablation_items', 0)}, "
+                    f"sensitivity={checks.get('sensitivity_items', 0)}, "
+                    f"statistical tests={checks.get('statistical_tests', 0)}"
+                )
+            for error in contract.get("errors", [])[:5]:
+                lines.append(f"- Error: {error}")
+            for warning in contract.get("warnings", [])[:5]:
+                lines.append(f"- Warning: {warning}")
 
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:

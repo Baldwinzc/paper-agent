@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from paper_agent.experiment_contract import validate_experiment_contract
 from paper_agent.experiment_evidence import classify_experiment_evidence
 from paper_agent.state import PaperState
 
@@ -130,6 +131,11 @@ class SubmissionReadinessAgent:
             items.append("Experiment details are incomplete.")
         if experiments and not experiments.result_tables:
             items.append("No structured trained-model result table was parsed.")
+        contract = state.get("artifacts", {}).get("experiment_contract")
+        if not isinstance(contract, dict):
+            contract = validate_experiment_contract(experiments)
+        for error in contract.get("errors", [])[:3]:
+            items.append(f"Experiment result contract error: {error}")
         evidence = state.get("artifacts", {}).get("experiment_evidence", {})
         evidence_kind = str(evidence.get("kind", ""))
         if evidence_kind == "synthetic_mock":
@@ -157,6 +163,8 @@ class SubmissionReadinessAgent:
     def _action_items(self, state: PaperState, blocking_items: list[str]) -> list[str]:
         items = list(blocking_items)
         artifacts = state.get("artifacts", {})
+        if not blocking_items:
+            items.append("Perform a final human pass for wording, author metadata, figures, and venue rules.")
         verification = artifacts.get("reference_verification", {})
         unresolved = int(verification.get("unresolved_count", 0) or 0)
         if unresolved:
@@ -178,11 +186,14 @@ class SubmissionReadinessAgent:
         presentation = artifacts.get("presentation_plan", {})
         if presentation.get("open_items"):
             items.append("Prepare planned figures listed in FIGURE_TABLE_PLAN.md before final submission.")
+        contract = artifacts.get("experiment_contract")
+        if not isinstance(contract, dict):
+            contract = validate_experiment_contract(state.get("experiments"))
+        for warning in contract.get("warnings", [])[:3]:
+            items.append(f"Experiment result contract warning: {warning}")
         package_warnings = artifacts.get("submission_package", {}).get("warnings", [])
         for warning in package_warnings[:3]:
             items.append(f"Submission package warning: {warning}")
-        if not items:
-            items.append("Perform a final human pass for wording, author metadata, figures, and venue rules.")
         return list(dict.fromkeys(items))[:8]
 
     def _experiment_evidence(self, state: PaperState) -> dict[str, object]:

@@ -675,6 +675,37 @@ def test_experiment_analyzer_extracts_sensitivity_and_statistical_tests():
     assert any("Statistical test evidence includes 1 comparisons" in item for item in state["experiments"].observations)
 
 
+def test_experiment_contract_warns_when_optional_tables_are_missing():
+    raw = """
+    ## Main Results
+
+    Metric: C-index. Higher is better.
+
+    | Method | BLCA C-index |
+    |---|---:|
+    | ProtoSurv baseline | 0.646 |
+    | Hyper-ProtoSurv ours | 0.671 |
+    """
+
+    state = ExperimentAnalyzerAgent().run(
+        {
+            "request": PaperRequest(
+                project_name="contract-demo",
+                target_venue="TPAMI",
+                experiment_results=raw,
+            )
+        }
+    )
+
+    contract = state["artifacts"]["experiment_contract"]
+    assert contract["status"] == "needs_attention"
+    assert not contract["errors"]
+    assert contract["checks"]["result_tables"] == 1
+    assert contract["checks"]["numeric_comparisons"] == 1
+    assert any("Missing ablation table" in item for item in contract["warnings"])
+    assert any("Missing statistical-test table" in item for item in contract["warnings"])
+
+
 def test_hyper_protosurv_mock_example_covers_full_experiment_contract():
     raw = (Path(__file__).resolve().parents[1] / "examples" / "hyper_protosurv_mock_experiments.md").read_text(
         encoding="utf-8"
@@ -697,6 +728,7 @@ def test_hyper_protosurv_mock_example_covers_full_experiment_contract():
     assert len(state["experiments"].statistical_tests) == 2
     assert state["experiments"].statistical_tests[0].significant
     assert not state["experiments"].missing_details
+    assert state["artifacts"]["experiment_contract"]["status"] == "complete"
 
 
 def test_section_writer_uses_structured_result_tables():
@@ -2531,6 +2563,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
     assert summary["experiment_result_tables"] == 1
+    assert summary["experiment_contract_status"] == "needs_attention"
+    assert summary["experiment_contract_warnings"] == 1
     assert summary["experiment_sensitivity_evidence"] == 1
     assert summary["experiment_statistical_tests"] == 1
     assert summary["inputs"]["experiment_results_source"] == "none"
@@ -2608,6 +2642,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
 
     assert "- Overall status: PASS" in report
     assert "| Experiment source integrity | PASS | kind=real_result_file" in report
+    assert "| Experiment result contract | PASS | complete; main=2;" in report
     assert "- Main result tables: 2" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
@@ -3444,6 +3479,36 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
     assert summary["inputs"]["latex_compile_requested"]
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
     assert "- Overall status: PASS" in acceptance_report
+
+
+def test_cli_experiment_template_writes_contract_template(monkeypatch, tmp_path, capsys):
+    output_path = tmp_path / "tcga_results_template.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "experiment-template",
+            "--output",
+            str(output_path),
+            "--method",
+            "Hyper-ProtoSurv ours",
+            "--baseline",
+            "ProtoSurv baseline",
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+        ],
+    )
+
+    cli_module.main()
+
+    text = output_path.read_text(encoding="utf-8")
+    assert "Experiment result template written to" in capsys.readouterr().out
+    assert "| Method | BLCA C-index | BRCA C-index |" in text
+    assert "## Ablation Study" in text
+    assert "## Statistical Testing" in text
+    assert "TODO" in text
 
 
 def test_cli_draft_enforces_min_llm_sections(monkeypatch, tmp_path):

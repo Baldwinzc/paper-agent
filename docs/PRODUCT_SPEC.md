@@ -94,6 +94,10 @@ Experiment evidence is classified by provenance. Real result files, structured
 workflow-state results, synthetic/mock files, inline demos, and TCGA
 cohort-metadata summaries are reported separately so a pipeline smoke run is not
 confused with submission-ready empirical evidence.
+The experiment-result contract validator reports whether the supplied result file
+contains a main method-vs-baseline table plus ablation, sensitivity, and
+statistical-test evidence, and the CLI can generate a fill-in Markdown template
+for that contract.
 The LaTeX submission package is statically validated before reporting: the agent
 checks `main.tex`, `references.bib`, citation-key closure, referenced graphics,
 required zip entries, and optional local LaTeX compilation when enabled.
