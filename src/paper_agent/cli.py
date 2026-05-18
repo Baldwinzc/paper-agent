@@ -100,6 +100,11 @@ def main() -> None:
         action="store_true",
         help="Skip the final LLM self-review pass for this run.",
     )
+    draft.add_argument(
+        "--strict-results",
+        action="store_true",
+        help="Fail before generation unless the experiment result file is real and contract-complete.",
+    )
     sample = sub.add_parser(
         "sample-hyper-protosurv",
         help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
@@ -276,7 +281,13 @@ def main() -> None:
         llm_mode = _configure_llm_mode(args)
         compile_latex_requested = _configure_latex_compile(args)
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
-        experiment_results = Path(args.experiment_results).read_text(encoding="utf-8")
+        experiment_path = _resolve_project_relative_path(args.experiment_results)
+        if not experiment_path.is_file():
+            raise SystemExit(f"Experiment results file not found: {experiment_path}")
+        experiment_results = experiment_path.read_text(encoding="utf-8")
+        result_preflight = _validate_results_text(experiment_path, experiment_results)
+        if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
+            raise SystemExit("Draft failed: experiment result validation failed in strict mode.")
         request = PaperRequest(
             project_name=args.project_name,
             target_venue=args.target_venue,
@@ -297,7 +308,7 @@ def main() -> None:
             min_llm_sections=args.min_llm_sections,
         )
         state.setdefault("artifacts", {})["experiment_results_source"] = "file"
-        state["artifacts"]["experiment_results_path"] = str(Path(args.experiment_results))
+        state["artifacts"]["experiment_results_path"] = str(experiment_path)
         markdown_path = None
         if args.output:
             output_path = Path(args.output)
@@ -631,6 +642,10 @@ def _validate_results_file(path: Path, summary_path: Path | None = None) -> dict
         raise SystemExit(f"Experiment results file not found: {path}")
 
     raw = path.read_text(encoding="utf-8")
+    return _validate_results_text(path, raw, summary_path=summary_path)
+
+
+def _validate_results_text(path: Path, raw: str, summary_path: Path | None = None) -> dict:
     state = ExperimentAnalyzerAgent().run(
         {
             "request": PaperRequest(

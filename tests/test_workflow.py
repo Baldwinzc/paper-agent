@@ -3467,6 +3467,7 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "Acceptance report written to" in output
+    assert "Experiment result contract: needs_attention" in output
     assert markdown_path.read_text(encoding="utf-8") == "# Draft"
     assert captured["request"].project_name == "hyper-protosurv-tcga"
     assert captured["disable_template_fetch"] == "1"
@@ -3601,6 +3602,53 @@ def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_p
         raise AssertionError("Expected strict validation to fail for TODO template.")
     output = capsys.readouterr().out
     assert "Experiment evidence kind: unstructured" in output
+    assert "Experiment result contract: invalid" in output
+
+
+def test_cli_draft_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
+    baseline_dir = tmp_path / "baseline"
+    code_dir = tmp_path / "code"
+    baseline_dir.mkdir()
+    code_dir.mkdir()
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (code_dir / "train.py").write_text("class HyperProtoSurv: pass\n", encoding="utf-8")
+    experiment_path = tmp_path / "tcga_results_template.md"
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def run(self, request):
+            raise AssertionError("Workflow should not run after strict result preflight failure.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "draft",
+            "--project-name",
+            "hyper-protosurv-tcga",
+            "--target-venue",
+            "TPAMI",
+            "--baseline",
+            str(baseline_dir),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--strict-results",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict draft result preflight to fail.")
+    output = capsys.readouterr().out
     assert "Experiment result contract: invalid" in output
 
 

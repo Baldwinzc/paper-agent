@@ -30,6 +30,9 @@ python -m paper_agent.cli validate-results `
 
 `--strict` exits with a non-zero status unless the file is classified as real
 result evidence and the experiment-result contract is complete.
+The full `draft` command performs the same preflight and prints the same status.
+Use `--strict-results` there to stop generation when the result file fails the
+strict contract.
 
 ## Main Result Table
 
