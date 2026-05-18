@@ -674,7 +674,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         raise SystemExit("Sample failed: experiment result validation failed in strict mode.")
 
     output_dir = Path(args.output_dir)
-    project_name = args.project_name or output_dir.name
+    project_name = args.project_name or _default_project_name(output_dir)
     request = PaperRequest(
         project_name=project_name,
         target_venue="TPAMI",
@@ -784,7 +784,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         effective_min_llm_sections = args.min_llm_sections
 
     output_dir = Path(args.output_dir)
-    project_name = args.project_name or output_dir.name
+    project_name = args.project_name or _default_project_name(output_dir)
     skip_llm_self_review = args.disable_llm or args.skip_llm_self_review
     request = PaperRequest(
         project_name=project_name,
@@ -891,7 +891,7 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         raise SystemExit("LLM draft smoke failed: experiment result validation failed in strict mode.")
 
     output_dir = Path(args.output_dir)
-    project_name = args.project_name or output_dir.name
+    project_name = args.project_name or _default_project_name(output_dir)
     request = PaperRequest(
         project_name=project_name,
         target_venue=args.target_venue,
@@ -967,6 +967,16 @@ def _resolve_project_relative_path(path_value: str) -> Path:
     if path.is_absolute():
         return path
     return _project_root() / path
+
+
+def _default_project_name(output_dir: Path) -> str:
+    name = output_dir.name or "paper"
+    if name.lower() not in {"out", "output", "outputs", "result", "results", "draft", "paper"}:
+        return name
+    parent = output_dir.parent.name
+    if parent and parent not in {".", name}:
+        return f"{parent}-{name}"
+    return name
 
 
 def _validate_results_file(

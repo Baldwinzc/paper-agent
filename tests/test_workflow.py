@@ -4657,7 +4657,7 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
     assert (output_dir / "draft.md").read_text(encoding="utf-8") == "# Draft"
     assert zip_path.exists()
-    assert captured["request"].project_name == output_dir.name
+    assert captured["request"].project_name == cli_module._default_project_name(output_dir)
     assert captured["request"].baseline_pdf_path.endswith("baseline.pdf")
     assert captured["request"].code_path.endswith("hyper-protosurv")
     assert "TCGA Cohort Data Summary" in captured["request"].experiment_results
@@ -4719,6 +4719,18 @@ def test_cli_sample_hyper_protosurv_strict_results_rejects_cohort_metadata(
         raise AssertionError("Expected strict sample run to fail on TCGA cohort metadata.")
     output = capsys.readouterr().out
     assert "Experiment evidence kind: data_only" in output
+
+
+def test_default_project_name_uses_parent_for_generic_output_dir():
+    assert (
+        cli_module._default_project_name(Path("outputs") / "hyper-protosurv-tcga-real")
+        == "hyper-protosurv-tcga-real"
+    )
+    assert (
+        cli_module._default_project_name(Path("outputs") / "heartbeat-tcga-smoke" / "out")
+        == "heartbeat-tcga-smoke-out"
+    )
+    assert cli_module._default_project_name(Path("outputs") / "run-1" / "results") == "run-1-results"
 
 
 def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch, tmp_path, capsys):
@@ -4836,12 +4848,12 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
     assert "TCGA draft run completed." in output
     assert "Experiment result contract: complete" in output
     assert captured["llm_available"]
-    assert captured["request"].project_name == output_dir.name
+    assert captured["request"].project_name == cli_module._default_project_name(output_dir)
     assert captured["request"].experiment_results
     assert not captured["request"].skip_llm_self_review
     assert (output_dir / "draft.md").read_text(encoding="utf-8") == "# Draft"
     assert zip_path.exists()
-    assert summary["project_name"] == output_dir.name
+    assert summary["project_name"] == cli_module._default_project_name(output_dir)
     assert summary["inputs"]["experiment_results_path"].endswith("tcga_results.md")
     assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"
     assert summary["experiment_contract_status"] == "complete"
@@ -4966,9 +4978,9 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
     assert "LLM draft smoke passed." in output
     assert "Acceptance report written to" in output
     assert captured["llm_available"]
-    assert captured["request"].project_name == output_dir.name
+    assert captured["request"].project_name == cli_module._default_project_name(output_dir)
     assert captured["request"].skip_llm_self_review
-    assert summary["project_name"] == output_dir.name
+    assert summary["project_name"] == cli_module._default_project_name(output_dir)
     assert summary["section_writer_llm_successes"] == ["abstract", "method"]
     assert summary["inputs"]["experiment_results_source"] == "file"
     assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"
