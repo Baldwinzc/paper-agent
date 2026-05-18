@@ -7,7 +7,7 @@ import re
 import statistics
 from pathlib import Path
 
-from paper_agent.state import ExperimentComparison, ExperimentSummary
+from paper_agent.state import ExperimentSummary
 
 
 DEFAULT_VALUE_TOLERANCE = 1e-3
@@ -22,12 +22,7 @@ def assess_experiment_artifact_consistency(
 ) -> dict[str, object]:
     """Check whether local CSV provenance artifacts support parsed paper values."""
 
-    comparisons = [
-        comparison
-        for table in (experiments.result_tables if experiments else [])
-        for comparison in table.comparisons
-    ]
-    paper_values = _paper_values(comparisons)
+    paper_values = _paper_values(experiments)
     csv_entries = [
         entry
         for entry in provenance.get("entries", [])
@@ -40,6 +35,9 @@ def assess_experiment_artifact_consistency(
         "csv_artifacts": len(csv_entries),
         "checkable_csv_artifacts": 0,
         "paper_values": len(paper_values),
+        "main_values": sum(1 for value in paper_values if str(value.get("role", "")).startswith("main_")),
+        "ablation_values": sum(1 for value in paper_values if str(value.get("role", "")).startswith("ablation_")),
+        "sensitivity_values": sum(1 for value in paper_values if value.get("role") == "sensitivity"),
         "matched_values": 0,
         "missing_values": 0,
         "mismatched_values": 0,
@@ -88,9 +86,7 @@ def assess_experiment_artifact_consistency(
         candidates = [
             value
             for value in artifact_values
-            if _same_label(str(expected["method"]), str(value.get("method", "")))
-            and _same_label(str(expected["dataset"]), str(value.get("dataset", "")))
-            and _same_metric(str(expected["metric"]), str(value.get("metric", "")))
+            if _expected_matches_artifact(expected, value)
         ]
         if not candidates:
             missing.append(expected)
@@ -150,28 +146,78 @@ def assess_experiment_artifact_consistency(
     )
 
 
-def _paper_values(comparisons: list[ExperimentComparison]) -> list[dict[str, object]]:
+def _paper_values(experiments: ExperimentSummary | None) -> list[dict[str, object]]:
     values: list[dict[str, object]] = []
-    for comparison in comparisons:
+    if not experiments:
+        return values
+    for table in experiments.result_tables:
+        for comparison in table.comparisons:
+            values.append(
+                {
+                    "role": "main_method",
+                    "method": comparison.method,
+                    "dataset": comparison.dataset,
+                    "metric": comparison.metric,
+                    "value": comparison.method_value,
+                }
+            )
+            values.append(
+                {
+                    "role": "main_baseline",
+                    "method": comparison.baseline,
+                    "dataset": comparison.dataset,
+                    "metric": comparison.metric,
+                    "value": comparison.baseline_value,
+                }
+            )
+    for item in experiments.ablation_evidence:
         values.append(
             {
-                "role": "method",
-                "method": comparison.method,
-                "dataset": comparison.dataset,
-                "metric": comparison.metric,
-                "value": comparison.method_value,
+                "role": "ablation_reference",
+                "method": item.reference,
+                "dataset": item.dataset,
+                "metric": item.metric,
+                "value": item.reference_value,
             }
         )
         values.append(
             {
-                "role": "baseline",
-                "method": comparison.baseline,
-                "dataset": comparison.dataset,
-                "metric": comparison.metric,
-                "value": comparison.baseline_value,
+                "role": "ablation_variant",
+                "method": item.variant,
+                "dataset": item.dataset,
+                "metric": item.metric,
+                "value": item.variant_value,
             }
         )
-    return values
+    for item in experiments.sensitivity_evidence:
+        for parameter_value, metric_value in zip(item.tested_values, item.metric_values):
+            values.append(
+                {
+                    "role": "sensitivity",
+                    "method": f"{item.parameter}={parameter_value}",
+                    "parameter": item.parameter,
+                    "parameter_value": parameter_value,
+                    "dataset": item.dataset,
+                    "metric": item.metric,
+                    "value": metric_value,
+                }
+            )
+    return _dedupe_paper_values(values)
+
+
+def _dedupe_paper_values(values: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: dict[tuple[str, str, str, str, str, str], dict[str, object]] = {}
+    for value in values:
+        key = (
+            str(value.get("role", "")),
+            _normalize_label(str(value.get("method", ""))),
+            _normalize_label(str(value.get("dataset", ""))),
+            _normalize_metric(str(value.get("metric", ""))),
+            _normalize_label(str(value.get("parameter", ""))),
+            _normalize_label(str(value.get("parameter_value", ""))),
+        )
+        deduped.setdefault(key, value)
+    return list(deduped.values())
 
 
 def _read_csv_values(entry: dict[str, object]) -> tuple[list[dict[str, object]], str]:
@@ -199,16 +245,20 @@ def _csv_schema(headers: list[str]) -> dict[str, str] | None:
     method = _find_column(headers, ["method", "model", "variant", "approach"])
     dataset = _find_column(headers, ["dataset", "cohort", "cancer", "project"])
     metric = _find_column(headers, ["metric", "measure"])
+    parameter = _find_column(headers, ["parameter", "hyperparameter", "param"])
+    parameter_value = _find_column(headers, ["parameter_value", "param_value", "setting", "tested_value"])
     fold = _find_column(headers, ["fold", "split"])
     seed = _find_column(headers, ["seed", "run"])
     value = _find_column(headers, ["value", "score", "result", "mean", "estimate"])
     if not value:
         value = _find_metric_value_column(headers)
-    if method and dataset and value:
+    if dataset and value and (method or (parameter and parameter_value)):
         return {
             "method": method,
             "dataset": dataset,
             "metric": metric or "",
+            "parameter": parameter,
+            "parameter_value": parameter_value,
             "fold": fold,
             "seed": seed,
             "value": value,
@@ -229,6 +279,8 @@ def _csv_row_value(
     metric = row.get(schema["metric"], "") if schema.get("metric") else _metric_from_header(schema["value"])
     return {
         "method": row.get(schema["method"], ""),
+        "parameter": row.get(schema["parameter"], "") if schema.get("parameter") else "",
+        "parameter_value": row.get(schema["parameter_value"], "") if schema.get("parameter_value") else "",
         "dataset": row.get(schema["dataset"], ""),
         "metric": metric,
         "value": value,
@@ -245,6 +297,8 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
     for value in values:
         key = (
             _normalize_label(str(value.get("method", ""))),
+            _normalize_label(str(value.get("parameter", ""))),
+            _normalize_label(str(value.get("parameter_value", ""))),
             _normalize_label(str(value.get("dataset", ""))),
             _normalize_metric(str(value.get("metric", ""))),
             str(value.get("artifact_path", "")),
@@ -268,6 +322,8 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
         aggregated.append(
             {
                 "method": first.get("method", ""),
+                "parameter": first.get("parameter", ""),
+                "parameter_value": first.get("parameter_value", ""),
                 "dataset": first.get("dataset", ""),
                 "metric": first.get("metric", ""),
                 "value": sum(numeric_values) / len(numeric_values),
@@ -282,6 +338,21 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
             }
         )
     return aggregated
+
+
+def _expected_matches_artifact(expected: dict[str, object], value: dict[str, object]) -> bool:
+    if expected.get("role") == "sensitivity":
+        return bool(
+            _same_label(str(expected.get("parameter", "")), str(value.get("parameter", "")))
+            and _same_label(str(expected.get("parameter_value", "")), str(value.get("parameter_value", "")))
+            and _same_label(str(expected.get("dataset", "")), str(value.get("dataset", "")))
+            and _same_metric(str(expected.get("metric", "")), str(value.get("metric", "")))
+        )
+    return bool(
+        _same_label(str(expected.get("method", "")), str(value.get("method", "")))
+        and _same_label(str(expected.get("dataset", "")), str(value.get("dataset", "")))
+        and _same_metric(str(expected.get("metric", "")), str(value.get("metric", "")))
+    )
 
 
 def _find_column(headers: list[str], names: list[str]) -> str:

@@ -217,7 +217,7 @@ seed/fold identifiers are visible in the table. Missing local paths and checksum
 mismatches are treated as provenance errors.
 
 For artifact consistency checks, provide at least one local CSV with long-form
-result rows:
+result rows. Main result and ablation rows use `method` or `variant` labels:
 
 ```csv
 method,dataset,metric,value
@@ -225,10 +225,20 @@ ProtoSurv baseline,BLCA,C-index,0.646
 Hyper-ProtoSurv ours,BLCA,C-index,0.671
 ProtoSurv baseline,BRCA,C-index,0.669
 Hyper-ProtoSurv ours,BRCA,C-index,0.691
+Hyper-ProtoSurv ours,Average,C-index,0.681
+w/o reconstruction loss,Average,C-index,0.665
 ```
 
 The validator matches method, dataset, and metric labels, then compares numeric
 values with a tolerance of `0.001` to allow normal paper-table rounding.
+Sensitivity rows use `parameter` and `parameter_value`:
+
+```csv
+parameter,parameter_value,dataset,metric,value
+lambda_rec,0.5,Average,C-index,0.676
+lambda_rec,1.0,Average,C-index,0.681
+```
+
 If the CSV contains repeated rows for the same method, dataset, and metric, such
 as one row per fold, the validator compares the paper value against the mean of
 those rows and records the fold count and sample standard deviation.

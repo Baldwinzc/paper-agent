@@ -154,6 +154,8 @@ SHA-256 and byte size, and declared checksums are verified when supplied.
 When checkable CSV artifacts are available, the workflow can compare source rows
 against parsed paper result tables by method, dataset, metric, and value before
 allowing strict submission-grade validation to pass.
+The same consistency check covers main result rows, ablation variant rows, and
+sensitivity parameter rows when the CSV exposes matching long-form labels.
 Fold-level CSV rows are aggregated by method, dataset, and metric so reported
 mean values can be checked without requiring users to hand-author an additional
 summary CSV.
