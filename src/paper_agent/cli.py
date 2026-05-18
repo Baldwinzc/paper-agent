@@ -167,6 +167,17 @@ def main() -> None:
         action="store_true",
         help="Allow configured LLM calls. The default sample run is deterministic and local.",
     )
+    sample.add_argument(
+        "--skip-llm-self-review",
+        action="store_true",
+        help="Skip the final LLM self-review pass even when --allow-llm is used.",
+    )
+    sample.add_argument(
+        "--strict-results",
+        action="store_true",
+        help="Fail before generation unless the experiment input is real and contract-complete.",
+    )
+    _add_experiment_contract_options(sample)
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     llm_draft = sub.add_parser(
@@ -204,6 +215,12 @@ def main() -> None:
         action="store_true",
         help="Run the local LaTeX compiler during submission validation.",
     )
+    llm_draft.add_argument(
+        "--strict-results",
+        action="store_true",
+        help="Fail before LLM generation unless the experiment input is real and contract-complete.",
+    )
+    _add_experiment_contract_options(llm_draft)
     experiment_template = sub.add_parser(
         "experiment-template",
         help="Write a fill-in Markdown template for real experiment result files.",
@@ -337,10 +354,7 @@ def main() -> None:
         )
         state.setdefault("artifacts", {})["experiment_results_source"] = "file"
         state["artifacts"]["experiment_results_path"] = str(experiment_path)
-        state["artifacts"]["experiment_contract"] = result_preflight["experiment_contract"]
-        state["artifacts"]["experiment_contract_requirements"] = result_preflight[
-            "experiment_contract_requirements"
-        ]
+        _record_result_preflight(state, result_preflight)
         SubmissionReadinessAgent().run(state)
         DraftReportAgent().run(state)
         markdown_path = None
@@ -513,11 +527,22 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         experiment_results = experiment_path.read_text(encoding="utf-8")
         experiment_results_source = "file"
         experiment_results_path = str(experiment_path)
+        result_preflight_path = experiment_path
     else:
         dataset_csv_dir = code_path / "dataset_csv"
         experiment_results = _build_tcga_cohort_summary(dataset_csv_dir)
         experiment_results_source = "tcga_cohort_csv"
         experiment_results_path = str(dataset_csv_dir)
+        result_preflight_path = dataset_csv_dir
+
+    result_preflight = _validate_results_text(
+        result_preflight_path,
+        experiment_results,
+        source=experiment_results_source,
+        **_experiment_contract_kwargs(args),
+    )
+    if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
+        raise SystemExit("Sample failed: experiment result validation failed in strict mode.")
 
     output_dir = Path(args.output_dir)
     project_name = args.project_name or output_dir.name
@@ -538,7 +563,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
             "computational pathology",
             "hypergraph learning",
         ],
-        skip_llm_self_review=not args.allow_llm,
+        skip_llm_self_review=not args.allow_llm or args.skip_llm_self_review,
     )
     state = PaperWorkflow().run(request)
     _record_runtime_modes(
@@ -549,6 +574,9 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = experiment_results_source
     state["artifacts"]["experiment_results_path"] = experiment_results_path
+    _record_result_preflight(state, result_preflight)
+    SubmissionReadinessAgent().run(state)
+    DraftReportAgent().run(state)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = output_dir / "draft.md"
@@ -594,13 +622,21 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     experiment_path = _resolve_project_relative_path(args.experiment_results)
     if not experiment_path.is_file():
         raise SystemExit(f"Experiment results file not found: {experiment_path}")
+    experiment_results = experiment_path.read_text(encoding="utf-8")
+    result_preflight = _validate_results_text(
+        experiment_path,
+        experiment_results,
+        **_experiment_contract_kwargs(args),
+    )
+    if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
+        raise SystemExit("LLM draft smoke failed: experiment result validation failed in strict mode.")
 
     request = PaperRequest(
         project_name=args.project_name,
         target_venue=args.target_venue,
         baseline_pdf_path=str(baseline_pdf),
         code_path=str(code_path),
-        experiment_results=experiment_path.read_text(encoding="utf-8"),
+        experiment_results=experiment_results,
         keywords=[
             "whole-slide images",
             "survival prediction",
@@ -619,6 +655,9 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
+    _record_result_preflight(state, result_preflight)
+    SubmissionReadinessAgent().run(state)
+    DraftReportAgent().run(state)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -674,6 +713,7 @@ def _validate_results_file(
     path: Path,
     summary_path: Path | None = None,
     *,
+    source: str = "file",
     require_ablation: bool = True,
     require_sensitivity: bool = True,
     require_statistical_tests: bool = True,
@@ -687,6 +727,7 @@ def _validate_results_file(
         path,
         raw,
         summary_path=summary_path,
+        source=source,
         require_ablation=require_ablation,
         require_sensitivity=require_sensitivity,
         require_statistical_tests=require_statistical_tests,
@@ -698,6 +739,7 @@ def _validate_results_text(
     raw: str,
     summary_path: Path | None = None,
     *,
+    source: str = "file",
     require_ablation: bool = True,
     require_sensitivity: bool = True,
     require_statistical_tests: bool = True,
@@ -719,13 +761,14 @@ def _validate_results_text(
         require_statistical_tests=require_statistical_tests,
     )
     evidence = classify_experiment_evidence(
-        source="file",
+        source=source,
         path=str(path),
         text=raw,
         result_table_count=len(experiments.result_tables),
     )
     summary = {
         "path": str(path),
+        "source": source,
         "experiment_evidence": evidence,
         "experiment_contract": contract,
         "experiment_contract_requirements": contract.get("requirements", {}),
@@ -772,6 +815,17 @@ def _experiment_contract_kwargs(args: argparse.Namespace) -> dict[str, bool]:
         "require_sensitivity": bool(getattr(args, "require_sensitivity", True)),
         "require_statistical_tests": bool(getattr(args, "require_statistical_tests", True)),
     }
+
+
+def _record_result_preflight(state: dict, result_preflight: dict | None) -> None:
+    if not result_preflight:
+        return
+    artifacts = state.setdefault("artifacts", {})
+    artifacts["experiment_contract"] = result_preflight.get("experiment_contract", {})
+    artifacts["experiment_contract_requirements"] = result_preflight.get(
+        "experiment_contract_requirements",
+        {},
+    )
 
 
 def _validated_results_are_strictly_acceptable(summary: dict) -> bool:

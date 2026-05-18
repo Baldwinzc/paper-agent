@@ -159,6 +159,11 @@ paper-writing path itself can call the model. The command writes both
 human-readable pass/fail view of the input contract, LLM-written sections,
 experiment-source integrity, evidence checks, LaTeX package status, compile
 check, and output paths.
+Add `--strict-results` when the smoke run should fail before any LLM generation
+unless the supplied experiment file is real result evidence and satisfies the
+experiment-result contract. The same `--no-require-ablation`,
+`--no-require-sensitivity`, and `--no-require-statistical-tests` switches are
+available when those analyses are intentionally out of scope.
 The bundled `examples\hyper_protosurv_mock_experiments.md` file is synthetic
 TCGA-style data for this smoke path only; replace it with real experiment tables
 for any research draft.
@@ -256,6 +261,8 @@ statistical tests. It is a pipeline demonstration, not scientific evidence.
 If you use the synthetic mock file with `--allow-llm`, keep
 `--skip-llm-self-review` for a pipeline demonstration; otherwise the LLM reviewer
 may correctly flag mock performance claims as unsupported for real submission.
+Add `--strict-results` to make the sample fail before generation when the
+experiment input is only TCGA cohort metadata or an incomplete result template.
 
 Use a manually downloaded official template when automatic fetching is blocked:
 

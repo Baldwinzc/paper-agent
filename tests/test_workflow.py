@@ -3893,6 +3893,8 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
             str(output_dir),
             "--zip",
             str(zip_path),
+            "--allow-llm",
+            "--skip-llm-self-review",
         ],
     )
 
@@ -3915,6 +3917,54 @@ def test_cli_sample_hyper_protosurv_writes_showcase_artifacts(monkeypatch, tmp_p
     assert "Acceptance report written to" in capsys.readouterr().out
     assert "# Paper Agent Acceptance Report" in acceptance_report
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
+
+
+def test_cli_sample_hyper_protosurv_strict_results_rejects_cohort_metadata(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    dataset_dir = code_dir / "dataset_csv"
+    baseline_dir.mkdir(parents=True)
+    dataset_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (dataset_dir / "BLCA.csv").write_text(
+        ",case_id,slide_id,survival_months,censorship\n"
+        "0,TCGA-AA-0001-01Z-00-DX1.A,TCGA-AA-0001-01Z-00-DX1.A.svs,12.0,0\n",
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def run(self, request):
+            raise AssertionError("Workflow should not run when strict result preflight fails.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "sample-hyper-protosurv",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--zip",
+            str(tmp_path / "sample.zip"),
+            "--strict-results",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict sample run to fail on TCGA cohort metadata.")
+    output = capsys.readouterr().out
+    assert "Experiment evidence kind: data_only" in output
 
 
 def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
@@ -4005,6 +4055,52 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
     assert "# Paper Agent Acceptance Report" in acceptance_report
     assert zip_path.exists()
+
+
+def test_cli_llm_draft_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    experiment_path = tmp_path / "tcga_results_template.md"
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not be constructed after strict result preflight failure.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "llm-draft-smoke",
+            "--example-root",
+            str(example_root),
+            "--experiment-results",
+            str(experiment_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--strict-results",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict LLM smoke run to fail on TODO result template.")
+    output = capsys.readouterr().out
+    assert "Experiment result contract: invalid" in output
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):
