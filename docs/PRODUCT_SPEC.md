@@ -85,6 +85,9 @@ When bibliography seeds come from innovation points, the system extracts concise
 technical search phrases instead of using raw innovation labels as citation queries.
 Related Work subsections are checked for real citation coverage so unsupported
 research-thread paragraphs are visible in the draft report.
+When online related-work discovery finds verified candidates, generic keyword
+seed references are pruned and the provided baseline seed is enriched from the
+matched scholarly record when possible.
 Generated sections are also checked against supplied experiments and innovation
 points to flag unsupported datasets, metrics, numeric results, or Method subsections.
 After review, the workflow computes a submission-readiness score across evidence

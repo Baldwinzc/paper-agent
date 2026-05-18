@@ -1348,7 +1348,16 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
                 key="baseline",
                 title="Baseline Survival Paper",
                 query="Baseline Survival Paper",
-            )
+                authors=["Baseline authors"],
+                note="Seed entry extracted from the provided baseline PDF; verify metadata before submission.",
+            ),
+            CitationEntry(
+                key="wholeslideimages",
+                title="Representative work on whole-slide images",
+                query="whole-slide images survival prediction",
+                authors=["Related work authors"],
+                note="Seed related-work entry generated from project keywords; replace with real paper metadata.",
+            ),
         ],
         "artifacts": {},
     }
@@ -1362,11 +1371,14 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
     assert "Predicting cancer outcomes from histology" in titles
     assert any("Predicting cancer outcomes" in item.get("query", "") for item in state["artifacts"]["related_work_candidates"])
     assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
+    assert "wholeslideimages" not in [entry.key for entry in state["bibliography"]]
+    assert state["artifacts"]["reference_pruned_seed_keys"] == ["wholeslideimages"]
     assert state["artifacts"]["citation_keys"]
     verification = state["artifacts"]["reference_verification"]
-    assert verification["resolved_count"] == len(state["artifacts"]["related_work_candidates"])
+    assert verification["resolved_count"] == len(state["artifacts"]["related_work_candidates"]) + 1
     assert verification["unresolved_seed_keys"] == []
-    assert verification["needs_manual_check_keys"] == ["baseline", *verification["resolved_keys"]]
+    assert "baseline" in verification["resolved_keys"]
+    assert verification["needs_manual_check_keys"] == verification["resolved_keys"]
 
 
 def test_related_work_discovery_extracts_baseline_mentioned_queries():
@@ -2514,6 +2526,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
             "reference_resolution_trace": [{"key": "paper", "status": "resolved"}],
+            "reference_pruned_seed_keys": ["survivalprediction"],
             "related_work_candidates": [{"title": "A"}],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
@@ -2571,6 +2584,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["code_baseline_method_shifts"] == 1
     assert summary["code_baseline_innovation_seeds"] == 1
     assert summary["reference_unresolved"] == 2
+    assert summary["reference_pruned_seed_count"] == 1
+    assert summary["reference_pruned_seed_keys"] == ["survivalprediction"]
     assert summary["reference_resolution_trace"] == 1
     assert summary["related_work_candidates"] == 1
     assert summary["experiment_result_tables"] == 1
@@ -2737,6 +2752,8 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "| Experiment result provenance | PASS | complete; entries=1;" in report
     assert "| Experiment artifact consistency | PASS | complete; matched=4/4;" in report
     assert "- Main result tables: 2" in report
+    assert "## Reference Readiness" in report
+    assert "- Unresolved seed references: 0" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report

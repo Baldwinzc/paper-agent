@@ -22,6 +22,7 @@ class RelatedWorkDiscoveryAgent:
             state.setdefault("artifacts", {})["related_work_discovery_mode"] = "disabled"
             return state
 
+        artifacts = state.setdefault("artifacts", {})
         errors: dict[str, str] = {}
         candidates: list[CitationEntry] = []
         baseline_work: dict[str, Any] | None = None
@@ -76,14 +77,17 @@ class RelatedWorkDiscoveryAgent:
             except Exception as exc:
                 errors["recent_search"] = str(exc)
 
-        merged = self._merge_entries(state.get("bibliography", []), candidates)
+        existing = self._resolve_baseline_seed_entries(state.get("bibliography", []), baseline_work)
+        merged = self._merge_entries(existing, candidates)
+        merged, pruned_seed_keys = self._prune_covered_seed_entries(merged, candidates)
         state["bibliography"] = merged
-        artifacts = state.setdefault("artifacts", {})
         artifacts["citation_keys"] = [entry.key for entry in merged]
         artifacts["related_work_discovery_mode"] = "openalex"
         artifacts["related_work_candidates"] = [
             self._candidate_artifact(entry) for entry in merged if "category=" in entry.note
         ]
+        if pruned_seed_keys:
+            artifacts["reference_pruned_seed_keys"] = pruned_seed_keys
         self._update_reference_verification(artifacts, merged)
         if errors:
             artifacts["related_work_discovery_errors"] = errors
@@ -413,6 +417,85 @@ class RelatedWorkDiscoveryAgent:
                 seen_dois.add(doi_key)
             seen_titles.add(title_key)
         return list(entries.values())
+
+    def _resolve_baseline_seed_entries(
+        self,
+        entries: list[CitationEntry],
+        baseline_work: dict[str, Any] | None,
+    ) -> list[CitationEntry]:
+        if not baseline_work:
+            return entries
+        resolved = []
+        for entry in entries:
+            if self._baseline_seed_matches(entry, baseline_work):
+                resolved.append(self._entry_from_baseline_work(entry, baseline_work))
+            else:
+                resolved.append(entry)
+        return resolved
+
+    def _baseline_seed_matches(self, entry: CitationEntry, baseline_work: dict[str, Any]) -> bool:
+        if self._is_resolved(entry):
+            return False
+        work_title = str(baseline_work.get("title") or "")
+        entry_text = " ".join([entry.key, entry.title, entry.query])
+        return bool(
+            work_title
+            and entry_text.strip()
+            and (
+                self._title_key(work_title) == self._title_key(entry.title)
+                or self._title_key(work_title) == self._title_key(entry.query)
+                or entry.key.lower().startswith("baseline")
+            )
+        )
+
+    def _entry_from_baseline_work(
+        self,
+        original: CitationEntry,
+        work: dict[str, Any],
+    ) -> CitationEntry:
+        title = str(work.get("title") or original.title)
+        doi = self._clean_doi(str(work.get("doi") or ""))
+        return original.model_copy(
+            update={
+                "title": title,
+                "authors": self._authors(work) or original.authors,
+                "year": str(work.get("publication_year") or original.year),
+                "venue": self._venue(work) or original.venue,
+                "doi": doi,
+                "url": self._work_url(work, doi),
+                "note": (
+                    "Resolved provided baseline paper during related-work discovery. "
+                    "Verify relevance before submission."
+                ),
+            }
+        )
+
+    def _prune_covered_seed_entries(
+        self,
+        entries: list[CitationEntry],
+        discovered: list[CitationEntry],
+    ) -> tuple[list[CitationEntry], list[str]]:
+        if not any(self._is_resolved(entry) for entry in discovered):
+            return entries, []
+        kept: list[CitationEntry] = []
+        pruned: list[str] = []
+        for entry in entries:
+            if self._prunable_related_work_seed(entry):
+                pruned.append(entry.key)
+                continue
+            kept.append(entry)
+        return kept, pruned
+
+    def _prunable_related_work_seed(self, entry: CitationEntry) -> bool:
+        if not self._is_seed_entry(entry):
+            return False
+        note = entry.note.lower()
+        authors = {author.lower() for author in entry.authors}
+        return bool(
+            "project keywords" in note
+            or "seed related-work" in note
+            or "related work authors" in authors
+        )
 
     def _candidate_artifact(self, entry: CitationEntry) -> dict[str, Any]:
         category_match = re.search(r"category=([^;]+)", entry.note)
