@@ -7,6 +7,7 @@ from zipfile import ZipFile
 
 from paper_agent import api as api_module
 from paper_agent import cli as cli_module
+from paper_agent.config import LLMConfig
 from paper_agent.export import zip_latex_project
 from paper_agent.tables import extract_markdown_tables, markdown_tables_to_latex
 from paper_agent.state import CitationEntry, InnovationPoint, PaperOutline, PaperRequest, VenueTemplate
@@ -2576,6 +2577,56 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["outputs"]["markdown"].endswith("draft.md")
     assert summary["outputs"]["presentation_plan_path"].endswith("FIGURE_TABLE_PLAN.md")
     assert summary["outputs"]["submission_checklist_path"].endswith("SUBMISSION_CHECKLIST.md")
+
+
+def test_run_summary_records_llm_runtime_metadata_without_api_key(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="llm-metadata-demo", target_venue="TPAMI"),
+        "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+        "bibliography": [],
+        "review_findings": [],
+        "latex_project_dir": tmp_path / "latex",
+        "latex_output_path": tmp_path / "latex" / "main.tex",
+        "artifacts": {
+            "section_writer_mode": "llm",
+            "section_writer_llm_attempted_sections": ["abstract"],
+            "section_writer_llm_successes": ["abstract"],
+            "section_writer_section_errors": {},
+            "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
+            "experiment_result_tables": [{"caption": "Main Results"}],
+            "submission_readiness": {"overall_score": 95, "status": "reviewable"},
+            "submission_package": {"status": "valid", "errors": [], "warnings": [], "checks": {}},
+        },
+    }
+    cli_module._record_runtime_modes(
+        state,
+        network_mode="offline",
+        llm_mode="required",
+        compile_latex_requested=False,
+        min_llm_sections=1,
+        llm_config=LLMConfig(
+            api_key="secret-test-key",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            timeout_seconds=30,
+            max_retries=2,
+        ),
+    )
+
+    summary = cli_module._build_run_summary(state, tmp_path / "draft.md")
+    report = cli_module._build_acceptance_report(summary, min_llm_sections=1)
+    serialized = json.dumps(summary)
+
+    assert summary["inputs"]["llm_provider"] == "deepseek"
+    assert summary["inputs"]["llm_model"] == "deepseek-v4-pro"
+    assert summary["inputs"]["llm_endpoint_host"] == "api.deepseek.com"
+    assert summary["inputs"]["llm_configured"] is True
+    assert summary["inputs"]["llm_timeout_seconds"] == 30
+    assert summary["inputs"]["llm_max_retries"] == 2
+    assert "secret-test-key" not in serialized
+    assert "- LLM provider/model: deepseek / deepseek-v4-pro" in report
+    assert "- LLM endpoint host: api.deepseek.com" in report
+    assert "secret-test-key" not in report
 
 
 def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):

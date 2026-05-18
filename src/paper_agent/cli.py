@@ -8,13 +8,14 @@ import json
 import os
 import statistics
 from pathlib import Path
+from urllib.parse import urlparse
 
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
 from paper_agent.agents.submission_package_validator import SubmissionPackageValidatorAgent
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
-from paper_agent.config import load_llm_config
+from paper_agent.config import LLMConfig, load_llm_config
 from paper_agent.export import zip_latex_project
 from paper_agent.experiment_artifact_consistency import assess_experiment_artifact_consistency
 from paper_agent.experiment_contract import experiment_results_template, validate_experiment_contract
@@ -444,6 +445,7 @@ def main() -> None:
         network_mode = _configure_network_mode(args)
         llm_mode = _configure_llm_mode(args)
         compile_latex_requested = _configure_latex_compile(args)
+        runtime_llm_config = load_llm_config()
         baseline_pdf = _resolve_baseline_pdf(args.baseline)
         experiment_path = _resolve_project_relative_path(args.experiment_results)
         if not experiment_path.is_file():
@@ -476,6 +478,7 @@ def main() -> None:
             llm_mode=llm_mode,
             compile_latex_requested=compile_latex_requested,
             min_llm_sections=args.min_llm_sections,
+            llm_config=runtime_llm_config,
         )
         state.setdefault("artifacts", {})["experiment_results_source"] = "file"
         state["artifacts"]["experiment_results_path"] = str(experiment_path)
@@ -606,12 +609,41 @@ def _record_runtime_modes(
     llm_mode: str,
     compile_latex_requested: bool,
     min_llm_sections: int = 0,
+    llm_config: LLMConfig | None = None,
 ) -> None:
     artifacts = state.setdefault("artifacts", {})
     artifacts["runtime_network_mode"] = network_mode
     artifacts["runtime_llm_mode"] = llm_mode
     artifacts["latex_compile_requested"] = compile_latex_requested
     artifacts["min_llm_sections"] = min_llm_sections
+    if llm_config:
+        artifacts.update(_llm_runtime_metadata(llm_config))
+
+
+def _llm_runtime_metadata(config: LLMConfig) -> dict[str, object]:
+    parsed = urlparse(config.base_url)
+    host = parsed.netloc or parsed.path.split("/")[0]
+    return {
+        "runtime_llm_provider": _llm_provider_from_host(host),
+        "runtime_llm_model": config.model,
+        "runtime_llm_endpoint_host": host,
+        "runtime_llm_configured": config.configured,
+        "runtime_llm_timeout_seconds": config.timeout_seconds,
+        "runtime_llm_max_retries": config.max_retries,
+    }
+
+
+def _llm_provider_from_host(host: str) -> str:
+    lowered = host.lower()
+    if "deepseek" in lowered:
+        return "deepseek"
+    if "volcengine" in lowered or "ark" in lowered:
+        return "volcengine-ark"
+    if "dashscope" in lowered or "aliyuncs" in lowered or "bailian" in lowered:
+        return "aliyun-bailian"
+    if "openai" in lowered:
+        return "openai"
+    return host or "unknown"
 
 
 def _truthy_env(name: str) -> bool:
@@ -640,6 +672,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     llm_mode = _configure_llm_mode(args, default_disabled=True)
     network_mode = _configure_network_mode(args, default_offline=True)
     compile_latex_requested = _configure_latex_compile(args)
+    runtime_llm_config = load_llm_config()
 
     example_root = Path(args.example_root)
     baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
@@ -700,6 +733,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
         network_mode=network_mode,
         llm_mode=llm_mode,
         compile_latex_requested=compile_latex_requested,
+        llm_config=runtime_llm_config,
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = experiment_results_source
     state["artifacts"]["experiment_results_path"] = experiment_results_path
@@ -769,8 +803,10 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
     llm_client = None
     llm_mode = "disabled"
     effective_min_llm_sections = 0
+    runtime_llm_config = load_llm_config()
     if args.disable_llm:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
+        runtime_llm_config = load_llm_config()
     else:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "0"
         config = load_llm_config()
@@ -782,6 +818,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         llm_client = LLMClient(config)
         llm_mode = "required"
         effective_min_llm_sections = args.min_llm_sections
+        runtime_llm_config = config
 
     output_dir = Path(args.output_dir)
     project_name = args.project_name or _default_project_name(output_dir)
@@ -810,6 +847,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         llm_mode=llm_mode,
         compile_latex_requested=compile_latex_requested,
         min_llm_sections=effective_min_llm_sections,
+        llm_config=runtime_llm_config,
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
@@ -913,6 +951,7 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
         llm_mode="required",
         compile_latex_requested=compile_latex_requested,
         min_llm_sections=args.min_llm_sections,
+        llm_config=config,
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
@@ -1454,6 +1493,11 @@ def _build_acceptance_report(
         f"- Template source: {summary.get('template_source', '')}",
         f"- Network mode: {inputs.get('network_mode', '')}",
         f"- LLM mode: {inputs.get('llm_mode', '')}",
+        (
+            f"- LLM provider/model: {inputs.get('llm_provider', '') or 'not recorded'} / "
+            f"{inputs.get('llm_model', '') or 'not recorded'}"
+        ),
+        f"- LLM endpoint host: {inputs.get('llm_endpoint_host', '') or 'not recorded'}",
         f"- LaTeX compile requested: {inputs.get('latex_compile_requested', False)}",
         "",
         "## Experiment Evidence Coverage",
@@ -1948,6 +1992,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "template_dir_path": getattr(request, "template_dir_path", "") or "",
             "network_mode": artifacts.get("runtime_network_mode", "environment"),
             "llm_mode": artifacts.get("runtime_llm_mode", "environment"),
+            "llm_provider": artifacts.get("runtime_llm_provider", ""),
+            "llm_model": artifacts.get("runtime_llm_model", ""),
+            "llm_endpoint_host": artifacts.get("runtime_llm_endpoint_host", ""),
+            "llm_configured": bool(artifacts.get("runtime_llm_configured", False)),
+            "llm_timeout_seconds": artifacts.get("runtime_llm_timeout_seconds", 0),
+            "llm_max_retries": artifacts.get("runtime_llm_max_retries", 0),
             "latex_compile_requested": bool(
                 artifacts.get("latex_compile_requested", _truthy_env("PAPER_AGENT_RUN_LATEX_COMPILE"))
             ),

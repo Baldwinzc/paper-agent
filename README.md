@@ -158,7 +158,8 @@ paper-writing path itself can call the model. The command writes both
 `RUN_SUMMARY.json` for automation and `ACCEPTANCE_REPORT.md` for a concise
 human-readable pass/fail view of the input contract, LLM-written sections,
 experiment-source integrity, evidence checks, LaTeX package status, compile
-check, and output paths.
+check, and output paths. The report records the configured LLM provider, model,
+and endpoint host without recording API keys.
 The report separates pipeline status from submission evidence status: synthetic
 or cohort-metadata inputs can prove the toolchain runs, but they fail the
 submission-evidence gate until replaced with real trained-model results.
