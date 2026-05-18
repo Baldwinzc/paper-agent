@@ -3974,6 +3974,168 @@ def test_cli_sample_hyper_protosurv_strict_results_rejects_cohort_metadata(
     assert "Experiment evidence kind: data_only" in output
 
 
+def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index |",
+                "|---|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.690 |",
+                "| w/o reconstruction loss | 0.672 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.687 |",
+                "| 1.0 | 0.690 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_available"] = bool(llm_client and llm_client.available)
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "llm",
+                    "section_writer_llm_attempted_sections": [
+                        "abstract",
+                        "method",
+                        "experiments",
+                        "conclusion",
+                    ],
+                    "section_writer_llm_successes": [
+                        "abstract",
+                        "method",
+                        "experiments",
+                        "conclusion",
+                    ],
+                    "llm_self_review": {"mode": "llm"},
+                    "experiment_result_tables": [{"title": "Main results"}],
+                    "experiment_ablation_evidence": [{"variant": "w/o reconstruction loss"}],
+                    "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
+                    "experiment_statistical_tests": [{"comparison": "ours vs baseline"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    output_dir = tmp_path / "tcga-real"
+    zip_path = tmp_path / "tcga-real.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--min-llm-sections",
+            "4",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "TCGA draft run completed." in output
+    assert "Experiment result contract: complete" in output
+    assert captured["llm_available"]
+    assert captured["request"].project_name == output_dir.name
+    assert captured["request"].experiment_results
+    assert not captured["request"].skip_llm_self_review
+    assert (output_dir / "draft.md").read_text(encoding="utf-8") == "# Draft"
+    assert zip_path.exists()
+    assert summary["project_name"] == output_dir.name
+    assert summary["inputs"]["experiment_results_path"].endswith("tcga_results.md")
+    assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"
+    assert summary["experiment_contract_status"] == "complete"
+    assert "- Submission evidence status: PASS" in acceptance_report
+
+
+def test_cli_tcga_draft_fails_when_default_result_file_is_missing(monkeypatch, tmp_path):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+
+    class FakeWorkflow:
+        def run(self, request):
+            raise AssertionError("Workflow should not run without a real TCGA result file.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--disable-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA experiment results file not found" in str(exc)
+        assert "experiment-template" in str(exc)
+    else:
+        raise AssertionError("Expected tcga-draft to fail without default result file.")
+
+
 def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

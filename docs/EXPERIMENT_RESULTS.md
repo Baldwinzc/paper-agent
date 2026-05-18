@@ -33,6 +33,19 @@ result evidence and the experiment-result contract is complete.
 The full `draft` command performs the same preflight and prints the same status.
 Use `--strict-results` there to stop generation when the result file fails the
 strict contract.
+For the local Hyper-ProtoSurv TCGA example, use the dedicated real-result entry
+after filling `D:\code\agent\example\results\tcga_results.md`:
+
+```powershell
+python -m paper_agent.cli tcga-draft `
+  --example-root D:\code\agent\example `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --output-dir outputs\hyper-protosurv-tcga-real
+```
+
+`tcga-draft` always runs the strict real-result preflight before spending LLM
+generation calls. It fails on TODO templates, synthetic/mock result files, and
+TCGA cohort metadata summaries.
 By default, ablation, sensitivity, and statistical-test evidence are required for
 a complete contract. Disable requirements that are out of scope with
 `--no-require-ablation`, `--no-require-sensitivity`, or

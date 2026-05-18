@@ -225,6 +225,19 @@ Add `--strict-results` to `paper-agent draft` when you want the same check to
 stop paper generation before any LLM or LaTeX work starts.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
+For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:
+
+```powershell
+paper-agent tcga-draft `
+  --example-root D:\code\agent\example `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --output-dir outputs\hyper-protosurv-tcga-real `
+  --zip outputs\hyper-protosurv-tcga-real-overleaf.zip
+```
+
+This command always applies strict real-result preflight before generation and
+requires the configured LLM by default. Pass `--disable-llm` only for deterministic
+debug runs.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.
