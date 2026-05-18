@@ -1043,12 +1043,14 @@ def _build_acceptance_report(
     )
     failed = [check for check in checks if check["status"] == "FAIL"]
     warnings = [check for check in checks if check["status"] == "WARN"]
-    if failed:
-        overall = "FAIL"
-    elif warnings:
-        overall = "PASS_WITH_WARNINGS"
-    else:
-        overall = "PASS"
+    overall = _acceptance_overall(checks)
+    pipeline_status = _acceptance_overall(
+        [check for check in checks if check["name"] != "Experiment source integrity"]
+    )
+    submission_evidence_status = _submission_evidence_status(
+        experiment_evidence,
+        experiment_contract,
+    )
 
     inputs = summary.get("inputs", {})
     outputs = summary.get("outputs", {})
@@ -1056,6 +1058,8 @@ def _build_acceptance_report(
         "# Paper Agent Acceptance Report",
         "",
         f"- Overall status: {overall}",
+        f"- Pipeline status: {pipeline_status}",
+        f"- Submission evidence status: {submission_evidence_status}",
         f"- Project: {summary.get('project_name', '')}",
         f"- Target venue: {summary.get('target_venue', '')}",
         "",
@@ -1225,6 +1229,22 @@ def _acceptance_checks(
     return checks
 
 
+def _acceptance_overall(checks: list[dict[str, str]]) -> str:
+    if any(check["status"] == "FAIL" for check in checks):
+        return "FAIL"
+    if any(check["status"] == "WARN" for check in checks):
+        return "PASS_WITH_WARNINGS"
+    return "PASS"
+
+
+def _submission_evidence_status(evidence: dict[str, object], contract: dict[str, object]) -> str:
+    kind = str(evidence.get("kind", "unknown"))
+    contract_status = str(contract.get("status", "unknown"))
+    if kind in {"real_result_file", "provided_result_text", "structured_state"}:
+        return "PASS" if contract_status == "complete" else "WARN"
+    return "FAIL"
+
+
 def _acceptance_item(
     name: str,
     passed: bool,
@@ -1261,7 +1281,7 @@ def _experiment_source_acceptance_item(kind: str, note: str) -> dict[str, str]:
     detail = f"kind={kind or 'unknown'}; note={note or 'not recorded'}"
     if kind in {"real_result_file", "provided_result_text", "structured_state"}:
         return {"name": "Experiment source integrity", "status": "PASS", "detail": _table_safe(detail)}
-    if kind == "missing":
+    if kind in {"missing", "synthetic_mock", "data_only", "demo"}:
         return {"name": "Experiment source integrity", "status": "FAIL", "detail": _table_safe(detail)}
     return {"name": "Experiment source integrity", "status": "WARN", "detail": _table_safe(detail)}
 

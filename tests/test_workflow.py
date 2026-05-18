@@ -2641,6 +2641,8 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     report = report_path.read_text(encoding="utf-8")
 
     assert "- Overall status: PASS" in report
+    assert "- Pipeline status: PASS" in report
+    assert "- Submission evidence status: PASS" in report
     assert "| Experiment source integrity | PASS | kind=real_result_file" in report
     assert "| Experiment result contract | PASS | complete; main=2;" in report
     assert "- Main result tables: 2" in report
@@ -2650,7 +2652,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "outputs/hyper-protosurv-llm-smoke/main.tex" in report
 
 
-def test_acceptance_report_warns_for_mock_experiment_source():
+def test_acceptance_report_fails_submission_evidence_for_mock_experiment_source():
     summary = {
         "inputs": {
             "code_path": "code",
@@ -2681,8 +2683,10 @@ def test_acceptance_report_warns_for_mock_experiment_source():
 
     report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
 
-    assert "- Overall status: PASS_WITH_WARNINGS" in report
-    assert "| Experiment source integrity | WARN | kind=synthetic_mock" in report
+    assert "- Overall status: FAIL" in report
+    assert "- Pipeline status: PASS" in report
+    assert "- Submission evidence status: FAIL" in report
+    assert "| Experiment source integrity | FAIL | kind=synthetic_mock" in report
 
 
 def test_acceptance_report_marks_disabled_compile_as_warning():
@@ -2717,6 +2721,7 @@ def test_acceptance_report_marks_disabled_compile_as_warning():
     report = cli_module._build_acceptance_report(summary, min_llm_sections=2)
 
     assert "- Overall status: PASS_WITH_WARNINGS" in report
+    assert "- Submission evidence status: WARN" in report
     assert "| LaTeX compile | WARN | status=disabled; tool=tectonic.exe; mode=not_run |" in report
 
 
@@ -2756,6 +2761,7 @@ def test_acceptance_report_treats_minor_reviewer_and_package_warnings_as_warning
     report = cli_module._build_acceptance_report(summary, min_llm_sections=0)
 
     assert "- Overall status: PASS_WITH_WARNINGS" in report
+    assert "- Submission evidence status: WARN" in report
     assert "| Reviewer | WARN | 0 major; 1 minor |" in report
     assert "| Submission package | WARN | needs_attention; errors=0; warnings=2 |" in report
 
@@ -3479,7 +3485,8 @@ def test_cli_draft_writes_acceptance_report_next_to_summary(monkeypatch, tmp_pat
     assert summary["inputs"]["llm_mode"] == "disabled"
     assert summary["inputs"]["latex_compile_requested"]
     assert summary["outputs"]["acceptance_report_path"].endswith("ACCEPTANCE_REPORT.md")
-    assert "- Overall status: PASS" in acceptance_report
+    assert "- Overall status: PASS_WITH_WARNINGS" in acceptance_report
+    assert "- Submission evidence status: WARN" in acceptance_report
 
 
 def test_cli_experiment_template_writes_contract_template(monkeypatch, tmp_path, capsys):

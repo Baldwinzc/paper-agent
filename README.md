@@ -159,6 +159,9 @@ paper-writing path itself can call the model. The command writes both
 human-readable pass/fail view of the input contract, LLM-written sections,
 experiment-source integrity, evidence checks, LaTeX package status, compile
 check, and output paths.
+The report separates pipeline status from submission evidence status: synthetic
+or cohort-metadata inputs can prove the toolchain runs, but they fail the
+submission-evidence gate until replaced with real trained-model results.
 When `--project-name` is omitted, the smoke command uses the output directory
 name as the LaTeX project name, keeping generated artifacts easier to locate.
 Add `--strict-results` when the smoke run should fail before any LLM generation
