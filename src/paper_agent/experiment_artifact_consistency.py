@@ -38,6 +38,7 @@ def assess_experiment_artifact_consistency(
         "main_values": sum(1 for value in paper_values if str(value.get("role", "")).startswith("main_")),
         "ablation_values": sum(1 for value in paper_values if str(value.get("role", "")).startswith("ablation_")),
         "sensitivity_values": sum(1 for value in paper_values if value.get("role") == "sensitivity"),
+        "statistical_values": sum(1 for value in paper_values if value.get("role") == "statistical_test"),
         "matched_values": 0,
         "missing_values": 0,
         "mismatched_values": 0,
@@ -202,6 +203,18 @@ def _paper_values(experiments: ExperimentSummary | None) -> list[dict[str, objec
                     "value": metric_value,
                 }
             )
+    for item in experiments.statistical_tests:
+        values.append(
+            {
+                "role": "statistical_test",
+                "method": item.comparison,
+                "comparison": item.comparison,
+                "dataset": "",
+                "metric": item.metric,
+                "test": item.test,
+                "value": item.p_value,
+            }
+        )
     return _dedupe_paper_values(values)
 
 
@@ -215,6 +228,8 @@ def _dedupe_paper_values(values: list[dict[str, object]]) -> list[dict[str, obje
             _normalize_metric(str(value.get("metric", ""))),
             _normalize_label(str(value.get("parameter", ""))),
             _normalize_label(str(value.get("parameter_value", ""))),
+            _normalize_label(str(value.get("comparison", ""))),
+            _normalize_label(str(value.get("test", ""))),
         )
         deduped.setdefault(key, value)
     return list(deduped.values())
@@ -247,18 +262,26 @@ def _csv_schema(headers: list[str]) -> dict[str, str] | None:
     metric = _find_column(headers, ["metric", "measure"])
     parameter = _find_column(headers, ["parameter", "hyperparameter", "param"])
     parameter_value = _find_column(headers, ["parameter_value", "param_value", "setting", "tested_value"])
+    comparison = _find_column(headers, ["comparison", "contrast", "pair"])
+    test = _find_column(headers, ["test", "statistical_test", "statistic"])
+    p_value = _find_p_value_column(headers)
     fold = _find_column(headers, ["fold", "split"])
     seed = _find_column(headers, ["seed", "run"])
     value = _find_column(headers, ["value", "score", "result", "mean", "estimate"])
     if not value:
         value = _find_metric_value_column(headers)
-    if dataset and value and (method or (parameter and parameter_value)):
+    has_result_schema = bool(dataset and value and (method or (parameter and parameter_value)))
+    has_statistical_schema = bool(comparison and p_value)
+    if has_result_schema or has_statistical_schema:
         return {
             "method": method,
             "dataset": dataset,
             "metric": metric or "",
             "parameter": parameter,
             "parameter_value": parameter_value,
+            "comparison": comparison,
+            "test": test,
+            "p_value": p_value,
             "fold": fold,
             "seed": seed,
             "value": value,
@@ -272,15 +295,39 @@ def _csv_row_value(
     entry: dict[str, object],
     row_number: int,
 ) -> dict[str, object] | None:
+    if schema.get("comparison") and schema.get("p_value"):
+        p_value = _numeric_value(row.get(schema["p_value"], ""))
+        comparison = row.get(schema["comparison"], "").strip()
+        if p_value is not None and comparison:
+            return {
+                "kind": "statistical",
+                "method": comparison,
+                "comparison": comparison,
+                "test": row.get(schema["test"], "") if schema.get("test") else "",
+                "dataset": "",
+                "metric": row.get(schema["metric"], "") if schema.get("metric") else "",
+                "value": p_value,
+                "artifact_path": entry.get("path", ""),
+                "resolved_path": entry.get("resolved_path", ""),
+                "row_number": row_number,
+            }
+    if not schema.get("value") or not schema.get("dataset"):
+        return None
     raw_value = row.get(schema["value"], "")
     value = _numeric_value(raw_value)
     if value is None:
         return None
+    method = row.get(schema["method"], "") if schema.get("method") else ""
+    parameter = row.get(schema["parameter"], "") if schema.get("parameter") else ""
+    parameter_value = row.get(schema["parameter_value"], "") if schema.get("parameter_value") else ""
+    if not method and not (parameter and parameter_value):
+        return None
     metric = row.get(schema["metric"], "") if schema.get("metric") else _metric_from_header(schema["value"])
     return {
-        "method": row.get(schema["method"], ""),
-        "parameter": row.get(schema["parameter"], "") if schema.get("parameter") else "",
-        "parameter_value": row.get(schema["parameter_value"], "") if schema.get("parameter_value") else "",
+        "kind": "result",
+        "method": method,
+        "parameter": parameter,
+        "parameter_value": parameter_value,
         "dataset": row.get(schema["dataset"], ""),
         "metric": metric,
         "value": value,
@@ -293,12 +340,15 @@ def _csv_row_value(
 
 
 def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, object]]:
-    groups: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
+    groups: dict[tuple[str, str, str, str, str, str, str, str], list[dict[str, object]]] = {}
     for value in values:
         key = (
+            str(value.get("kind", "result")),
             _normalize_label(str(value.get("method", ""))),
             _normalize_label(str(value.get("parameter", ""))),
             _normalize_label(str(value.get("parameter_value", ""))),
+            _normalize_label(str(value.get("comparison", ""))),
+            _normalize_label(str(value.get("test", ""))),
             _normalize_label(str(value.get("dataset", ""))),
             _normalize_metric(str(value.get("metric", ""))),
             str(value.get("artifact_path", "")),
@@ -307,6 +357,14 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
 
     aggregated: list[dict[str, object]] = []
     for group in groups.values():
+        if str(group[0].get("kind", "result")) == "statistical":
+            for raw_item in group:
+                item = dict(raw_item)
+                item.setdefault("fold_count", 1)
+                item.setdefault("std", 0.0)
+                item.setdefault("aggregation", "single_row")
+                aggregated.append(item)
+            continue
         if len(group) == 1:
             item = dict(group[0])
             item.setdefault("fold_count", 1)
@@ -321,9 +379,12 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
         first = group[0]
         aggregated.append(
             {
+                "kind": first.get("kind", "result"),
                 "method": first.get("method", ""),
                 "parameter": first.get("parameter", ""),
                 "parameter_value": first.get("parameter_value", ""),
+                "comparison": first.get("comparison", ""),
+                "test": first.get("test", ""),
                 "dataset": first.get("dataset", ""),
                 "metric": first.get("metric", ""),
                 "value": sum(numeric_values) / len(numeric_values),
@@ -341,6 +402,12 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
 
 
 def _expected_matches_artifact(expected: dict[str, object], value: dict[str, object]) -> bool:
+    if expected.get("role") == "statistical_test":
+        return bool(
+            _same_label(str(expected.get("comparison", "")), str(value.get("comparison", value.get("method", ""))))
+            and _metric_matches_optional(str(expected.get("metric", "")), str(value.get("metric", "")))
+            and _label_matches_optional(str(expected.get("test", "")), str(value.get("test", "")))
+        )
     if expected.get("role") == "sensitivity":
         return bool(
             _same_label(str(expected.get("parameter", "")), str(value.get("parameter", "")))
@@ -355,6 +422,18 @@ def _expected_matches_artifact(expected: dict[str, object], value: dict[str, obj
     )
 
 
+def _metric_matches_optional(expected: str, actual: str) -> bool:
+    if not expected or not actual:
+        return True
+    return _same_metric(expected, actual)
+
+
+def _label_matches_optional(expected: str, actual: str) -> bool:
+    if not expected or not actual:
+        return True
+    return _same_label(expected, actual)
+
+
 def _find_column(headers: list[str], names: list[str]) -> str:
     normalized = {_normalize_header(header): header for header in headers}
     for name in names:
@@ -364,6 +443,17 @@ def _find_column(headers: list[str], names: list[str]) -> str:
     for header in headers:
         header_key = _normalize_header(header)
         if any(_normalize_header(name) in header_key for name in names):
+            return header
+    return ""
+
+
+def _find_p_value_column(headers: list[str]) -> str:
+    for header in headers:
+        key = _normalize_header(header)
+        if key in {"p", "pvalue", "pval"}:
+            return header
+    for header in headers:
+        if re.search(r"\bp\s*[-_ ]?value\b|\bp\s*[-_ ]?val\b", header, flags=re.I):
             return header
     return ""
 

@@ -239,6 +239,14 @@ lambda_rec,0.5,Average,C-index,0.676
 lambda_rec,1.0,Average,C-index,0.681
 ```
 
+Statistical-test rows use `comparison`, optional `metric`, optional `test`, and
+`p_value`:
+
+```csv
+comparison,metric,test,p_value
+Hyper-ProtoSurv vs ProtoSurv,C-index,Wilcoxon signed-rank,0.018
+```
+
 If the CSV contains repeated rows for the same method, dataset, and metric, such
 as one row per fold, the validator compares the paper value against the mean of
 those rows and records the fold count and sample standard deviation.

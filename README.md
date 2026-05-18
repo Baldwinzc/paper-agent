@@ -231,6 +231,7 @@ Add `--require-artifact-consistency` when a local CSV provenance artifact should
 be used to verify that parsed paper-table values match source rows such as
 `method,dataset,metric,value`. Ablation rows can use the same method/variant
 labels, and sensitivity rows can use `parameter,parameter_value,dataset,metric,value`.
+Statistical-test rows can use `comparison,metric,test,p_value`.
 Repeated rows for the same method/dataset/metric, for example one row per fold,
 are averaged before comparison.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
