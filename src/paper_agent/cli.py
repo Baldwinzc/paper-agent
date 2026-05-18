@@ -18,6 +18,7 @@ from paper_agent.config import load_llm_config
 from paper_agent.export import zip_latex_project
 from paper_agent.experiment_contract import experiment_results_template, validate_experiment_contract
 from paper_agent.experiment_evidence import classify_experiment_evidence
+from paper_agent.experiment_quality import assess_experiment_quality, tcga_experiment_quality_kwargs
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
 from paper_agent.workflow import PaperWorkflow
@@ -41,6 +42,31 @@ def _add_experiment_contract_options(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Require statistical-test evidence for a complete experiment contract.",
+    )
+
+
+def _add_experiment_quality_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--expected-dataset",
+        action="append",
+        default=[],
+        help="Expected dataset/cohort name for result-file quality checks; can be repeated.",
+    )
+    parser.add_argument(
+        "--expected-metric",
+        action="append",
+        default=[],
+        help="Expected metric name for result-file quality checks; can be repeated.",
+    )
+    parser.add_argument(
+        "--expected-method",
+        default="",
+        help="Expected proposed-method row name for result-file quality checks.",
+    )
+    parser.add_argument(
+        "--expected-baseline",
+        default="",
+        help="Expected baseline row name for result-file quality checks.",
     )
 
 
@@ -232,6 +258,7 @@ def main() -> None:
     )
     tcga_draft.add_argument("--keyword", action="append", default=[], help="Additional keyword; can be repeated.")
     _add_experiment_contract_options(tcga_draft)
+    _add_experiment_quality_options(tcga_draft)
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     llm_draft = sub.add_parser(
@@ -304,6 +331,7 @@ def main() -> None:
         help="Exit with a non-zero status unless the result source is real and the contract is complete.",
     )
     _add_experiment_contract_options(validate_results)
+    _add_experiment_quality_options(validate_results)
     args = parser.parse_args()
 
     if args.command == "validate-results":
@@ -311,6 +339,7 @@ def main() -> None:
             Path(args.experiment_results),
             summary_path=Path(args.summary) if args.summary else None,
             **_experiment_contract_kwargs(args),
+            **_experiment_quality_kwargs(args),
         )
         if args.strict and not _validated_results_are_strictly_acceptable(summary):
             raise SystemExit("Experiment result validation failed in strict mode.")
@@ -690,6 +719,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         experiment_path,
         experiment_results,
         **_experiment_contract_kwargs(args),
+        **_experiment_quality_kwargs(args, tcga_defaults=True),
     )
     if not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("TCGA draft failed: experiment result validation failed in strict mode.")
@@ -903,6 +933,10 @@ def _validate_results_file(
     require_ablation: bool = True,
     require_sensitivity: bool = True,
     require_statistical_tests: bool = True,
+    expected_datasets: list[str] | None = None,
+    expected_metrics: list[str] | None = None,
+    expected_method: str = "",
+    expected_baseline: str = "",
 ) -> dict:
     path = _resolve_project_relative_path(str(path))
     if not path.is_file():
@@ -917,6 +951,10 @@ def _validate_results_file(
         require_ablation=require_ablation,
         require_sensitivity=require_sensitivity,
         require_statistical_tests=require_statistical_tests,
+        expected_datasets=expected_datasets,
+        expected_metrics=expected_metrics,
+        expected_method=expected_method,
+        expected_baseline=expected_baseline,
     )
 
 
@@ -929,6 +967,10 @@ def _validate_results_text(
     require_ablation: bool = True,
     require_sensitivity: bool = True,
     require_statistical_tests: bool = True,
+    expected_datasets: list[str] | None = None,
+    expected_metrics: list[str] | None = None,
+    expected_method: str = "",
+    expected_baseline: str = "",
 ) -> dict:
     state = ExperimentAnalyzerAgent().run(
         {
@@ -952,12 +994,20 @@ def _validate_results_text(
         text=raw,
         result_table_count=len(experiments.result_tables),
     )
+    quality = assess_experiment_quality(
+        experiments,
+        expected_datasets=expected_datasets,
+        expected_metrics=expected_metrics,
+        expected_method=expected_method,
+        expected_baseline=expected_baseline,
+    )
     summary = {
         "path": str(path),
         "source": source,
         "experiment_evidence": evidence,
         "experiment_contract": contract,
         "experiment_contract_requirements": contract.get("requirements", {}),
+        "experiment_quality": quality,
         "datasets": experiments.datasets,
         "metrics": experiments.metrics,
         "missing_details": experiments.missing_details,
@@ -989,6 +1039,12 @@ def _validate_results_text(
         print(f"ERROR: {error}")
     for warning in contract.get("warnings", []):
         print(f"WARNING: {warning}")
+    if quality.get("status") != "not_configured":
+        print(f"Experiment result quality: {quality.get('status', 'unknown')}")
+        for error in quality.get("errors", []):
+            print(f"QUALITY ERROR: {error}")
+        for warning in quality.get("warnings", []):
+            print(f"QUALITY WARNING: {warning}")
     if summary_path:
         _write_run_summary_data(summary, summary_path)
         print(f"Validation summary written to {summary_path}")
@@ -1003,6 +1059,20 @@ def _experiment_contract_kwargs(args: argparse.Namespace) -> dict[str, bool]:
     }
 
 
+def _experiment_quality_kwargs(
+    args: argparse.Namespace,
+    *,
+    tcga_defaults: bool = False,
+) -> dict[str, object]:
+    defaults = tcga_experiment_quality_kwargs() if tcga_defaults else {}
+    return {
+        "expected_datasets": list(getattr(args, "expected_dataset", []) or defaults.get("expected_datasets", [])),
+        "expected_metrics": list(getattr(args, "expected_metric", []) or defaults.get("expected_metrics", [])),
+        "expected_method": str(getattr(args, "expected_method", "") or defaults.get("expected_method", "")),
+        "expected_baseline": str(getattr(args, "expected_baseline", "") or defaults.get("expected_baseline", "")),
+    }
+
+
 def _record_result_preflight(state: dict, result_preflight: dict | None) -> None:
     if not result_preflight:
         return
@@ -1012,6 +1082,7 @@ def _record_result_preflight(state: dict, result_preflight: dict | None) -> None
         "experiment_contract_requirements",
         {},
     )
+    artifacts["experiment_quality"] = result_preflight.get("experiment_quality", {})
 
 
 def _validated_results_are_strictly_acceptable(summary: dict) -> bool:
@@ -1020,6 +1091,7 @@ def _validated_results_are_strictly_acceptable(summary: dict) -> bool:
     return bool(
         evidence.get("real_result_evidence")
         and contract.get("status") == "complete"
+        and summary.get("experiment_quality", {}).get("status", "complete") != "invalid"
     )
 
 
@@ -1217,6 +1289,7 @@ def _build_acceptance_report(
 ) -> str:
     experiment_evidence = _summary_experiment_evidence(summary)
     experiment_contract = _summary_experiment_contract(summary)
+    experiment_quality = _summary_experiment_quality(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -1262,6 +1335,7 @@ def _build_acceptance_report(
         f"- Sensitivity evidence items: {summary.get('experiment_sensitivity_evidence', 0)}",
         f"- Statistical test items: {summary.get('experiment_statistical_tests', 0)}",
         f"- Result contract: {experiment_contract.get('status', 'unknown')}",
+        f"- Result quality: {experiment_quality.get('status', 'not_configured')}",
         "",
         "## Acceptance Checks",
         "",
@@ -1325,6 +1399,7 @@ def _acceptance_checks(
     review_minor = int(summary.get("review_findings_minor", 0) or 0)
     experiment_evidence = _summary_experiment_evidence(summary)
     experiment_contract = _summary_experiment_contract(summary)
+    experiment_quality = _summary_experiment_quality(summary)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -1355,6 +1430,7 @@ def _acceptance_checks(
             warning_status="WARN",
         ),
         _experiment_contract_acceptance_item(experiment_contract),
+        *_experiment_quality_acceptance_items(experiment_quality),
         _acceptance_item(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
@@ -1487,6 +1563,25 @@ def _experiment_contract_acceptance_item(contract: dict[str, object]) -> dict[st
     return {"name": "Experiment result contract", "status": "WARN", "detail": _table_safe(detail)}
 
 
+def _experiment_quality_acceptance_items(quality: dict[str, object]) -> list[dict[str, str]]:
+    if quality.get("status") == "not_configured":
+        return []
+    checks = quality.get("checks", {})
+    if not isinstance(checks, dict):
+        checks = {}
+    detail = (
+        f"{quality.get('status', 'unknown')}; "
+        f"missing_datasets={', '.join(checks.get('missing_datasets', []) or []) or 'none'}; "
+        f"missing_metrics={', '.join(checks.get('missing_metrics', []) or []) or 'none'}"
+    )
+    status = str(quality.get("status", "unknown"))
+    if status == "complete":
+        return [{"name": "Experiment result quality", "status": "PASS", "detail": _table_safe(detail)}]
+    if status == "invalid":
+        return [{"name": "Experiment result quality", "status": "FAIL", "detail": _table_safe(detail)}]
+    return [{"name": "Experiment result quality", "status": "WARN", "detail": _table_safe(detail)}]
+
+
 def _compile_acceptance_item(status: str, tool: str, mode: str) -> dict[str, str]:
     detail = f"status={status}; tool={tool or 'none'}; mode={mode or 'unknown'}"
     if status == "passed":
@@ -1546,6 +1641,18 @@ def _summary_experiment_contract(summary: dict) -> dict[str, object]:
     }
 
 
+def _summary_experiment_quality(summary: dict) -> dict[str, object]:
+    quality = summary.get("experiment_quality", {})
+    if isinstance(quality, dict) and quality:
+        return quality
+    return {
+        "status": "not_configured",
+        "errors": [],
+        "warnings": [],
+        "checks": {},
+    }
+
+
 def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifacts = state.get("artifacts", {})
     request = state.get("request")
@@ -1577,6 +1684,9 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
                 }
             )
     experiment_results = getattr(request, "experiment_results", "") or ""
+    experiment_quality = artifacts.get("experiment_quality", {})
+    if not isinstance(experiment_quality, dict) or not experiment_quality:
+        experiment_quality = _summary_experiment_quality({})
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
         "experiment_results_source", "provided" if experiment_results_present else "none"
@@ -1651,6 +1761,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "experiment_contract_status": experiment_contract.get("status", "unknown"),
         "experiment_contract_errors": len(experiment_contract.get("errors", [])),
         "experiment_contract_warnings": len(experiment_contract.get("warnings", [])),
+        "experiment_quality": experiment_quality,
+        "experiment_quality_status": experiment_quality.get("status", "not_configured"),
+        "experiment_quality_errors": len(experiment_quality.get("errors", [])),
+        "experiment_quality_warnings": len(experiment_quality.get("warnings", [])),
         "experiment_ablation_evidence": len(artifacts.get("experiment_ablation_evidence", [])),
         "experiment_sensitivity_evidence": len(
             artifacts.get("experiment_sensitivity_evidence", [])

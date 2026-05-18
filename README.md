@@ -237,7 +237,9 @@ paper-agent tcga-draft `
 
 This command always applies strict real-result preflight before generation and
 requires the configured LLM by default. Pass `--disable-llm` only for deterministic
-debug runs.
+debug runs. The preflight also runs TCGA quality checks for the expected BLCA,
+BRCA, LGG, LUAD, and UCEC cohorts, C-index, `Hyper-ProtoSurv`, and `ProtoSurv`;
+use the `--expected-*` options to override those defaults.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.

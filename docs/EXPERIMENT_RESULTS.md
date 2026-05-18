@@ -51,6 +51,26 @@ a complete contract. Disable requirements that are out of scope with
 `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests`.
 
+For result-file quality checks, declare the expected experiment target:
+
+```powershell
+python -m paper_agent.cli validate-results `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --strict `
+  --expected-dataset BLCA `
+  --expected-dataset BRCA `
+  --expected-dataset LGG `
+  --expected-dataset LUAD `
+  --expected-dataset UCEC `
+  --expected-metric C-INDEX `
+  --expected-method Hyper-ProtoSurv `
+  --expected-baseline ProtoSurv
+```
+
+The quality report flags missing expected cohorts, missing metrics, and result
+rows whose proposed method or baseline names do not match the declared target.
+`tcga-draft` enables the common TCGA defaults automatically.
+
 ## Main Result Table
 
 ```markdown

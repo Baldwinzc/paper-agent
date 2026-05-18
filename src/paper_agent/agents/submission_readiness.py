@@ -69,6 +69,10 @@ class SubmissionReadinessAgent:
         score -= sum(10 for item in consistency if item.get("status") == "needs_review")
         guard_findings = state.get("artifacts", {}).get("evidence_guard_findings", [])
         score -= min(30, len(guard_findings) * 10)
+        quality = state.get("artifacts", {}).get("experiment_quality", {})
+        if isinstance(quality, dict):
+            score -= min(30, len(quality.get("errors", [])) * 10)
+            score -= min(10, len(quality.get("warnings", [])) * 3)
         return self._clamp(score)
 
     def _writing_completeness_score(self, state: PaperState) -> int:
@@ -136,6 +140,10 @@ class SubmissionReadinessAgent:
             contract = validate_experiment_contract(experiments)
         for error in contract.get("errors", [])[:3]:
             items.append(f"Experiment result contract error: {error}")
+        quality = state.get("artifacts", {}).get("experiment_quality", {})
+        if isinstance(quality, dict):
+            for error in quality.get("errors", [])[:3]:
+                items.append(f"Experiment result quality error: {error}")
         evidence = state.get("artifacts", {}).get("experiment_evidence", {})
         evidence_kind = str(evidence.get("kind", ""))
         if evidence_kind == "synthetic_mock":
@@ -191,6 +199,10 @@ class SubmissionReadinessAgent:
             contract = validate_experiment_contract(state.get("experiments"))
         for warning in contract.get("warnings", [])[:3]:
             items.append(f"Experiment result contract warning: {warning}")
+        quality = artifacts.get("experiment_quality", {})
+        if isinstance(quality, dict):
+            for warning in quality.get("warnings", [])[:3]:
+                items.append(f"Experiment result quality warning: {warning}")
         package_warnings = artifacts.get("submission_package", {}).get("warnings", [])
         for warning in package_warnings[:3]:
             items.append(f"Submission package warning: {warning}")

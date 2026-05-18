@@ -3528,10 +3528,10 @@ def test_cli_validate_results_writes_summary_for_complete_file(monkeypatch, tmp_
                 "",
                 "Metric: C-index. Higher is better.",
                 "",
-                "| Method | BLCA C-index | BRCA C-index |",
-                "|---|---:|---:|",
-                "| ProtoSurv baseline | 0.646 | 0.669 |",
-                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |",
+                "|---|---:|---:|---:|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |",
                 "",
                 "## Ablation Study",
                 "",
@@ -3581,7 +3581,7 @@ def test_cli_validate_results_writes_summary_for_complete_file(monkeypatch, tmp_
     assert "Experiment result contract: complete" in output
     assert summary["experiment_evidence"]["kind"] == "real_result_file"
     assert summary["experiment_contract"]["status"] == "complete"
-    assert summary["experiment_contract"]["checks"]["numeric_comparisons"] == 2
+    assert summary["experiment_contract"]["checks"]["numeric_comparisons"] == 5
 
 
 def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_path, capsys):
@@ -3648,6 +3648,81 @@ def test_cli_validate_results_can_disable_optional_contract_requirements(monkeyp
     output = capsys.readouterr().out
     assert "Experiment result contract: complete" in output
     assert "Requirements: ablation=False; sensitivity=False; statistical_tests=False" in output
+
+
+def test_cli_validate_results_reports_expected_quality_failures(monkeypatch, tmp_path, capsys):
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "| w/o reconstruction loss | 0.659 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.667 |",
+                "| 1.0 | 0.671 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--summary",
+            str(summary_path),
+            "--strict",
+            "--expected-dataset",
+            "BLCA",
+            "--expected-dataset",
+            "BRCA",
+            "--expected-metric",
+            "C-INDEX",
+            "--expected-method",
+            "Hyper-ProtoSurv",
+            "--expected-baseline",
+            "ProtoSurv",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict validation to fail on missing expected dataset.")
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Experiment result quality: invalid" in output
+    assert "QUALITY ERROR: Missing expected datasets: BRCA." in output
+    assert summary["experiment_quality"]["status"] == "invalid"
+    assert summary["experiment_quality"]["checks"]["missing_datasets"] == ["BRCA"]
 
 
 def test_cli_draft_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
@@ -3993,10 +4068,10 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
                 "",
                 "Metric: C-index. Higher is better.",
                 "",
-                "| Method | BLCA C-index | BRCA C-index |",
-                "|---|---:|---:|",
-                "| ProtoSurv baseline | 0.646 | 0.669 |",
-                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |",
+                "|---|---:|---:|---:|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |",
                 "",
                 "## Ablation Study",
                 "",
@@ -4098,7 +4173,9 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
     assert summary["inputs"]["experiment_results_path"].endswith("tcga_results.md")
     assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"
     assert summary["experiment_contract_status"] == "complete"
+    assert summary["experiment_quality_status"] == "complete"
     assert "- Submission evidence status: PASS" in acceptance_report
+    assert "| Experiment result quality | PASS | complete;" in acceptance_report
 
 
 def test_cli_tcga_draft_fails_when_default_result_file_is_missing(monkeypatch, tmp_path):

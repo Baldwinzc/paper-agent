@@ -387,6 +387,34 @@ class DraftReportAgent:
             for warning in contract.get("warnings", [])[:5]:
                 lines.append(f"- Warning: {warning}")
 
+        quality = artifacts.get("experiment_quality", {})
+        if isinstance(quality, dict) and quality and quality.get("status") != "not_configured":
+            checks = quality.get("checks", {})
+            if not isinstance(checks, dict):
+                checks = {}
+            lines.extend(["", "## Experiment Result Quality", ""])
+            lines.append(f"- Status: {quality.get('status', 'unknown')}")
+            lines.append(
+                "- Expected datasets: "
+                + (", ".join(checks.get("expected_datasets", []) or []) or "not configured")
+            )
+            lines.append(
+                "- Parsed datasets: "
+                + (", ".join(checks.get("parsed_datasets", []) or []) or "none")
+            )
+            lines.append(
+                "- Expected metrics: "
+                + (", ".join(checks.get("expected_metrics", []) or []) or "not configured")
+            )
+            lines.append(
+                "- Parsed metrics: "
+                + (", ".join(checks.get("parsed_metrics", []) or []) or "none")
+            )
+            for error in quality.get("errors", [])[:5]:
+                lines.append(f"- Error: {error}")
+            for warning in quality.get("warnings", [])[:5]:
+                lines.append(f"- Warning: {warning}")
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])

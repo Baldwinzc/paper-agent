@@ -142,6 +142,10 @@ the workflow records best parameter values, tested ranges, exact p-values, test
 names, and significance at alpha=0.05. The section writer receives these records
 as an evidence contract and must not invent tuning or statistical claims beyond
 the supplied rows.
+Result-file quality checks can compare parsed datasets, metrics, proposed-method
+names, and baseline names against a declared target. The TCGA draft entrypoint
+uses BLCA, BRCA, LGG, LUAD, UCEC, C-index, Hyper-ProtoSurv, and ProtoSurv as its
+default alignment target before spending LLM calls.
 
 ## Phases
 
