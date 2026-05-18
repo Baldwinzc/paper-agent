@@ -151,6 +151,9 @@ links paper-facing numbers to local logs, fold-level result files, seed records,
 or remote tracker exports. Missing local artifacts become blocking evidence
 errors when provenance is required. Local artifact files are fingerprinted with
 SHA-256 and byte size, and declared checksums are verified when supplied.
+When checkable CSV artifacts are available, the workflow can compare source rows
+against parsed paper result tables by method, dataset, metric, and value before
+allowing strict submission-grade validation to pass.
 
 ## Phases
 

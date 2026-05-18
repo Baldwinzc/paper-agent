@@ -449,6 +449,33 @@ class DraftReportAgent:
             for warning in provenance.get("warnings", [])[:5]:
                 lines.append(f"- Warning: {warning}")
 
+        consistency = artifacts.get("experiment_artifact_consistency", {})
+        if isinstance(consistency, dict) and consistency and consistency.get("status") != "not_configured":
+            checks = consistency.get("checks", {})
+            if not isinstance(checks, dict):
+                checks = {}
+            lines.extend(["", "## Experiment Artifact Consistency", ""])
+            lines.append(f"- Status: {consistency.get('status', 'unknown')}")
+            lines.append(
+                "- Coverage: "
+                f"matched={checks.get('matched_values', 0)}/{checks.get('paper_values', 0)}, "
+                f"missing={checks.get('missing_values', 0)}, "
+                f"mismatched={checks.get('mismatched_values', 0)}, "
+                f"csv artifacts={checks.get('csv_artifacts', 0)}"
+            )
+            for match in consistency.get("matches", [])[:5]:
+                if not isinstance(match, dict):
+                    continue
+                lines.append(
+                    f"- Match: {match.get('role')} {match.get('method')} "
+                    f"{match.get('dataset')} {match.get('metric')} = {match.get('value')} "
+                    f"from {match.get('artifact_path')} row {match.get('row_number')}"
+                )
+            for error in consistency.get("errors", [])[:5]:
+                lines.append(f"- Error: {error}")
+            for warning in consistency.get("warnings", [])[:5]:
+                lines.append(f"- Warning: {warning}")
+
         traceability = artifacts.get("innovation_traceability", [])
         if traceability:
             lines.extend(["", "## Innovation Traceability", ""])

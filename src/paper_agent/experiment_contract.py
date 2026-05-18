@@ -127,6 +127,7 @@ def experiment_results_template(
             "",
             "| Artifact | Path | SHA256 | Description |",
             "|---|---|---|---|",
+            "| Paper result values CSV | TODO | TODO | method,dataset,metric,value rows |",
             "| Fold-level result CSV | TODO | TODO | seed=TODO; fold=TODO |",
             "| Training/evaluation log | TODO | TODO | command=TODO; commit=TODO |",
             "",

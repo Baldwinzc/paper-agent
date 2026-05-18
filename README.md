@@ -227,6 +227,9 @@ Add `--require-provenance` when the result file must include a source-artifact
 table linking paper numbers to logs, fold-level CSVs, seed records, W&B exports,
 or other reproducibility records. Local provenance files are fingerprinted with
 SHA-256, and an optional `SHA256` column can enforce checksum matching.
+Add `--require-artifact-consistency` when a local CSV provenance artifact should
+be used to verify that parsed paper-table values match source rows such as
+`method,dataset,metric,value`.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
 For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:

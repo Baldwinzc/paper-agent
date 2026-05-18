@@ -84,12 +84,16 @@ match the declared value.
 python -m paper_agent.cli validate-results `
   --experiment-results D:\code\agent\example\results\tcga_results.md `
   --strict `
-  --require-provenance
+  --require-provenance `
+  --require-artifact-consistency
 ```
 
 Without `--require-provenance`, missing provenance is reported as a warning.
 With `--require-provenance`, strict validation fails unless a provenance table is
 present and all local artifact paths exist.
+`--require-artifact-consistency` additionally fails strict validation unless a
+checkable local CSV artifact supports every parsed method and baseline value in
+the main result tables.
 
 ## Main Result Table
 
@@ -201,6 +205,7 @@ Use a provenance table to tie the paper-facing numbers to source artifacts.
 
 | Artifact | Path | SHA256 | Description |
 |---|---|---|---|
+| Paper result values | logs/tcga_values.csv | 64_HEX_DIGEST | method,dataset,metric,value rows |
 | Fold-level result CSV | logs/tcga_folds.csv | 64_HEX_DIGEST | seed=2026; folds=0..4 |
 | Evaluation log | logs/tcga_eval.log | 64_HEX_DIGEST | command=python eval.py; commit=abc123 |
 | Experiment tracker export | wandb://entity/project/run-id | - | final metrics snapshot |
@@ -210,3 +215,17 @@ The validator records how many provenance entries were found, whether local
 paths exist, each local file's byte size and SHA-256 digest, and whether
 seed/fold identifiers are visible in the table. Missing local paths and checksum
 mismatches are treated as provenance errors.
+
+For artifact consistency checks, provide at least one local CSV with long-form
+result rows:
+
+```csv
+method,dataset,metric,value
+ProtoSurv baseline,BLCA,C-index,0.646
+Hyper-ProtoSurv ours,BLCA,C-index,0.671
+ProtoSurv baseline,BRCA,C-index,0.669
+Hyper-ProtoSurv ours,BRCA,C-index,0.691
+```
+
+The validator matches method, dataset, and metric labels, then compares numeric
+values with a tolerance of `0.001` to allow normal paper-table rounding.
