@@ -23,6 +23,27 @@ from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
 from paper_agent.workflow import PaperWorkflow
 
 
+def _add_experiment_contract_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--require-ablation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require ablation evidence for a complete experiment contract.",
+    )
+    parser.add_argument(
+        "--require-sensitivity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require sensitivity-analysis evidence for a complete experiment contract.",
+    )
+    parser.add_argument(
+        "--require-statistical-tests",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require statistical-test evidence for a complete experiment contract.",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="paper-agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -105,6 +126,7 @@ def main() -> None:
         action="store_true",
         help="Fail before generation unless the experiment result file is real and contract-complete.",
     )
+    _add_experiment_contract_options(draft)
     sample = sub.add_parser(
         "sample-hyper-protosurv",
         help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
@@ -206,12 +228,14 @@ def main() -> None:
         action="store_true",
         help="Exit with a non-zero status unless the result source is real and the contract is complete.",
     )
+    _add_experiment_contract_options(validate_results)
     args = parser.parse_args()
 
     if args.command == "validate-results":
         summary = _validate_results_file(
             Path(args.experiment_results),
             summary_path=Path(args.summary) if args.summary else None,
+            **_experiment_contract_kwargs(args),
         )
         if args.strict and not _validated_results_are_strictly_acceptable(summary):
             raise SystemExit("Experiment result validation failed in strict mode.")
@@ -285,7 +309,11 @@ def main() -> None:
         if not experiment_path.is_file():
             raise SystemExit(f"Experiment results file not found: {experiment_path}")
         experiment_results = experiment_path.read_text(encoding="utf-8")
-        result_preflight = _validate_results_text(experiment_path, experiment_results)
+        result_preflight = _validate_results_text(
+            experiment_path,
+            experiment_results,
+            **_experiment_contract_kwargs(args),
+        )
         if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
             raise SystemExit("Draft failed: experiment result validation failed in strict mode.")
         request = PaperRequest(
@@ -309,6 +337,12 @@ def main() -> None:
         )
         state.setdefault("artifacts", {})["experiment_results_source"] = "file"
         state["artifacts"]["experiment_results_path"] = str(experiment_path)
+        state["artifacts"]["experiment_contract"] = result_preflight["experiment_contract"]
+        state["artifacts"]["experiment_contract_requirements"] = result_preflight[
+            "experiment_contract_requirements"
+        ]
+        SubmissionReadinessAgent().run(state)
+        DraftReportAgent().run(state)
         markdown_path = None
         if args.output:
             output_path = Path(args.output)
@@ -636,16 +670,38 @@ def _resolve_project_relative_path(path_value: str) -> Path:
     return _project_root() / path
 
 
-def _validate_results_file(path: Path, summary_path: Path | None = None) -> dict:
+def _validate_results_file(
+    path: Path,
+    summary_path: Path | None = None,
+    *,
+    require_ablation: bool = True,
+    require_sensitivity: bool = True,
+    require_statistical_tests: bool = True,
+) -> dict:
     path = _resolve_project_relative_path(str(path))
     if not path.is_file():
         raise SystemExit(f"Experiment results file not found: {path}")
 
     raw = path.read_text(encoding="utf-8")
-    return _validate_results_text(path, raw, summary_path=summary_path)
+    return _validate_results_text(
+        path,
+        raw,
+        summary_path=summary_path,
+        require_ablation=require_ablation,
+        require_sensitivity=require_sensitivity,
+        require_statistical_tests=require_statistical_tests,
+    )
 
 
-def _validate_results_text(path: Path, raw: str, summary_path: Path | None = None) -> dict:
+def _validate_results_text(
+    path: Path,
+    raw: str,
+    summary_path: Path | None = None,
+    *,
+    require_ablation: bool = True,
+    require_sensitivity: bool = True,
+    require_statistical_tests: bool = True,
+) -> dict:
     state = ExperimentAnalyzerAgent().run(
         {
             "request": PaperRequest(
@@ -656,7 +712,12 @@ def _validate_results_text(path: Path, raw: str, summary_path: Path | None = Non
         }
     )
     experiments = state["experiments"]
-    contract = state["artifacts"]["experiment_contract"]
+    contract = validate_experiment_contract(
+        experiments,
+        require_ablation=require_ablation,
+        require_sensitivity=require_sensitivity,
+        require_statistical_tests=require_statistical_tests,
+    )
     evidence = classify_experiment_evidence(
         source="file",
         path=str(path),
@@ -667,6 +728,7 @@ def _validate_results_text(path: Path, raw: str, summary_path: Path | None = Non
         "path": str(path),
         "experiment_evidence": evidence,
         "experiment_contract": contract,
+        "experiment_contract_requirements": contract.get("requirements", {}),
         "datasets": experiments.datasets,
         "metrics": experiments.metrics,
         "missing_details": experiments.missing_details,
@@ -677,6 +739,13 @@ def _validate_results_text(path: Path, raw: str, summary_path: Path | None = Non
     print(f"Experiment results: {path}")
     print(f"Experiment evidence kind: {evidence.get('kind', 'unknown')}")
     print(f"Experiment result contract: {contract.get('status', 'unknown')}")
+    requirements = contract.get("requirements", {})
+    print(
+        "Requirements: "
+        f"ablation={requirements.get('ablation', True)}; "
+        f"sensitivity={requirements.get('sensitivity', True)}; "
+        f"statistical_tests={requirements.get('statistical_tests', True)}"
+    )
     print(
         "Coverage: "
         f"main={checks.get('result_tables', 0)}; "
@@ -695,6 +764,14 @@ def _validate_results_text(path: Path, raw: str, summary_path: Path | None = Non
         _write_run_summary_data(summary, summary_path)
         print(f"Validation summary written to {summary_path}")
     return summary
+
+
+def _experiment_contract_kwargs(args: argparse.Namespace) -> dict[str, bool]:
+    return {
+        "require_ablation": bool(getattr(args, "require_ablation", True)),
+        "require_sensitivity": bool(getattr(args, "require_sensitivity", True)),
+        "require_statistical_tests": bool(getattr(args, "require_statistical_tests", True)),
+    }
 
 
 def _validated_results_are_strictly_acceptable(summary: dict) -> bool:

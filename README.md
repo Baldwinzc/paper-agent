@@ -213,6 +213,8 @@ Validate a completed result file before full paper generation with
 `python -m paper_agent.cli validate-results --experiment-results D:\path\to\tcga_results.md --strict`.
 Add `--strict-results` to `paper-agent draft` when you want the same check to
 stop paper generation before any LLM or LaTeX work starts.
+Use `--no-require-ablation`, `--no-require-sensitivity`, or
+`--no-require-statistical-tests` when those analyses are outside the paper scope.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.

@@ -33,6 +33,10 @@ result evidence and the experiment-result contract is complete.
 The full `draft` command performs the same preflight and prints the same status.
 Use `--strict-results` there to stop generation when the result file fails the
 strict contract.
+By default, ablation, sensitivity, and statistical-test evidence are required for
+a complete contract. Disable requirements that are out of scope with
+`--no-require-ablation`, `--no-require-sensitivity`, or
+`--no-require-statistical-tests`.
 
 ## Main Result Table
 

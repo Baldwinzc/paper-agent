@@ -3605,6 +3605,44 @@ def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_p
     assert "Experiment result contract: invalid" in output
 
 
+def test_cli_validate_results_can_disable_optional_contract_requirements(monkeypatch, tmp_path, capsys):
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--strict",
+            "--no-require-ablation",
+            "--no-require-sensitivity",
+            "--no-require-statistical-tests",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "Experiment result contract: complete" in output
+    assert "Requirements: ablation=False; sensitivity=False; statistical_tests=False" in output
+
+
 def test_cli_draft_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_dir = tmp_path / "baseline"
     code_dir = tmp_path / "code"
@@ -3650,6 +3688,83 @@ def test_cli_draft_strict_results_fails_before_workflow(monkeypatch, tmp_path, c
         raise AssertionError("Expected strict draft result preflight to fail.")
     output = capsys.readouterr().out
     assert "Experiment result contract: invalid" in output
+
+
+def test_cli_draft_strict_results_uses_optional_contract_requirements(monkeypatch, tmp_path, capsys):
+    baseline_dir = tmp_path / "baseline"
+    code_dir = tmp_path / "code"
+    latex_dir = tmp_path / "latex"
+    baseline_dir.mkdir()
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (code_dir / "train.py").write_text("class HyperProtoSurv: pass\n", encoding="utf-8")
+    experiment_path = tmp_path / "tcga_results.md"
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "llm_self_review": {"mode": "disabled"},
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "draft",
+            "--project-name",
+            "hyper-protosurv-tcga",
+            "--target-venue",
+            "TPAMI",
+            "--baseline",
+            str(baseline_dir),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--strict-results",
+            "--no-require-ablation",
+            "--no-require-sensitivity",
+            "--no-require-statistical-tests",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert captured["request"].project_name == "hyper-protosurv-tcga"
+    assert "Experiment result contract: complete" in output
+    assert "LaTeX written to" in output
 
 
 def test_cli_draft_enforces_min_llm_sections(monkeypatch, tmp_path):

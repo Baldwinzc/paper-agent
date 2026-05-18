@@ -5,7 +5,13 @@ from __future__ import annotations
 from paper_agent.state import ExperimentSummary
 
 
-def validate_experiment_contract(experiments: ExperimentSummary | None) -> dict[str, object]:
+def validate_experiment_contract(
+    experiments: ExperimentSummary | None,
+    *,
+    require_ablation: bool = True,
+    require_sensitivity: bool = True,
+    require_statistical_tests: bool = True,
+) -> dict[str, object]:
     """Return structural checks for a result file intended to support paper claims."""
 
     errors: list[str] = []
@@ -32,11 +38,11 @@ def validate_experiment_contract(experiments: ExperimentSummary | None) -> dict[
     if not metrics:
         errors.append("Evaluation metrics are not explicit.")
 
-    if not ablations:
+    if require_ablation and not ablations:
         warnings.append("Missing ablation table; component claims should remain provisional.")
-    if not sensitivity:
+    if require_sensitivity and not sensitivity:
         warnings.append("Missing sensitivity analysis table; hyperparameter robustness claims should be omitted.")
-    if not statistical_tests:
+    if require_statistical_tests and not statistical_tests:
         warnings.append("Missing statistical-test table; significance claims should be omitted.")
 
     checks = {
@@ -53,6 +59,11 @@ def validate_experiment_contract(experiments: ExperimentSummary | None) -> dict[
         "errors": list(dict.fromkeys(errors)),
         "warnings": list(dict.fromkeys(warnings)),
         "checks": checks,
+        "requirements": {
+            "ablation": require_ablation,
+            "sensitivity": require_sensitivity,
+            "statistical_tests": require_statistical_tests,
+        },
     }
 
 
