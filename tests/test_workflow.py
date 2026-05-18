@@ -4989,6 +4989,244 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
     assert "| Experiment result quality | PASS | complete;" in acceptance_report
 
 
+def test_cli_tcga_submission_grade_forces_full_acceptance_path(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    logs_dir = results_dir / "logs"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    main_csv = logs_dir / "tcga_main_wide.csv"
+    ablation_csv = logs_dir / "tcga_ablation_wide.csv"
+    sensitivity_csv = logs_dir / "tcga_sensitivity_wide.csv"
+    stats_csv = logs_dir / "tcga_stats.csv"
+    main_csv.write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index,LGG C-index,LUAD C-index,UCEC C-index",
+                "ProtoSurv baseline,0.646,0.669,0.724,0.636,0.658",
+                "Hyper-ProtoSurv ours,0.671,0.691,0.746,0.661,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ablation_csv.write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.690",
+                "w/o reconstruction loss,0.672",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sensitivity_csv.write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.687",
+                "1.0,0.690",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stats_csv.write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main_hash = hashlib.sha256(main_csv.read_bytes()).hexdigest()
+    ablation_hash = hashlib.sha256(ablation_csv.read_bytes()).hexdigest()
+    sensitivity_hash = hashlib.sha256(sensitivity_csv.read_bytes()).hexdigest()
+    stats_hash = hashlib.sha256(stats_csv.read_bytes()).hexdigest()
+    (results_dir / "tcga_results.md").write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |",
+                "|---|---:|---:|---:|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.690 |",
+                "| w/o reconstruction loss | 0.672 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.687 |",
+                "| 1.0 | 0.690 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+                "",
+                "## Result Provenance",
+                "",
+                "| Artifact | Path | SHA256 | Description |",
+                "|---|---|---|---|",
+                f"| Main wide CSV | logs/tcga_main_wide.csv | {main_hash} | seed=2026; fold=0..4 |",
+                f"| Ablation wide CSV | logs/tcga_ablation_wide.csv | {ablation_hash} | seed=2026; fold=0..4 |",
+                f"| Sensitivity wide CSV | logs/tcga_sensitivity_wide.csv | {sensitivity_hash} | seed=2026; fold=0..4 |",
+                f"| Statistical CSV | logs/tcga_stats.csv | {stats_hash} | seed=2026; fold=0..4 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_available"] = bool(llm_client and llm_client.available)
+
+        def run(self, request):
+            captured["request"] = request
+            captured["disable_template_fetch"] = os.getenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH")
+            captured["disable_reference_resolve"] = os.getenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE")
+            captured["disable_related_work_discovery"] = os.getenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY")
+            captured["compile_latex"] = os.getenv("PAPER_AGENT_RUN_LATEX_COMPILE")
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "llm",
+                    "section_writer_llm_attempted_sections": [
+                        "abstract",
+                        "introduction",
+                        "related_work",
+                        "method",
+                    ],
+                    "section_writer_llm_successes": [
+                        "abstract",
+                        "introduction",
+                        "related_work",
+                        "method",
+                    ],
+                    "llm_self_review": {"mode": "llm"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                    "experiment_ablation_evidence": [{"variant": "w/o reconstruction loss"}],
+                    "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
+                    "experiment_statistical_tests": [{"comparison": "ours vs baseline"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    def fake_write_latex_zip_and_refresh(state, zip_path):
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("main.tex", "\\documentclass{IEEEtran}")
+        artifacts = state.setdefault("artifacts", {})
+        artifacts["submission_package"] = {
+            "status": "valid",
+            "errors": [],
+            "warnings": [],
+            "checks": {
+                "compile": {
+                    "mode": "compile",
+                    "status": "passed",
+                    "tool": "tectonic.exe",
+                }
+            },
+        }
+        artifacts["submission_readiness"] = {"overall_score": 100, "status": "reviewable"}
+        state["latex_zip_path"] = zip_path
+        return zip_path
+
+    output_dir = tmp_path / "submission-grade"
+    zip_path = tmp_path / "submission-grade.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_write_latex_zip_and_refresh", fake_write_latex_zip_and_refresh)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--min-llm-sections",
+            "1",
+            "--submission-grade",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "TCGA draft run completed." in output
+    assert "Submission grade: True" in output
+    assert captured["llm_available"]
+    assert captured["disable_template_fetch"] == "0"
+    assert captured["disable_reference_resolve"] == "0"
+    assert captured["disable_related_work_discovery"] == "0"
+    assert captured["compile_latex"] == "1"
+    assert captured["request"].skip_llm_self_review is False
+    assert summary["inputs"]["network_mode"] == "online"
+    assert summary["inputs"]["submission_grade"] is True
+    assert summary["inputs"]["latex_compile_requested"] is True
+    assert summary["inputs"]["min_llm_sections"] == 4
+    assert summary["experiment_provenance_status"] == "complete"
+    assert summary["experiment_artifact_consistency_status"] == "complete"
+    assert "- Submission grade: True" in acceptance_report
+    assert "| LLM self-review | PASS | mode=llm;" in acceptance_report
+    assert zip_path.exists()
+
+
+def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--submission-grade",
+            "--disable-llm",
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "submission-grade runs require the configured LLM" in str(exc)
+    else:
+        raise AssertionError("Expected submission-grade TCGA draft to reject --disable-llm.")
+
+
 def test_cli_tcga_draft_fails_when_default_result_file_is_missing(monkeypatch, tmp_path):
     example_root = tmp_path / "example"
     baseline_dir = example_root / "baseline"

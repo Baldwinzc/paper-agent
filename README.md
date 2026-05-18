@@ -259,6 +259,23 @@ If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.
 
+For the strict end-to-end acceptance path, use `--submission-grade`:
+
+```powershell
+paper-agent tcga-draft `
+  --example-root D:\code\agent\example `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --output-dir outputs\hyper-protosurv-tcga-submission `
+  --zip outputs\hyper-protosurv-tcga-submission-overleaf.zip `
+  --submission-grade
+```
+
+This mode forces online template/reference/related-work calls, configured LLM
+drafting, LLM self-review, LaTeX compilation, result provenance, and artifact
+consistency checks. It rejects `--offline`, `--disable-llm`, and
+`--skip-llm-self-review` because those would make the run weaker than the
+acceptance contract.
+
 When `draft` writes `--output` or `--summary`, it also writes a Markdown
 acceptance report by default: next to the summary when `--summary` is provided,
 otherwise next to the draft Markdown. Override the path with

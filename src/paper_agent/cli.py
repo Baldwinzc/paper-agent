@@ -285,6 +285,14 @@ def main() -> None:
         action="store_true",
         help="Run the local LaTeX compiler during submission validation.",
     )
+    tcga_draft.add_argument(
+        "--submission-grade",
+        action="store_true",
+        help=(
+            "Run the strict TCGA acceptance path: online references/templates, required LLM drafting, "
+            "LLM self-review, LaTeX compilation, provenance checks, and artifact consistency checks."
+        ),
+    )
     tcga_draft.add_argument("--keyword", action="append", default=[], help="Additional keyword; can be repeated.")
     _add_experiment_contract_options(tcga_draft)
     _add_experiment_quality_options(tcga_draft)
@@ -605,6 +613,25 @@ def _configure_latex_compile(args: argparse.Namespace) -> bool:
     return _truthy_env("PAPER_AGENT_RUN_LATEX_COMPILE")
 
 
+def _apply_submission_grade_defaults(args: argparse.Namespace) -> bool:
+    if not getattr(args, "submission_grade", False):
+        return False
+    if getattr(args, "offline", False):
+        raise SystemExit("TCGA submission-grade runs require online mode; remove --offline.")
+    if getattr(args, "disable_llm", False):
+        raise SystemExit("TCGA submission-grade runs require the configured LLM; remove --disable-llm.")
+    if getattr(args, "skip_llm_self_review", False):
+        raise SystemExit(
+            "TCGA submission-grade runs require LLM self-review; remove --skip-llm-self-review."
+        )
+    args.online = True
+    args.compile_latex = True
+    args.require_provenance = True
+    args.require_artifact_consistency = True
+    args.min_llm_sections = max(int(getattr(args, "min_llm_sections", 0) or 0), 4)
+    return True
+
+
 def _record_runtime_modes(
     state: dict,
     *,
@@ -613,12 +640,14 @@ def _record_runtime_modes(
     compile_latex_requested: bool,
     min_llm_sections: int = 0,
     llm_config: LLMConfig | None = None,
+    submission_grade: bool = False,
 ) -> None:
     artifacts = state.setdefault("artifacts", {})
     artifacts["runtime_network_mode"] = network_mode
     artifacts["runtime_llm_mode"] = llm_mode
     artifacts["latex_compile_requested"] = compile_latex_requested
     artifacts["min_llm_sections"] = min_llm_sections
+    artifacts["submission_grade"] = submission_grade
     if llm_config:
         artifacts.update(_llm_runtime_metadata(llm_config))
 
@@ -800,6 +829,7 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
 
 
 def _run_tcga_draft(args: argparse.Namespace) -> None:
+    submission_grade = _apply_submission_grade_defaults(args)
     network_mode = _configure_network_mode(args, default_offline=True)
     compile_latex_requested = _configure_latex_compile(args)
 
@@ -880,6 +910,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
         compile_latex_requested=compile_latex_requested,
         min_llm_sections=effective_min_llm_sections,
         llm_config=runtime_llm_config,
+        submission_grade=submission_grade,
     )
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
@@ -920,6 +951,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
     print(f"Network mode: {network_mode}")
     print(f"LLM mode: {llm_mode}")
     print(f"LLM self-review: {_llm_self_review_mode(state)}")
+    print(f"Submission grade: {submission_grade}")
     print(f"LaTeX written to {state['latex_output_path']}")
     if len(successes) < effective_min_llm_sections:
         raise SystemExit(
@@ -1525,6 +1557,7 @@ def _build_acceptance_report(
         f"- Template source: {summary.get('template_source', '')}",
         f"- Network mode: {inputs.get('network_mode', '')}",
         f"- LLM mode: {inputs.get('llm_mode', '')}",
+        f"- Submission grade: {inputs.get('submission_grade', False)}",
         (
             f"- LLM provider/model: {inputs.get('llm_provider', '') or 'not recorded'} / "
             f"{inputs.get('llm_model', '') or 'not recorded'}"
@@ -2055,6 +2088,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
                 artifacts.get("latex_compile_requested", _truthy_env("PAPER_AGENT_RUN_LATEX_COMPILE"))
             ),
             "min_llm_sections": artifacts.get("min_llm_sections", 0),
+            "submission_grade": bool(artifacts.get("submission_grade", False)),
         },
         "section_writer_mode": artifacts.get("section_writer_mode", "unknown"),
         "llm_self_review_mode": llm_review.get("mode", "not run"),
