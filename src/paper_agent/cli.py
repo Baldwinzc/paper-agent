@@ -185,7 +185,11 @@ def main() -> None:
         help="Run a full local draft smoke test and require configured LLM section calls.",
     )
     llm_draft.add_argument("--example-root", default=r"D:\code\agent\example")
-    llm_draft.add_argument("--project-name", default="hyper-protosurv-llm-smoke")
+    llm_draft.add_argument(
+        "--project-name",
+        default="",
+        help="Project name for generated LaTeX artifacts. Defaults to the output directory name.",
+    )
     llm_draft.add_argument("--target-venue", default="TPAMI")
     llm_draft.add_argument(
         "--experiment-results",
@@ -631,8 +635,10 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
         raise SystemExit("LLM draft smoke failed: experiment result validation failed in strict mode.")
 
+    output_dir = Path(args.output_dir)
+    project_name = args.project_name or output_dir.name
     request = PaperRequest(
-        project_name=args.project_name,
+        project_name=project_name,
         target_venue=args.target_venue,
         baseline_pdf_path=str(baseline_pdf),
         code_path=str(code_path),
@@ -659,7 +665,6 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     SubmissionReadinessAgent().run(state)
     DraftReportAgent().run(state)
 
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = output_dir / "draft.md"
     markdown_path.write_text(state["final_markdown"], encoding="utf-8")

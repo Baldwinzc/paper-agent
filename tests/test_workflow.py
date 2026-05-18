@@ -4048,7 +4048,9 @@ def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_p
     assert "LLM draft smoke passed." in output
     assert "Acceptance report written to" in output
     assert captured["llm_available"]
+    assert captured["request"].project_name == output_dir.name
     assert captured["request"].skip_llm_self_review
+    assert summary["project_name"] == output_dir.name
     assert summary["section_writer_llm_successes"] == ["abstract", "method"]
     assert summary["inputs"]["experiment_results_source"] == "file"
     assert summary["inputs"]["experiment_evidence_kind"] == "real_result_file"

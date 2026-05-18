@@ -159,6 +159,8 @@ paper-writing path itself can call the model. The command writes both
 human-readable pass/fail view of the input contract, LLM-written sections,
 experiment-source integrity, evidence checks, LaTeX package status, compile
 check, and output paths.
+When `--project-name` is omitted, the smoke command uses the output directory
+name as the LaTeX project name, keeping generated artifacts easier to locate.
 Add `--strict-results` when the smoke run should fail before any LLM generation
 unless the supplied experiment file is real result evidence and satisfies the
 experiment-result contract. The same `--no-require-ablation`,
