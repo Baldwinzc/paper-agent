@@ -247,6 +247,29 @@ comparison,metric,test,p_value
 Hyper-ProtoSurv vs ProtoSurv,C-index,Wilcoxon signed-rank,0.018
 ```
 
+Common wide CSV tables are also accepted and expanded internally. Main results
+and ablations can use one method-like label column plus metric columns:
+
+```csv
+method,BLCA C-index,BRCA C-index
+ProtoSurv baseline,0.646,0.669
+Hyper-ProtoSurv ours,0.671,0.691
+```
+
+```csv
+variant,Average C-index
+Hyper-ProtoSurv ours,0.681
+w/o reconstruction loss,0.665
+```
+
+Sensitivity sweeps can use the parameter name as the first column:
+
+```csv
+lambda_rec,Average C-index
+0.5,0.676
+1.0,0.681
+```
+
 If the CSV contains repeated rows for the same method, dataset, and metric, such
 as one row per fold, the validator compares the paper value against the mean of
 those rows and records the fold count and sample standard deviation.

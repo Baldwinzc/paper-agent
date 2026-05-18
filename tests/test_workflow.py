@@ -3740,6 +3740,131 @@ def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tm
     assert summary["experiment_artifact_consistency"]["checks"]["statistical_values"] == 1
 
 
+def test_cli_validate_results_matches_wide_csv_artifacts(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    main_csv = logs_dir / "tcga_main_wide.csv"
+    ablation_csv = logs_dir / "tcga_ablation_wide.csv"
+    sensitivity_csv = logs_dir / "tcga_sensitivity_wide.csv"
+    stats_csv = logs_dir / "tcga_stats.csv"
+    main_csv.write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index",
+                "ProtoSurv baseline,0.646,0.669",
+                "Hyper-ProtoSurv ours,0.671,0.691",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ablation_csv.write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.681",
+                "w/o reconstruction loss,0.665",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sensitivity_csv.write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.676",
+                "1.0,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stats_csv.write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv vs ProtoSurv,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main_hash = hashlib.sha256(main_csv.read_bytes()).hexdigest()
+    ablation_hash = hashlib.sha256(ablation_csv.read_bytes()).hexdigest()
+    sensitivity_hash = hashlib.sha256(sensitivity_csv.read_bytes()).hexdigest()
+    stats_hash = hashlib.sha256(stats_csv.read_bytes()).hexdigest()
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index |",
+                "|---|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.681 |",
+                "| w/o reconstruction loss | 0.665 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.676 |",
+                "| 1.0 | 0.681 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv vs ProtoSurv | C-index | Wilcoxon signed-rank | 0.018 |",
+                "",
+                "## Result Provenance",
+                "",
+                "| Artifact | Path | SHA256 | Description |",
+                "|---|---|---|---|",
+                f"| Main wide CSV | logs/tcga_main_wide.csv | {main_hash} | seed=2026; fold=0..4 |",
+                f"| Ablation wide CSV | logs/tcga_ablation_wide.csv | {ablation_hash} | seed=2026; fold=0..4 |",
+                f"| Sensitivity wide CSV | logs/tcga_sensitivity_wide.csv | {sensitivity_hash} | seed=2026; fold=0..4 |",
+                f"| Statistical CSV | logs/tcga_stats.csv | {stats_hash} | seed=2026; fold=0..4 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--summary",
+            str(summary_path),
+            "--strict",
+            "--require-provenance",
+            "--require-artifact-consistency",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=9/9; missing=0; mismatched=0; aggregated=0; csv_artifacts=4" in output
+    consistency = summary["experiment_artifact_consistency"]
+    assert consistency["status"] == "complete"
+    assert consistency["checks"]["matched_values"] == 9
+    assert consistency["checks"]["wide_values"] == 8
+    assert consistency["checks"]["statistical_values"] == 1
+    assert all(match["wide"] for match in consistency["matches"] if match["role"] != "statistical_test")
+
+
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()

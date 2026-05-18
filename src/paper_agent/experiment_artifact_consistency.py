@@ -43,6 +43,7 @@ def assess_experiment_artifact_consistency(
         "missing_values": 0,
         "mismatched_values": 0,
         "aggregated_values": 0,
+        "wide_values": 0,
         "tolerance": tolerance,
     }
     if not paper_values:
@@ -63,6 +64,7 @@ def assess_experiment_artifact_consistency(
         if values:
             checks["checkable_csv_artifacts"] += 1
             checks["aggregated_values"] += sum(1 for value in values if int(value.get("fold_count", 1) or 1) > 1)
+            checks["wide_values"] += sum(1 for value in values if value.get("wide"))
             artifact_values.extend(values)
         elif warning:
             parse_warnings.append(warning)
@@ -103,6 +105,7 @@ def assess_experiment_artifact_consistency(
             "aggregation": best.get("aggregation", ""),
             "fold_count": best.get("fold_count", 1),
             "artifact_std": best.get("std", 0.0),
+            "wide": best.get("wide", False),
         }
         if delta <= tolerance:
             matches.append(record)
@@ -241,11 +244,15 @@ def _read_csv_values(entry: dict[str, object]) -> tuple[list[dict[str, object]],
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
             headers = reader.fieldnames or []
+            rows = list(reader)
             schema = _csv_schema(headers)
             if not schema:
-                return [], f"CSV provenance artifact has no supported result schema: {entry.get('path', path)}."
+                values = _wide_csv_values(headers, rows, entry)
+                if not values:
+                    return [], f"CSV provenance artifact has no supported result schema: {entry.get('path', path)}."
+                return _aggregate_csv_values(values), ""
             values: list[dict[str, object]] = []
-            for row_number, row in enumerate(reader, start=2):
+            for row_number, row in enumerate(rows, start=2):
                 parsed = _csv_row_value(row, schema, entry, row_number)
                 if parsed:
                     values.append(parsed)
@@ -339,6 +346,105 @@ def _csv_row_value(
     }
 
 
+def _wide_csv_values(
+    headers: list[str],
+    rows: list[dict[str, str]],
+    entry: dict[str, object],
+) -> list[dict[str, object]]:
+    method_column = _find_column(headers, ["method", "model", "variant", "approach"])
+    if method_column:
+        return _wide_result_values(headers, rows, entry, method_column)
+
+    parameter_column = _wide_parameter_column(headers)
+    if parameter_column:
+        return _wide_sensitivity_values(headers, rows, entry, parameter_column)
+
+    return []
+
+
+def _wide_result_values(
+    headers: list[str],
+    rows: list[dict[str, str]],
+    entry: dict[str, object],
+    method_column: str,
+) -> list[dict[str, object]]:
+    values: list[dict[str, object]] = []
+    for row_number, row in enumerate(rows, start=2):
+        method = str(row.get(method_column, "")).strip()
+        if not method:
+            continue
+        for column in headers:
+            if column == method_column:
+                continue
+            dataset, metric = _wide_column_context(column)
+            if not metric:
+                continue
+            value = _numeric_value(row.get(column, ""))
+            if value is None:
+                continue
+            values.append(
+                {
+                    "kind": "result",
+                    "method": method,
+                    "parameter": "",
+                    "parameter_value": "",
+                    "dataset": dataset,
+                    "metric": metric,
+                    "value": value,
+                    "fold": "",
+                    "seed": "",
+                    "artifact_path": entry.get("path", ""),
+                    "resolved_path": entry.get("resolved_path", ""),
+                    "row_number": row_number,
+                    "wide": True,
+                    "wide_column": column,
+                }
+            )
+    return values
+
+
+def _wide_sensitivity_values(
+    headers: list[str],
+    rows: list[dict[str, str]],
+    entry: dict[str, object],
+    parameter_column: str,
+) -> list[dict[str, object]]:
+    values: list[dict[str, object]] = []
+    parameter = parameter_column.strip()
+    for row_number, row in enumerate(rows, start=2):
+        parameter_value = str(row.get(parameter_column, "")).strip()
+        if not parameter_value:
+            continue
+        for column in headers:
+            if column == parameter_column:
+                continue
+            dataset, metric = _wide_column_context(column)
+            if not metric:
+                continue
+            value = _numeric_value(row.get(column, ""))
+            if value is None:
+                continue
+            values.append(
+                {
+                    "kind": "result",
+                    "method": f"{parameter}={parameter_value}",
+                    "parameter": parameter,
+                    "parameter_value": parameter_value,
+                    "dataset": dataset,
+                    "metric": metric,
+                    "value": value,
+                    "fold": "",
+                    "seed": "",
+                    "artifact_path": entry.get("path", ""),
+                    "resolved_path": entry.get("resolved_path", ""),
+                    "row_number": row_number,
+                    "wide": True,
+                    "wide_column": column,
+                }
+            )
+    return values
+
+
 def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, object]]:
     groups: dict[tuple[str, str, str, str, str, str, str, str], list[dict[str, object]]] = {}
     for value in values:
@@ -396,6 +502,7 @@ def _aggregate_csv_values(values: list[dict[str, object]]) -> list[dict[str, obj
                 "resolved_path": first.get("resolved_path", ""),
                 "row_number": ",".join(row_numbers),
                 "aggregation": "mean",
+                "wide": any(item.get("wide") for item in group),
             }
         )
     return aggregated
@@ -463,6 +570,47 @@ def _find_metric_value_column(headers: list[str]) -> str:
         if _metric_from_header(header):
             return header
     return ""
+
+
+def _wide_parameter_column(headers: list[str]) -> str:
+    non_metric_headers = [header for header in headers if not _metric_from_header(header)]
+    normalized = {_normalize_header(header): header for header in non_metric_headers}
+    for key in ("parameter", "hyperparameter", "param"):
+        if key in normalized:
+            return normalized[key]
+    for header in non_metric_headers:
+        spaced = re.sub(r"[_-]+", " ", header.lower())
+        if re.search(
+            r"\b(lambda|alpha|beta|gamma|dropout|weight|temperature|prototype|rank|hidden|learning rate|lr)\b",
+            spaced,
+        ):
+            return header
+        if _normalize_header(header) == "k":
+            return header
+    return ""
+
+
+def _wide_column_context(header: str) -> tuple[str, str]:
+    metric = _metric_from_header(header)
+    if not metric:
+        return "", ""
+    dataset = _remove_metric_terms(header)
+    dataset = re.sub(r"[_/\\-]+", " ", dataset)
+    dataset = re.sub(r"[\[\]{}()]", " ", dataset)
+    average_only = _normalize_label(dataset) in {"avg", "average", "mean"}
+    dataset = re.sub(r"\b(value|score|result|std|sd|sem|avg|average|mean)\b", " ", dataset, flags=re.I)
+    dataset = re.sub(r"\s+", " ", dataset).strip(" ,;:")
+    if not dataset or average_only:
+        dataset = "Average"
+    return dataset, metric
+
+
+def _remove_metric_terms(text: str) -> str:
+    value = str(text)
+    value = re.sub(r"\bc[-_ ]?index\b|\bconcordance(?:[-_ ]+index)?\b", " ", value, flags=re.I)
+    value = re.sub(r"\bintegrated[-_ ]+brier(?:[-_ ]+score)?\b|\bibs\b", " ", value, flags=re.I)
+    value = re.sub(r"\bauc\b", " ", value, flags=re.I)
+    return value
 
 
 def _metric_from_header(header: str) -> str:
