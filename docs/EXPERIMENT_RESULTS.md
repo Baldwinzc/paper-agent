@@ -76,6 +76,9 @@ tables. Provenance entries should point to fold-level CSVs, evaluation logs,
 seed records, W&B exports, or other source artifacts. Local paths are resolved
 relative to the result file; remote references such as `https://`, `s3://`,
 `gs://`, `oss://`, and `wandb://` are accepted as external records.
+For local files, the validator records `sha256` and byte size in the JSON
+summary. If a `SHA256`/`Checksum` column is supplied, the computed digest must
+match the declared value.
 
 ```powershell
 python -m paper_agent.cli validate-results `
@@ -196,13 +199,14 @@ Use a provenance table to tie the paper-facing numbers to source artifacts.
 ```markdown
 ## Result Provenance
 
-| Artifact | Path | Description |
-|---|---|---|
-| Fold-level result CSV | logs/tcga_folds.csv | seed=2026; folds=0..4 |
-| Evaluation log | logs/tcga_eval.log | command=python eval.py; commit=abc123 |
-| Experiment tracker export | wandb://entity/project/run-id | final metrics snapshot |
+| Artifact | Path | SHA256 | Description |
+|---|---|---|---|
+| Fold-level result CSV | logs/tcga_folds.csv | 64_HEX_DIGEST | seed=2026; folds=0..4 |
+| Evaluation log | logs/tcga_eval.log | 64_HEX_DIGEST | command=python eval.py; commit=abc123 |
+| Experiment tracker export | wandb://entity/project/run-id | - | final metrics snapshot |
 ```
 
 The validator records how many provenance entries were found, whether local
-paths exist, and whether seed/fold identifiers are visible in the table. Missing
-local paths are treated as provenance errors.
+paths exist, each local file's byte size and SHA-256 digest, and whether
+seed/fold identifiers are visible in the table. Missing local paths and checksum
+mismatches are treated as provenance errors.

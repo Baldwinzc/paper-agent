@@ -125,10 +125,10 @@ def experiment_results_template(
             "",
             "List the source artifacts used to produce the numeric tables above.",
             "",
-            "| Artifact | Path | Description |",
-            "|---|---|---|",
-            "| Fold-level result CSV | TODO | seed=TODO; fold=TODO |",
-            "| Training/evaluation log | TODO | command=TODO; commit=TODO |",
+            "| Artifact | Path | SHA256 | Description |",
+            "|---|---|---|---|",
+            "| Fold-level result CSV | TODO | TODO | seed=TODO; fold=TODO |",
+            "| Training/evaluation log | TODO | TODO | command=TODO; commit=TODO |",
             "",
         ]
     )

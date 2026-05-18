@@ -225,7 +225,8 @@ Add `--strict-results` to `paper-agent draft` when you want the same check to
 stop paper generation before any LLM or LaTeX work starts.
 Add `--require-provenance` when the result file must include a source-artifact
 table linking paper numbers to logs, fold-level CSVs, seed records, W&B exports,
-or other reproducibility records.
+or other reproducibility records. Local provenance files are fingerprinted with
+SHA-256, and an optional `SHA256` column can enforce checksum matching.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
 For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:

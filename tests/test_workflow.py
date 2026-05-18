@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -3602,8 +3603,12 @@ def test_cli_validate_results_writes_summary_for_complete_file(monkeypatch, tmp_
 def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
-    (logs_dir / "tcga_folds.csv").write_text("fold,seed,cindex\n0,2026,0.671\n", encoding="utf-8")
-    (logs_dir / "tcga_eval.log").write_text("seed=2026 fold=0..4\n", encoding="utf-8")
+    fold_log = logs_dir / "tcga_folds.csv"
+    eval_log = logs_dir / "tcga_eval.log"
+    fold_log.write_text("fold,seed,cindex\n0,2026,0.671\n", encoding="utf-8")
+    eval_log.write_text("seed=2026 fold=0..4\n", encoding="utf-8")
+    fold_hash = hashlib.sha256(fold_log.read_bytes()).hexdigest()
+    eval_hash = hashlib.sha256(eval_log.read_bytes()).hexdigest()
     results_path = tmp_path / "tcga_results.md"
     results_path.write_text(
         "\n".join(
@@ -3639,11 +3644,11 @@ def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tm
                 "",
                 "## Result Provenance",
                 "",
-                "| Artifact | Path | Description |",
-                "|---|---|---|",
-                "| Fold-level CSV | logs/tcga_folds.csv | seed=2026; fold=0..4 |",
-                "| Evaluation log | logs/tcga_eval.log | seed=2026; fold=0..4 |",
-                "| Tracker export | wandb://entity/project/run-1 | final metrics snapshot |",
+                "| Artifact | Path | SHA256 | Description |",
+                "|---|---|---|---|",
+                f"| Fold-level CSV | logs/tcga_folds.csv | {fold_hash} | seed=2026; fold=0..4 |",
+                f"| Evaluation log | logs/tcga_eval.log | {eval_hash} | seed=2026; fold=0..4 |",
+                "| Tracker export | wandb://entity/project/run-1 | - | final metrics snapshot |",
             ]
         ),
         encoding="utf-8",
@@ -3678,12 +3683,17 @@ def test_cli_validate_results_reports_complete_result_provenance(monkeypatch, tm
     output = capsys.readouterr().out
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "Experiment result provenance: complete" in output
+    assert "Provenance fingerprints: 2/2 local files; verified_checksums=2; checksum_mismatches=0" in output
     assert "Experiment result quality: complete" in output
     assert summary["experiment_quality"]["status"] == "complete"
     assert summary["experiment_provenance"]["status"] == "complete"
     assert summary["experiment_provenance"]["checks"]["entries"] == 3
     assert summary["experiment_provenance"]["checks"]["local_paths"] == 2
     assert summary["experiment_provenance"]["checks"]["remote_references"] == 1
+    assert summary["experiment_provenance"]["checks"]["fingerprinted_local_paths"] == 2
+    assert summary["experiment_provenance"]["checks"]["verified_checksums"] == 2
+    assert summary["experiment_provenance"]["entries"][0]["sha256"] == fold_hash
+    assert summary["experiment_provenance"]["entries"][0]["hash_verified"] is True
 
 
 def test_cli_validate_results_requires_result_provenance_when_requested(monkeypatch, tmp_path, capsys):
@@ -3744,6 +3754,76 @@ def test_cli_validate_results_requires_result_provenance_when_requested(monkeypa
     output = capsys.readouterr().out
     assert "Experiment result provenance: invalid" in output
     assert "PROVENANCE ERROR: Missing result provenance table." in output
+
+
+def test_cli_validate_results_fails_on_provenance_checksum_mismatch(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "tcga_folds.csv").write_text("fold,seed,cindex\n0,2026,0.671\n", encoding="utf-8")
+    results_path = tmp_path / "tcga_results.md"
+    results_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index |",
+                "|---|---:|",
+                "| ProtoSurv baseline | 0.646 |",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.671 |",
+                "| w/o reconstruction loss | 0.659 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.667 |",
+                "| 1.0 | 0.671 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+                "",
+                "## Result Provenance",
+                "",
+                "| Artifact | Path | SHA256 | Description |",
+                "|---|---|---|---|",
+                f"| Fold-level CSV | logs/tcga_folds.csv | {'0' * 64} | seed=2026; fold=0..4 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "validate-results",
+            "--experiment-results",
+            str(results_path),
+            "--strict",
+            "--require-provenance",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected strict validation to fail on checksum mismatch.")
+    output = capsys.readouterr().out
+    assert "Experiment result provenance: invalid" in output
+    assert "checksum_mismatches=1" in output
+    assert "PROVENANCE ERROR: Checksum mismatch for provenance artifact: logs/tcga_folds.csv." in output
 
 
 def test_cli_validate_results_strict_fails_for_template_todos(monkeypatch, tmp_path, capsys):

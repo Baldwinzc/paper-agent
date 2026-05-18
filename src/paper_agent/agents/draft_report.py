@@ -427,6 +427,8 @@ class DraftReportAgent:
                 f"tables={checks.get('tables', 0)}, "
                 f"entries={checks.get('entries', 0)}, "
                 f"local paths={checks.get('local_paths', 0)}, "
+                f"fingerprinted={checks.get('fingerprinted_local_paths', 0)}, "
+                f"verified checksums={checks.get('verified_checksums', 0)}, "
                 f"remote references={checks.get('remote_references', 0)}, "
                 f"missing paths={checks.get('missing_paths', 0)}"
             )
@@ -435,9 +437,12 @@ class DraftReportAgent:
                     continue
                 label = entry.get("name") or entry.get("path") or "artifact"
                 location = entry.get("resolved_path") or entry.get("path") or ""
+                sha256 = str(entry.get("sha256") or "")
+                fingerprint = f" sha256={sha256[:12]}" if sha256 else ""
+                size = f" size={entry.get('size_bytes')}B" if entry.get("size_bytes") is not None else ""
                 lines.append(
                     f"- {label}: {entry.get('kind', 'unknown')} "
-                    f"exists={entry.get('exists', 'unknown')} path={location}"
+                    f"exists={entry.get('exists', 'unknown')}{size}{fingerprint} path={location}"
                 )
             for error in provenance.get("errors", [])[:5]:
                 lines.append(f"- Error: {error}")

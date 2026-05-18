@@ -1077,6 +1077,15 @@ def _validate_results_text(
         for warning in quality.get("warnings", []):
             print(f"QUALITY WARNING: {warning}")
     print(f"Experiment result provenance: {provenance.get('status', 'unknown')}")
+    provenance_checks = provenance.get("checks", {})
+    if isinstance(provenance_checks, dict):
+        print(
+            "Provenance fingerprints: "
+            f"{provenance_checks.get('fingerprinted_local_paths', 0)}/"
+            f"{provenance_checks.get('local_paths', 0)} local files; "
+            f"verified_checksums={provenance_checks.get('verified_checksums', 0)}; "
+            f"checksum_mismatches={provenance_checks.get('checksum_mismatches', 0)}"
+        )
     for error in provenance.get("errors", []):
         print(f"PROVENANCE ERROR: {error}")
     for warning in provenance.get("warnings", []):
@@ -1640,6 +1649,8 @@ def _experiment_provenance_acceptance_items(provenance: dict[str, object]) -> li
         f"{provenance.get('status', 'unknown')}; "
         f"entries={checks.get('entries', 0)}; "
         f"local_paths={checks.get('local_paths', 0)}; "
+        f"fingerprinted={checks.get('fingerprinted_local_paths', 0)}; "
+        f"verified_checksums={checks.get('verified_checksums', 0)}; "
         f"remote_refs={checks.get('remote_references', 0)}; "
         f"missing_paths={checks.get('missing_paths', 0)}"
     )

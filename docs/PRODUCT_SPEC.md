@@ -149,7 +149,8 @@ default alignment target before spending LLM calls.
 Result-file provenance checks can require a dedicated source-artifact table that
 links paper-facing numbers to local logs, fold-level result files, seed records,
 or remote tracker exports. Missing local artifacts become blocking evidence
-errors when provenance is required.
+errors when provenance is required. Local artifact files are fingerprinted with
+SHA-256 and byte size, and declared checksums are verified when supplied.
 
 ## Phases
 
