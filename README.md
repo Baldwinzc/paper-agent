@@ -390,6 +390,10 @@ This generates `results\tcga_results.md` from the CSV artifacts, validates the
 result file, runs `tcga-doctor`, and then runs `tcga-draft`. Pass
 `--skip-result-generation` only when `tcga_results.md` already exists and should
 be reused.
+If result CSV artifacts are not present yet, add `--write-artifact-template` to
+write `tcga_main_results.csv`, `tcga_ablation.csv`, `tcga_sensitivity.csv`,
+`tcga_stats.csv`, and `EXPORT_CONTRACT.md`, then stop before drafting. Fill the
+templates with real trained-model outputs and rerun the pipeline.
 
 When `draft` writes `--output` or `--summary`, it also writes a Markdown
 acceptance report by default: next to the summary when `--summary` is provided,

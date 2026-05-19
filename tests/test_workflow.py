@@ -4767,6 +4767,7 @@ def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_
     assert "- Artifact directory: WARN" in output
     assert "- Experiment results: FAIL" in output
     assert "missing and no complete artifact set is available" in output
+    assert "paper-agent tcga-artifact-template --output-dir" in output
     assert "Overall: FAIL" in output
 
 
@@ -6069,6 +6070,69 @@ def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypat
     assert summary["experiment_provenance_status"] == "complete"
     assert summary["experiment_artifact_consistency_status"] == "complete"
     assert zip_path.exists()
+
+
+def test_cli_tcga_pipeline_suggests_artifact_template_when_results_missing(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    example_root.mkdir()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-pipeline",
+            "--example-root",
+            str(example_root),
+            "--disable-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        message = str(exc)
+        assert "TCGA pipeline cannot generate the paper-facing result file" in message
+        assert "paper-agent tcga-artifact-template --output-dir" in message
+        assert "--write-artifact-template" in message
+    else:
+        raise AssertionError("Expected TCGA pipeline to fail with artifact-template guidance.")
+
+    output = capsys.readouterr().out
+    assert "TCGA pipeline: generating result file" in output
+
+
+def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    example_root.mkdir()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-pipeline",
+            "--example-root",
+            str(example_root),
+            "--write-artifact-template",
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+            "--disable-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "stopped after writing artifact templates" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA pipeline to stop after writing artifact templates.")
+
+    output = capsys.readouterr().out
+    logs_dir = example_root / "results" / "logs"
+    assert "TCGA pipeline: result artifacts are missing or incomplete; writing artifact templates" in output
+    assert (logs_dir / "EXPORT_CONTRACT.md").is_file()
+    main_csv = (logs_dir / "tcga_main_results.csv").read_text(encoding="utf-8")
+    assert "ProtoSurv baseline,BLCA,C-index,0,2026,TODO" in main_csv
+    assert "Hyper-ProtoSurv ours,BRCA,C-index,0,2026,TODO" in main_csv
 
 
 def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):

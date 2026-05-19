@@ -453,6 +453,17 @@ def main() -> None:
         help="Use the existing experiment-results file instead of generating it from CSV artifacts.",
     )
     tcga_pipeline.add_argument(
+        "--write-artifact-template",
+        action="store_true",
+        help="If result CSV artifacts are missing, write TCGA artifact templates and stop before drafting.",
+    )
+    tcga_pipeline.add_argument(
+        "--artifact-template-style",
+        choices=("long", "wide"),
+        default="long",
+        help="CSV template style used with --write-artifact-template.",
+    )
+    tcga_pipeline.add_argument(
         "--skip-doctor",
         action="store_true",
         help="Skip TCGA doctor checks before drafting.",
@@ -1537,7 +1548,10 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
         detail = (
             f"{experiment_path} missing; tcga-pipeline can generate it from detected artifacts"
             if artifact_ready
-            else f"{experiment_path} missing and no complete artifact set is available"
+            else (
+                f"{experiment_path} missing and no complete artifact set is available. "
+                f"Initialize real-result CSV templates with: {_tcga_artifact_template_command(args, example_root)}"
+            )
         )
         _add_preflight_check(checks, "Experiment results", status, detail, blocking, blocking_item=not artifact_ready)
 
@@ -1715,6 +1729,35 @@ def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
     if getattr(args, "experiment_results", ""):
         return _resolve_project_relative_path(args.experiment_results)
     return example_root / "results" / "tcga_results.md"
+
+
+def _tcga_artifact_template_output_dir(args: argparse.Namespace, example_root: Path) -> Path:
+    artifacts_dir = getattr(args, "artifacts_dir", "")
+    if artifacts_dir:
+        return _resolve_project_relative_path(artifacts_dir)
+    return example_root / "results" / "logs"
+
+
+def _tcga_artifact_template_command(args: argparse.Namespace, example_root: Path) -> str:
+    style = getattr(args, "artifact_template_style", "long") or "long"
+    parts = [
+        "paper-agent",
+        "tcga-artifact-template",
+        "--output-dir",
+        str(_tcga_artifact_template_output_dir(args, example_root)),
+        "--style",
+        style,
+    ]
+    for dataset in getattr(args, "dataset", []) or []:
+        parts.extend(["--dataset", str(dataset)])
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _powershell_arg(value: object) -> str:
+    text = str(value)
+    if re.fullmatch(r"[A-Za-z0-9_./:\\-]+", text):
+        return text
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _resolve_required_file(path_value: str, label: str) -> Path:
@@ -2467,7 +2510,34 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
         result_args = argparse.Namespace(**vars(args))
         result_args.output = str(experiment_path)
         result_args.strict = True
-        _run_tcga_results_from_artifacts(result_args)
+        try:
+            _run_tcga_results_from_artifacts(result_args)
+        except SystemExit as exc:
+            if getattr(args, "write_artifact_template", False):
+                template_dir = _tcga_artifact_template_output_dir(args, example_root)
+                template_args = argparse.Namespace(
+                    output_dir=str(template_dir),
+                    method=args.method,
+                    baseline=args.baseline,
+                    metric=args.metric,
+                    seed="2026",
+                    dataset=list(args.dataset or []),
+                    style=args.artifact_template_style,
+                    force=False,
+                )
+                print("TCGA pipeline: result artifacts are missing or incomplete; writing artifact templates")
+                try:
+                    _run_tcga_artifact_template(template_args)
+                except SystemExit as template_exc:
+                    raise SystemExit(
+                        "TCGA pipeline could not generate results and could not write artifact templates. "
+                        f"Original result error: {exc}. Template error: {template_exc}"
+                    ) from template_exc
+                raise SystemExit(
+                    "TCGA pipeline stopped after writing artifact templates. Replace every TODO with real "
+                    "trained-model outputs, then rerun tcga-pipeline."
+                ) from exc
+            raise SystemExit(_tcga_pipeline_artifact_failure_message(args, example_root, exc)) from exc
 
     if args.skip_doctor:
         print("TCGA pipeline: skipping doctor checks")
@@ -2480,6 +2550,21 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
 
     print("TCGA pipeline: drafting paper")
     _run_tcga_draft(args)
+
+
+def _tcga_pipeline_artifact_failure_message(
+    args: argparse.Namespace,
+    example_root: Path,
+    original_error: BaseException,
+) -> str:
+    command = _tcga_artifact_template_command(args, example_root)
+    return (
+        "TCGA pipeline cannot generate the paper-facing result file because result CSV artifacts "
+        f"are missing or incomplete. Original error: {original_error}. "
+        f"Next step: run `{command}`, replace every TODO with real trained-model outputs, "
+        "then rerun tcga-pipeline. Or pass --write-artifact-template to have the pipeline "
+        "write these templates and stop automatically."
+    )
 
 
 def _run_tcga_draft(args: argparse.Namespace) -> None:
