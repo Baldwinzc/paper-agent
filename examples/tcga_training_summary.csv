@@ -1,0 +1,16 @@
+role,method,dataset,metric,fold,seed,value,variant,parameter,parameter_value,comparison,test,p_value
+main,ProtoSurv baseline,BLCA,C-index,0,2026,0.646,,,,,,
+main,ProtoSurv baseline,BRCA,C-index,0,2026,0.669,,,,,,
+main,ProtoSurv baseline,LGG,C-index,0,2026,0.724,,,,,,
+main,ProtoSurv baseline,LUAD,C-index,0,2026,0.636,,,,,,
+main,ProtoSurv baseline,UCEC,C-index,0,2026,0.658,,,,,,
+main,Hyper-ProtoSurv ours,BLCA,C-index,0,2026,0.671,,,,,,
+main,Hyper-ProtoSurv ours,BRCA,C-index,0,2026,0.691,,,,,,
+main,Hyper-ProtoSurv ours,LGG,C-index,0,2026,0.746,,,,,,
+main,Hyper-ProtoSurv ours,LUAD,C-index,0,2026,0.661,,,,,,
+main,Hyper-ProtoSurv ours,UCEC,C-index,0,2026,0.681,,,,,,
+ablation,,Average,C-index,0,2026,0.690,Hyper-ProtoSurv ours,,,,,
+ablation,,Average,C-index,0,2026,0.672,w/o reconstruction loss,,,,,
+sensitivity,,Average,C-index,0,2026,0.687,,lambda_rec,0.5,,,
+sensitivity,,Average,C-index,0,2026,0.690,,lambda_rec,1.0,,,
+stats,,,C-index,,,,,,,Hyper-ProtoSurv ours vs ProtoSurv baseline,Wilcoxon signed-rank,0.018

@@ -308,6 +308,17 @@ def main() -> None:
         action="store_true",
         help="Write available roles even if ablation/sensitivity/statistical rows are missing.",
     )
+    tcga_demo_flow = sub.add_parser(
+        "tcga-demo-artifact-flow",
+        help="Run the bundled flat-CSV artifact demo through strict TCGA result generation.",
+    )
+    tcga_demo_flow.add_argument("--input-csv", default="examples/tcga_training_summary.csv")
+    tcga_demo_flow.add_argument("--output-dir", default="outputs/tcga-artifact-flow")
+    tcga_demo_flow.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_demo_flow.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_demo_flow.add_argument("--metric", default="C-index")
+    tcga_demo_flow.add_argument("--seed", default="2026")
+    tcga_demo_flow.add_argument("--force", action="store_true", help="Overwrite existing demo outputs.")
     tcga_artifacts_doctor = sub.add_parser(
         "tcga-artifacts-doctor",
         help="Diagnose TCGA result CSV artifacts before generating the result Markdown file.",
@@ -807,6 +818,8 @@ def main() -> None:
         _run_tcga_results_from_artifacts(args)
     elif args.command == "tcga-export-artifacts":
         _run_tcga_export_artifacts(args)
+    elif args.command == "tcga-demo-artifact-flow":
+        _run_tcga_demo_artifact_flow(args)
     elif args.command == "tcga-artifacts-doctor":
         _run_tcga_artifacts_doctor(args)
     elif args.command == "tcga-artifact-template":
@@ -1842,6 +1855,49 @@ def _run_tcga_export_artifacts(args: argparse.Namespace) -> None:
         print(f"- {name}: {written[name]}")
     print(f"Ready command: paper-agent tcga-artifacts-doctor --artifacts-dir {output_dir} --summary {output_dir / 'artifact-doctor.json'}")
     print(f"Next command: paper-agent tcga-results-from-artifacts --artifacts-dir {output_dir} --strict")
+
+
+def _run_tcga_demo_artifact_flow(args: argparse.Namespace) -> None:
+    input_csv = _resolve_required_file(args.input_csv, "Demo training summary CSV")
+    output_dir = _resolve_project_relative_path(args.output_dir)
+    artifacts_dir = output_dir / "artifacts"
+    result_path = output_dir / "tcga_results.md"
+    rows = _read_csv_dicts(input_csv)
+    try:
+        written = write_tcga_artifact_exports_from_rows(
+            artifacts_dir,
+            rows,
+            method=args.method,
+            baseline=args.baseline,
+            metric=args.metric,
+            seed=args.seed,
+            force=bool(args.force),
+        )
+    except (FileExistsError, TypeError, ValueError) as exc:
+        raise SystemExit(f"TCGA demo artifact flow failed: {exc}") from exc
+
+    print(f"TCGA demo artifacts written to {artifacts_dir}")
+    print(f"Artifact files: {len(written)}")
+    result_args = argparse.Namespace(
+        example_root=str(output_dir),
+        artifacts_dir=str(artifacts_dir),
+        main_csv="",
+        ablation_csv="",
+        sensitivity_csv="",
+        stats_csv="",
+        output=str(result_path),
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        dataset=[],
+        strict=True,
+        require_ablation=True,
+        require_sensitivity=True,
+        require_statistical_tests=True,
+    )
+    _run_tcga_results_from_artifacts(result_args)
+    print(f"TCGA demo result Markdown written to {result_path}")
+    print(f"Ready command: paper-agent validate-results --experiment-results {result_path} --strict")
 
 
 def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:

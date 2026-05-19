@@ -311,6 +311,18 @@ paper-agent tcga-export-artifacts `
   --force
 ```
 
+For a local end-to-end demo with bundled example values:
+
+```powershell
+paper-agent tcga-demo-artifact-flow `
+  --output-dir outputs\tcga-artifact-flow `
+  --force
+```
+
+This reads `examples\tcga_training_summary.csv`, writes standard artifact CSVs,
+and generates a strict `tcga_results.md`. The bundled numbers are demo values,
+not evidence for a real paper.
+
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 

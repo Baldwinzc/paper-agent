@@ -62,6 +62,18 @@ python -m paper_agent.cli tcga-export-artifacts `
   --force
 ```
 
+For a local end-to-end demo with bundled example values:
+
+```powershell
+python -m paper_agent.cli tcga-demo-artifact-flow `
+  --output-dir outputs\tcga-artifact-flow `
+  --force
+```
+
+This reads `examples\tcga_training_summary.csv`, writes artifact CSVs, and
+generates a strict `tcga_results.md`. The bundled numbers are demo values, not
+evidence for a real paper.
+
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 

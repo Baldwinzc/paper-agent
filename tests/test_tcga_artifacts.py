@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 
 from paper_agent import cli as cli_module
 from paper_agent.tcga_artifacts import (
@@ -149,3 +150,31 @@ def test_cli_tcga_export_artifacts_converts_flat_training_csv(monkeypatch, tmp_p
     result_text = (tmp_path / "tcga_results_from_flat.md").read_text(encoding="utf-8")
     assert "Experiment artifact consistency: complete" in output
     assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 |" in result_text
+
+
+def test_cli_tcga_demo_artifact_flow_uses_bundled_example(monkeypatch, tmp_path, capsys):
+    input_csv = Path(__file__).resolve().parents[1] / "examples" / "tcga_training_summary.csv"
+    output_dir = tmp_path / "demo-flow"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-demo-artifact-flow",
+            "--input-csv",
+            str(input_csv),
+            "--output-dir",
+            str(output_dir),
+            "--force",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "TCGA demo artifacts written" in output
+    assert "TCGA demo result Markdown written" in output
+    assert "Experiment artifact consistency: complete" in output
+    assert (output_dir / "artifacts" / "tcga_main_results.csv").is_file()
+    assert (output_dir / "artifacts" / "ARTIFACT_SCHEMA.json").is_file()
+    result_text = (output_dir / "tcga_results.md").read_text(encoding="utf-8")
+    assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |" in result_text
