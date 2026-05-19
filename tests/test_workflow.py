@@ -6448,6 +6448,7 @@ def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypat
     assert "TCGA pipeline: running doctor checks" in output
     assert "TCGA pipeline: drafting paper" in output
     assert "TCGA draft run completed." in output
+    assert "TCGA pipeline completed." in output
     assert result_path.exists()
     assert "## Result Provenance" in result_path.read_text(encoding="utf-8")
     assert captured["llm_available"]
@@ -6458,6 +6459,12 @@ def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypat
     assert summary["inputs"]["submission_grade"] is True
     assert summary["inputs"]["experiment_results_path"] == str(result_path)
     assert summary["inputs"]["min_llm_sections"] == 4
+    assert summary["status"] == "pass"
+    assert summary["pipeline_phase"] == "tcga_pipeline_complete"
+    assert summary["pipeline"]["result_generation"] == "generated_from_artifacts"
+    assert summary["pipeline"]["doctor_checks"] == "completed"
+    assert summary["pipeline"]["experiment_results_path"] == str(result_path)
+    assert summary["outputs"]["pipeline_summary_path"].endswith("RUN_SUMMARY.json")
     assert summary["experiment_provenance_status"] == "complete"
     assert summary["experiment_artifact_consistency_status"] == "complete"
     assert zip_path.exists()

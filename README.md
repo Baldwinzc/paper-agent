@@ -478,7 +478,10 @@ paper-agent tcga-pipeline `
 ```
 
 This generates `results\tcga_results.md` from the CSV artifacts, validates the
-result file, runs `tcga-doctor`, and then runs `tcga-draft`. Pass
+result file, runs `tcga-doctor`, and then runs `tcga-draft`. On success,
+`RUN_SUMMARY.json` under `--output-dir` keeps the normal draft summary fields and
+adds `status=pass`, `pipeline_phase=tcga_pipeline_complete`, result-generation
+mode, doctor-check mode, artifact directory, and the pipeline summary path. Pass
 `--skip-result-generation` only when `tcga_results.md` already exists and should
 be reused.
 If result CSV artifacts are not present yet, add `--write-artifact-template` to

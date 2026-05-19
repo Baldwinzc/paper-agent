@@ -3551,8 +3551,11 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
     example_root = Path(args.example_root)
     experiment_path = _tcga_result_path(args, example_root)
     args.experiment_results = str(experiment_path)
+    result_generation_mode = "generated_from_artifacts"
+    doctor_mode = "completed"
 
     if args.skip_result_generation:
+        result_generation_mode = "skipped_existing"
         if not experiment_path.is_file():
             summary_path = _write_tcga_pipeline_status(
                 args,
@@ -3649,6 +3652,7 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
             raise SystemExit(_tcga_pipeline_artifact_failure_message(args, example_root, exc, summary_path)) from exc
 
     if args.skip_doctor:
+        doctor_mode = "skipped"
         print("TCGA pipeline: skipping doctor checks")
     else:
         print("TCGA pipeline: running doctor checks")
@@ -3689,6 +3693,14 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
         )
         print(f"Pipeline summary written to {summary_path}")
         raise SystemExit(f"{exc} Pipeline summary: {summary_path}") from exc
+    summary_path = _write_tcga_pipeline_success_summary(
+        args,
+        example_root,
+        result_generation_mode=result_generation_mode,
+        doctor_mode=doctor_mode,
+    )
+    print(f"Pipeline summary written to {summary_path}")
+    print("TCGA pipeline completed.")
 
 
 def _tcga_pipeline_artifact_failure_message(
@@ -3749,6 +3761,47 @@ def _write_tcga_pipeline_status(
         "outputs": outputs or {},
     }
     return _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
+
+
+def _write_tcga_pipeline_success_summary(
+    args: argparse.Namespace,
+    example_root: Path,
+    *,
+    result_generation_mode: str,
+    doctor_mode: str,
+) -> Path:
+    output_dir = Path(args.output_dir)
+    summary_path = output_dir / "RUN_SUMMARY.json"
+    summary = _read_json_object(summary_path, "TCGA pipeline draft summary")
+    experiment_path = _tcga_result_path(args, example_root)
+    artifact_dir = _tcga_artifact_template_output_dir(args, example_root)
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    outputs["pipeline_summary_path"] = str(summary_path)
+    summary["outputs"] = outputs
+    summary["status"] = "pass"
+    summary["pipeline_phase"] = "tcga_pipeline_complete"
+    summary["pipeline_status"] = "pass"
+    summary["pipeline"] = {
+        "status": "pass",
+        "phase": "tcga_pipeline_complete",
+        "example_root": str(example_root),
+        "experiment_results_path": str(experiment_path),
+        "artifact_dir": str(artifact_dir),
+        "output_dir": str(output_dir),
+        "result_generation": result_generation_mode,
+        "doctor_checks": doctor_mode,
+        "draft_summary_path": str(summary_path),
+        "submission_grade": bool(getattr(args, "submission_grade", False)),
+        "disable_llm": bool(getattr(args, "disable_llm", False)),
+        "zip_path": str(getattr(args, "zip", "") or ""),
+    }
+    summary["blocking_items"] = []
+    summary["missing_inputs"] = []
+    summary["next_action"] = "Review the generated draft package and replace demo or weak evidence before submission."
+    summary["next_command"] = _validate_results_command(args, example_root)
+    return _write_run_summary_data(summary, summary_path)
 
 
 def _tcga_pipeline_missing_artifact_inputs(artifact_dir: Path) -> list[str]:

@@ -225,7 +225,11 @@ python -m paper_agent.cli tcga-pipeline `
 
 The pipeline writes `results\tcga_results.md`, runs strict result validation,
 runs `tcga-doctor`, and then calls `tcga-draft` with the generated result file.
-Use `--skip-result-generation` only when the result Markdown already exists.
+On success, `RUN_SUMMARY.json` under `--output-dir` keeps the normal draft
+summary fields and adds `status=pass`, `pipeline_phase=tcga_pipeline_complete`,
+result-generation mode, doctor-check mode, artifact directory, and the pipeline
+summary path. Use `--skip-result-generation` only when the result Markdown
+already exists.
 If the result CSV artifacts do not exist yet, add `--write-artifact-template`.
 The pipeline writes the CSV templates, `EXPORT_CONTRACT.md`, and
 `ARTIFACT_SCHEMA.json`, then stops before doctor checks or drafting. Replace
