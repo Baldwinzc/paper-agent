@@ -4762,6 +4762,28 @@ def test_cli_tcga_readiness_schema_writes_schema_and_example(monkeypatch, tmp_pa
     assert example["next_actions"][0]["command"] == "paper-agent llm-doctor"
 
 
+def test_cli_tcga_readiness_contract_is_validated_before_summary_write(tmp_path):
+    valid_summary_path = tmp_path / "valid-summary.json"
+    valid_summary = {"readiness_contract": cli_module._tcga_readiness_contract_example()}
+
+    cli_module._write_run_summary_data(valid_summary, valid_summary_path)
+
+    written = json.loads(valid_summary_path.read_text(encoding="utf-8"))
+    assert written["readiness_contract"]["schema_version"] == "tcga-readiness-contract/v1"
+
+    invalid_summary_path = tmp_path / "invalid-summary.json"
+    invalid_summary = json.loads(json.dumps(valid_summary))
+    del invalid_summary["readiness_contract"]["requirements"]["llm"]["command"]
+
+    try:
+        cli_module._write_run_summary_data(invalid_summary, invalid_summary_path)
+    except SystemExit as exc:
+        assert "requirements.llm is missing fields: command" in str(exc)
+    else:
+        raise AssertionError("Expected invalid readiness_contract to be rejected.")
+    assert not invalid_summary_path.exists()
+
+
 def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

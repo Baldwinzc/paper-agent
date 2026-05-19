@@ -5200,12 +5200,140 @@ def _resolve_acceptance_report_path(
 
 
 def _write_run_summary_data(summary: dict, summary_path: Path) -> Path:
+    _validate_run_summary_contracts(summary)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return summary_path
+
+
+def _validate_run_summary_contracts(summary: dict) -> None:
+    readiness_contract = summary.get("readiness_contract")
+    if readiness_contract is not None:
+        _validate_tcga_readiness_contract(readiness_contract)
+
+
+def _validate_tcga_readiness_contract(contract: object) -> None:
+    label = "TCGA readiness_contract"
+    if not isinstance(contract, dict):
+        raise SystemExit(f"{label} must be a JSON object.")
+
+    required_fields = {
+        "schema_version",
+        "status",
+        "submission_grade",
+        "ready_for_submission_grade",
+        "ready_for_deterministic_draft",
+        "blocking_categories",
+        "requirements",
+        "next_actions",
+    }
+    optional_fields = {"pipeline_phase", "artifact_warnings"}
+    unknown_fields = sorted(set(contract) - required_fields - optional_fields)
+    if unknown_fields:
+        raise SystemExit(f"{label} has unknown fields: {', '.join(unknown_fields)}")
+
+    missing_fields = sorted(field for field in required_fields if field not in contract)
+    if missing_fields:
+        raise SystemExit(f"{label} is missing fields: {', '.join(missing_fields)}")
+
+    if contract["schema_version"] != TCGA_READINESS_CONTRACT_SCHEMA_VERSION:
+        raise SystemExit(
+            f"{label} schema_version must be {TCGA_READINESS_CONTRACT_SCHEMA_VERSION}."
+        )
+    if contract["status"] not in {"ready", "blocked"}:
+        raise SystemExit(f"{label} status must be ready or blocked.")
+
+    bool_fields = (
+        "submission_grade",
+        "ready_for_submission_grade",
+        "ready_for_deterministic_draft",
+    )
+    for field in bool_fields:
+        if not isinstance(contract[field], bool):
+            raise SystemExit(f"{label} {field} must be a boolean.")
+
+    if "pipeline_phase" in contract and not isinstance(contract["pipeline_phase"], str):
+        raise SystemExit(f"{label} pipeline_phase must be a string.")
+
+    blocking_categories = contract["blocking_categories"]
+    if not isinstance(blocking_categories, list) or not all(
+        isinstance(category, str) for category in blocking_categories
+    ):
+        raise SystemExit(f"{label} blocking_categories must be a string array.")
+    unknown_categories = sorted(
+        category
+        for category in blocking_categories
+        if category not in TCGA_READINESS_CONTRACT_CATEGORIES
+    )
+    if unknown_categories:
+        raise SystemExit(
+            f"{label} has unknown blocking categories: {', '.join(unknown_categories)}"
+        )
+
+    requirements = contract["requirements"]
+    if not isinstance(requirements, dict):
+        raise SystemExit(f"{label} requirements must be a JSON object.")
+    for category, requirement in requirements.items():
+        _validate_tcga_readiness_requirement(label, str(category), requirement)
+
+    next_actions = contract["next_actions"]
+    if not isinstance(next_actions, list):
+        raise SystemExit(f"{label} next_actions must be an array.")
+    for index, action in enumerate(next_actions):
+        _validate_tcga_readiness_action(label, index, action)
+
+    artifact_warnings = contract.get("artifact_warnings", [])
+    if not isinstance(artifact_warnings, list) or not all(
+        isinstance(item, str) for item in artifact_warnings
+    ):
+        raise SystemExit(f"{label} artifact_warnings must be a string array.")
+
+
+def _validate_tcga_readiness_requirement(label: str, category: str, requirement: object) -> None:
+    if not isinstance(requirement, dict):
+        raise SystemExit(f"{label} requirements.{category} must be a JSON object.")
+
+    required_fields = {"status", "required", "detail", "next_action", "command"}
+    unknown_fields = sorted(set(requirement) - required_fields)
+    if unknown_fields:
+        raise SystemExit(
+            f"{label} requirements.{category} has unknown fields: {', '.join(unknown_fields)}"
+        )
+    missing_fields = sorted(field for field in required_fields if field not in requirement)
+    if missing_fields:
+        raise SystemExit(
+            f"{label} requirements.{category} is missing fields: {', '.join(missing_fields)}"
+        )
+    if requirement["status"] not in TCGA_READINESS_REQUIREMENT_STATUSES:
+        raise SystemExit(f"{label} requirements.{category}.status is invalid.")
+    if not isinstance(requirement["required"], bool):
+        raise SystemExit(f"{label} requirements.{category}.required must be a boolean.")
+    for field in ("detail", "next_action", "command"):
+        if not isinstance(requirement[field], str):
+            raise SystemExit(f"{label} requirements.{category}.{field} must be a string.")
+
+
+def _validate_tcga_readiness_action(label: str, index: int, action: object) -> None:
+    if not isinstance(action, dict):
+        raise SystemExit(f"{label} next_actions[{index}] must be a JSON object.")
+
+    required_fields = {"category", "action", "command"}
+    unknown_fields = sorted(set(action) - required_fields)
+    if unknown_fields:
+        raise SystemExit(
+            f"{label} next_actions[{index}] has unknown fields: {', '.join(unknown_fields)}"
+        )
+    missing_fields = sorted(field for field in required_fields if field not in action)
+    if missing_fields:
+        raise SystemExit(
+            f"{label} next_actions[{index}] is missing fields: {', '.join(missing_fields)}"
+        )
+    for field in required_fields:
+        if not isinstance(action[field], str):
+            raise SystemExit(f"{label} next_actions[{index}].{field} must be a string.")
 
 
 def _read_json_object(path: Path, label: str) -> dict:

@@ -372,6 +372,9 @@ machine-readable schema or a sample payload with:
 paper-agent tcga-readiness-schema --output outputs\tcga-readiness-schema.json
 paper-agent tcga-readiness-schema --example --output outputs\tcga-readiness-example.json
 ```
+TCGA summaries validate this contract before writing JSON, so missing fields or
+invalid status/category values fail fast instead of producing ambiguous pipeline
+state.
 
 ```powershell
 paper-agent tcga-artifacts-doctor `
