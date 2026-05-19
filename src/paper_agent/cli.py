@@ -288,6 +288,25 @@ def main() -> None:
         action="store_true",
         help="Validate the generated file with provenance and artifact-consistency requirements.",
     )
+    tcga_artifacts_doctor = sub.add_parser(
+        "tcga-artifacts-doctor",
+        help="Diagnose TCGA result CSV artifacts before generating the result Markdown file.",
+    )
+    tcga_artifacts_doctor.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_artifacts_doctor.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Directory to scan recursively for TCGA result CSV artifacts.",
+    )
+    tcga_artifacts_doctor.add_argument("--main-csv", default="", help="Main result CSV; wide or long format.")
+    tcga_artifacts_doctor.add_argument("--ablation-csv", default="", help="Optional ablation CSV.")
+    tcga_artifacts_doctor.add_argument("--sensitivity-csv", default="", help="Optional sensitivity CSV.")
+    tcga_artifacts_doctor.add_argument("--stats-csv", default="", help="Optional statistical-test CSV.")
+    tcga_artifacts_doctor.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_artifacts_doctor.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_artifacts_doctor.add_argument("--metric", default="C-index")
+    tcga_artifacts_doctor.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    _add_experiment_contract_options(tcga_artifacts_doctor)
     tcga_draft = sub.add_parser(
         "tcga-draft",
         help="Run the local Hyper-ProtoSurv TCGA paper path with a real result file.",
@@ -692,6 +711,8 @@ def main() -> None:
         _run_tcga_doctor(args)
     elif args.command == "tcga-results-from-artifacts":
         _run_tcga_results_from_artifacts(args)
+    elif args.command == "tcga-artifacts-doctor":
+        _run_tcga_artifacts_doctor(args)
     elif args.command == "tcga-draft":
         _run_tcga_draft(args)
     elif args.command == "tcga-pipeline":
@@ -1272,6 +1293,81 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
             raise SystemExit("Generated TCGA result file failed strict validation.")
 
 
+def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
+    example_root = Path(args.example_root)
+    artifact_dir = _tcga_artifact_dir(args, example_root)
+    explicit_paths = {
+        "main": _resolve_optional_file(args.main_csv, "Main result CSV"),
+        "ablation": _resolve_optional_file(args.ablation_csv, "Ablation CSV"),
+        "sensitivity": _resolve_optional_file(args.sensitivity_csv, "Sensitivity CSV"),
+        "stats": _resolve_optional_file(args.stats_csv, "Statistical-test CSV"),
+    }
+    detected = (
+        _detect_tcga_artifact_csvs(
+            artifact_dir,
+            method=args.method,
+            baseline=args.baseline,
+            metric=args.metric,
+        )
+        if artifact_dir
+        else {}
+    )
+    role_paths = {
+        role: explicit_paths.get(role) or detected.get(role)
+        for role in ("main", "ablation", "sensitivity", "stats")
+    }
+    required_roles = {
+        "main": True,
+        "ablation": bool(args.require_ablation),
+        "sensitivity": bool(args.require_sensitivity),
+        "stats": bool(args.require_statistical_tests),
+    }
+
+    print("TCGA artifact doctor:")
+    has_input = bool(artifact_dir or any(explicit_paths.values()))
+    _print_doctor_check("Artifact directory", has_input, str(artifact_dir or "not provided"))
+    if detected:
+        _print_detected_tcga_artifacts(detected)
+
+    blocking: list[str] = []
+    datasets = list(args.dataset or [])
+    for role in ("main", "ablation", "sensitivity", "stats"):
+        label = _tcga_artifact_role_label(role)
+        path = role_paths.get(role)
+        required = required_roles[role]
+        if not path:
+            detail = f"missing; expected {_tcga_expected_artifact_schema(role)}"
+            _print_doctor_check(label, not required, detail)
+            if required:
+                blocking.append(f"Missing required {label}: {_tcga_expected_artifact_schema(role)}")
+            continue
+        diagnostic = _tcga_artifact_role_diagnostic(
+            role,
+            path,
+            args=args,
+            datasets=datasets,
+        )
+        _print_doctor_check(label, diagnostic["ok"], str(diagnostic["detail"]))
+        for issue in diagnostic["issues"]:
+            print(f"  - {issue}")
+        if role == "main" and diagnostic["datasets"]:
+            datasets = list(diagnostic["datasets"])
+        if not diagnostic["ok"]:
+            blocking.append(f"{label} is not parseable: {path}")
+
+    if blocking:
+        print("Overall: FAIL")
+        print("Blocking items:")
+        for item in blocking:
+            print(f"- {item}")
+        raise SystemExit("TCGA artifact doctor failed: fix CSV artifacts before generating tcga_results.md.")
+    print("Overall: PASS")
+    if artifact_dir:
+        print(f"Ready command: paper-agent tcga-results-from-artifacts --artifacts-dir {artifact_dir} --strict")
+    else:
+        print("Ready command: paper-agent tcga-results-from-artifacts --main-csv <path> --strict")
+
+
 def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
     if getattr(args, "experiment_results", ""):
         return _resolve_project_relative_path(args.experiment_results)
@@ -1495,6 +1591,105 @@ def _print_detected_tcga_artifacts(detected: dict[str, Path]) -> None:
     for role in ("main", "ablation", "sensitivity", "stats"):
         if role in detected:
             print(f"- {role}: {detected[role]}")
+
+
+def _tcga_artifact_role_diagnostic(
+    role: str,
+    path: Path,
+    *,
+    args: argparse.Namespace,
+    datasets: list[str],
+) -> dict[str, object]:
+    try:
+        rows = _read_csv_dicts(path)
+    except (csv.Error, OSError, UnicodeDecodeError) as exc:
+        return {
+            "ok": False,
+            "detail": f"{path}; unreadable CSV",
+            "issues": [f"CSV read failed: {exc}"],
+            "datasets": [],
+        }
+    headers = list(rows[0].keys()) if rows else []
+    issues: list[str] = []
+    parsed_values = 0
+    parsed_datasets = list(datasets)
+    try:
+        if not rows:
+            raise SystemExit("CSV has headers but no data rows.")
+        if role == "main":
+            parsed_datasets = datasets or _detect_result_datasets(rows, metric=args.metric)
+            if not parsed_datasets:
+                raise SystemExit("No datasets detected. Use --dataset or wide columns such as BLCA C-index.")
+            parsed_values = sum(
+                len(values)
+                for _, values in _tcga_main_result_table(
+                    rows,
+                    datasets=parsed_datasets,
+                    metric=args.metric,
+                    method=args.method,
+                    baseline=args.baseline,
+                )
+            )
+        elif role == "ablation":
+            parsed_values = len(
+                _tcga_single_value_table(
+                    rows,
+                    label_column_candidates=("variant", "method"),
+                    value_column_hint=args.metric,
+                    table_label="Variant",
+                    dataset_filter="Average",
+                    allowed_label_patterns=(args.method, r"\b(w/o|without|no|ablat(?:e|ed|ion)|remove(?:d)?|minus)\b"),
+                )
+            )
+        elif role == "sensitivity":
+            parsed_values = len(
+                _tcga_single_value_table(
+                    rows,
+                    label_column_candidates=("lambda_rec", "parameter_value", "value_name"),
+                    value_column_hint=args.metric,
+                    table_label="lambda_rec",
+                    dataset_filter="Average",
+                )
+            )
+        elif role == "stats":
+            parsed_values = len(_tcga_stats_table(rows))
+        else:
+            raise SystemExit(f"Unknown TCGA artifact role: {role}")
+    except SystemExit as exc:
+        issues.append(str(exc))
+        issues.append(f"Expected schema: {_tcga_expected_artifact_schema(role)}")
+    column_preview = ", ".join(headers[:10]) if headers else "none"
+    if len(headers) > 10:
+        column_preview += ", ..."
+    ok = not issues and parsed_values > 0
+    if not issues and parsed_values <= 0:
+        issues.append(f"No parseable values found. Expected schema: {_tcga_expected_artifact_schema(role)}")
+        ok = False
+    return {
+        "ok": ok,
+        "detail": f"{path}; rows={len(rows)}; columns={column_preview}; parsed_values={parsed_values}",
+        "issues": issues,
+        "datasets": parsed_datasets,
+    }
+
+
+def _tcga_artifact_role_label(role: str) -> str:
+    return {
+        "main": "Main result CSV",
+        "ablation": "Ablation CSV",
+        "sensitivity": "Sensitivity CSV",
+        "stats": "Statistical-test CSV",
+    }.get(role, role)
+
+
+def _tcga_expected_artifact_schema(role: str) -> str:
+    schemas = {
+        "main": "wide `method,BLCA C-index,...` or long `method,dataset,metric,value` with baseline and proposed-method rows",
+        "ablation": "`variant,Average C-index` or long `method,dataset=Average,metric,value` with full and w/o rows",
+        "sensitivity": "`lambda_rec,Average C-index` or long `parameter,parameter_value,dataset=Average,metric,value` rows",
+        "stats": "`comparison,metric,test,p_value` rows",
+    }
+    return schemas.get(role, "supported TCGA result CSV schema")
 
 
 def _tcga_provenance_sources(

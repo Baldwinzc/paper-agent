@@ -23,6 +23,16 @@ If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 
 ```powershell
+python -m paper_agent.cli tcga-artifacts-doctor `
+  --artifacts-dir D:\code\agent\example\results\logs
+```
+
+`tcga-artifacts-doctor` reports which files were auto-detected for the main,
+ablation, sensitivity, and statistical-test roles, then checks row counts,
+columns, parsed value counts, and expected schemas. It exits non-zero when a
+required role is missing or a CSV cannot support the paper-facing result table.
+
+```powershell
 python -m paper_agent.cli tcga-results-from-artifacts `
   --artifacts-dir D:\code\agent\example\results\logs `
   --output D:\code\agent\example\results\tcga_results.md `

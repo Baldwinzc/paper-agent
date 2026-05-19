@@ -264,6 +264,16 @@ If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 
 ```powershell
+paper-agent tcga-artifacts-doctor `
+  --artifacts-dir D:\code\agent\example\results\logs
+```
+
+`tcga-artifacts-doctor` checks whether the directory contains parseable main,
+ablation, sensitivity, and statistical-test CSVs. It reports missing roles,
+unreadable CSVs, expected schemas, detected columns, row counts, and parsed
+value counts before any result file or paper draft is written.
+
+```powershell
 paper-agent tcga-results-from-artifacts `
   --artifacts-dir D:\code\agent\example\results\logs `
   --output D:\code\agent\example\results\tcga_results.md `

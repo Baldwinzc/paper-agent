@@ -4468,6 +4468,118 @@ def test_cli_tcga_results_from_artifacts_auto_detects_combined_fold_csv(monkeypa
     assert "TODO" not in result_text
 
 
+def test_cli_tcga_artifacts_doctor_passes_complete_dir(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "tcga_main_results.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index",
+                "ProtoSurv baseline,0.646,0.669",
+                "Hyper-ProtoSurv ours,0.671,0.691",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "component_ablation.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.681",
+                "w/o reconstruction loss,0.665",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "lambda_sensitivity.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.676",
+                "1.0,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "statistical_tests.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-artifacts-doctor",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "TCGA artifact doctor:" in output
+    assert "- Artifact directory: PASS" in output
+    assert "- Main result CSV: PASS" in output
+    assert "- Ablation CSV: PASS" in output
+    assert "- Sensitivity CSV: PASS" in output
+    assert "- Statistical-test CSV: PASS" in output
+    assert "parsed_values=4" in output
+    assert "Overall: PASS" in output
+    assert "Ready command: paper-agent tcga-results-from-artifacts" in output
+
+
+def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "tcga_main_results.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index",
+                "ProtoSurv baseline,0.646",
+                "Hyper-ProtoSurv ours,0.671",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-artifacts-doctor",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--dataset",
+            "BLCA",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA artifact doctor failed" in str(exc)
+    else:
+        raise AssertionError("Expected artifact doctor to fail when required roles are missing.")
+
+    output = capsys.readouterr().out
+    assert "- Main result CSV: PASS" in output
+    assert "- Ablation CSV: FAIL" in output
+    assert "- Sensitivity CSV: FAIL" in output
+    assert "- Statistical-test CSV: FAIL" in output
+    assert "Expected schema:" in output or "expected" in output
+    assert "Missing required Ablation CSV" in output
+    assert "Overall: FAIL" in output
+
+
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
