@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import statistics
 from pathlib import Path
 from urllib.parse import urlparse
@@ -268,7 +269,12 @@ def main() -> None:
         help="Build a TCGA result Markdown file from CSV artifacts and provenance hashes.",
     )
     tcga_results.add_argument("--example-root", default=r"D:\code\agent\example")
-    tcga_results.add_argument("--main-csv", required=True, help="Main result CSV; wide or long format.")
+    tcga_results.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Directory to scan recursively for TCGA result CSV artifacts when explicit CSV paths are omitted.",
+    )
+    tcga_results.add_argument("--main-csv", default="", help="Main result CSV; wide or long format.")
     tcga_results.add_argument("--ablation-csv", default="", help="Optional ablation CSV.")
     tcga_results.add_argument("--sensitivity-csv", default="", help="Optional sensitivity CSV.")
     tcga_results.add_argument("--stats-csv", default="", help="Optional statistical-test CSV.")
@@ -1083,10 +1089,21 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
 def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
     example_root = Path(args.example_root)
     output_path = _resolve_project_relative_path(args.output) if args.output else example_root / "results" / "tcga_results.md"
-    main_csv = _resolve_required_file(args.main_csv, "Main result CSV")
-    ablation_csv = _resolve_optional_file(args.ablation_csv, "Ablation CSV")
-    sensitivity_csv = _resolve_optional_file(args.sensitivity_csv, "Sensitivity CSV")
-    stats_csv = _resolve_optional_file(args.stats_csv, "Statistical-test CSV")
+    artifact_dir = _tcga_artifact_dir(args, example_root)
+    detected = (
+        _detect_tcga_artifact_csvs(
+            artifact_dir,
+            method=args.method,
+            baseline=args.baseline,
+            metric=args.metric,
+        )
+        if artifact_dir
+        else {}
+    )
+    main_csv = _resolve_required_or_detected_file(args.main_csv, detected.get("main"), "Main result CSV")
+    ablation_csv = _resolve_optional_or_detected_file(args.ablation_csv, detected.get("ablation"), "Ablation CSV")
+    sensitivity_csv = _resolve_optional_or_detected_file(args.sensitivity_csv, detected.get("sensitivity"), "Sensitivity CSV")
+    stats_csv = _resolve_optional_or_detected_file(args.stats_csv, detected.get("stats"), "Statistical-test CSV")
 
     main_rows = _read_csv_dicts(main_csv)
     datasets = args.dataset or _detect_result_datasets(main_rows, metric=args.metric)
@@ -1106,6 +1123,8 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
             label_column_candidates=("variant", "method"),
             value_column_hint=args.metric,
             table_label="Variant",
+            dataset_filter="Average",
+            allowed_label_patterns=(args.method, r"\b(w/o|without|no|ablat(?:e|ed|ion)|remove(?:d)?|minus)\b"),
         )
         if ablation_csv
         else []
@@ -1116,29 +1135,18 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
             label_column_candidates=("lambda_rec", "parameter_value", "value_name"),
             value_column_hint=args.metric,
             table_label="lambda_rec",
+            dataset_filter="Average",
         )
         if sensitivity_csv
         else []
     )
     stats_table = _tcga_stats_table(_read_csv_dicts(stats_csv)) if stats_csv else []
-    provenance_sources = [
-        ("Main result CSV", main_csv, "source values for main result table"),
-        *(
-            [("Ablation CSV", ablation_csv, "source values for ablation table")]
-            if ablation_csv
-            else []
-        ),
-        *(
-            [("Sensitivity CSV", sensitivity_csv, "source values for sensitivity table")]
-            if sensitivity_csv
-            else []
-        ),
-        *(
-            [("Statistical CSV", stats_csv, "source values for statistical tests")]
-            if stats_csv
-            else []
-        ),
-    ]
+    provenance_sources = _tcga_provenance_sources(
+        main_csv=main_csv,
+        ablation_csv=ablation_csv,
+        sensitivity_csv=sensitivity_csv,
+        stats_csv=stats_csv,
+    )
     markdown = _render_tcga_results_markdown(
         metric=args.metric,
         datasets=datasets,
@@ -1154,6 +1162,8 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
     print(f"TCGA result file written to {output_path}")
     print(f"Main datasets: {', '.join(datasets)}")
     print(f"Provenance artifacts: {len(provenance_sources)}")
+    if detected:
+        _print_detected_tcga_artifacts(detected)
 
     if args.strict:
         summary = _validate_results_file(
@@ -1187,6 +1197,244 @@ def _resolve_optional_file(path_value: str, label: str) -> Path | None:
     if not path_value:
         return None
     return _resolve_required_file(path_value, label)
+
+
+def _resolve_required_or_detected_file(
+    explicit_path: str,
+    detected_path: Path | None,
+    label: str,
+) -> Path:
+    if explicit_path:
+        return _resolve_required_file(explicit_path, label)
+    if detected_path and detected_path.is_file():
+        return detected_path
+    raise SystemExit(
+        f"{label} not found. Pass --main-csv explicitly or provide --artifacts-dir "
+        "with a CSV containing the baseline and proposed-method result rows."
+    )
+
+
+def _resolve_optional_or_detected_file(
+    explicit_path: str,
+    detected_path: Path | None,
+    label: str,
+) -> Path | None:
+    if explicit_path:
+        return _resolve_required_file(explicit_path, label)
+    return detected_path if detected_path and detected_path.is_file() else None
+
+
+def _tcga_artifact_dir(args: argparse.Namespace, example_root: Path) -> Path | None:
+    if args.artifacts_dir:
+        path = _resolve_project_relative_path(args.artifacts_dir)
+        if not path.is_dir():
+            raise SystemExit(f"Artifact directory not found: {path}")
+        return path
+    default_path = example_root / "results" / "logs"
+    return default_path if default_path.is_dir() else None
+
+
+def _detect_tcga_artifact_csvs(
+    artifact_dir: Path,
+    *,
+    method: str,
+    baseline: str,
+    metric: str,
+) -> dict[str, Path]:
+    scored: dict[str, list[tuple[int, str, Path]]] = {
+        "main": [],
+        "ablation": [],
+        "sensitivity": [],
+        "stats": [],
+    }
+    for csv_path in sorted(artifact_dir.rglob("*.csv")):
+        try:
+            rows = _read_csv_dicts(csv_path)
+        except (csv.Error, OSError, UnicodeDecodeError):
+            continue
+        scores = _tcga_artifact_role_scores(
+            csv_path,
+            rows,
+            method=method,
+            baseline=baseline,
+            metric=metric,
+        )
+        for role, score in scores.items():
+            if score > 0:
+                scored[role].append((score, str(csv_path).lower(), csv_path))
+    detected = {}
+    for role, candidates in scored.items():
+        if not candidates:
+            continue
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        detected[role] = candidates[0][2]
+    return detected
+
+
+def _tcga_artifact_role_scores(
+    csv_path: Path,
+    rows: list[dict[str, str]],
+    *,
+    method: str,
+    baseline: str,
+    metric: str,
+) -> dict[str, int]:
+    headers = list(rows[0].keys()) if rows else []
+    joined_rows = "\n".join(" ".join(row.values()) for row in rows[:50])
+    name_text = f"{csv_path.parent.name} {csv_path.stem}".lower()
+    source_text = f"{name_text}\n{' '.join(headers)}\n{joined_rows}"
+    method_header = _csv_header(headers, "method", "model", "variant", "approach")
+    dataset_header = _csv_header(headers, "dataset", "cohort", "cancer", "project")
+    metric_header = _csv_header(headers, "metric", "measure")
+    value_header = _csv_header(headers, "value", "score", "result", "mean", "estimate")
+    comparison_header = _csv_header(headers, "comparison", "contrast", "pair")
+    p_value_header = _csv_p_value_header(headers)
+    parameter_header = _csv_header(headers, "parameter", "hyperparameter", "param")
+    parameter_value_header = _csv_header(headers, "parameter_value", "param_value", "setting", "tested_value")
+
+    scores = {"main": 0, "ablation": 0, "sensitivity": 0, "stats": 0}
+    if re.search(r"\b(main|overall|performance|result|metric|eval|evaluation)\b", name_text):
+        scores["main"] += 3
+    if re.search(r"\b(ablation|ablat|variant|component)\b", name_text):
+        scores["ablation"] += 6
+    if re.search(r"\b(sensitivity|lambda|hyper|param|sweep)\b", name_text):
+        scores["sensitivity"] += 6
+    if re.search(r"\b(stat|stats|statistical|significance|pvalue|p-value|wilcoxon)\b", name_text):
+        scores["stats"] += 6
+
+    if method_header and _csv_rows_contain_label(rows, baseline) and _csv_rows_contain_label(rows, method):
+        scores["main"] += 8
+    if method_header and _has_dataset_metric_values(headers, dataset_header, metric_header, value_header, metric):
+        scores["main"] += 3
+    if method_header and _has_wide_dataset_metric(headers, metric):
+        scores["main"] += 4
+
+    if method_header and _rows_look_like_ablation(rows):
+        scores["ablation"] += 7
+    if _norm_key(method_header) == "variant":
+        scores["ablation"] += 4
+    if _has_wide_average_metric(headers, metric) and method_header:
+        scores["ablation"] += 2
+
+    if (parameter_header and parameter_value_header) or _has_parameter_like_header(headers):
+        scores["sensitivity"] += 8
+    if _has_wide_average_metric(headers, metric) and _has_parameter_like_header(headers):
+        scores["sensitivity"] += 3
+
+    if comparison_header and p_value_header:
+        scores["stats"] += 10
+    if re.search(r"\bp\s*[-_ ]?value\b|\bp\s*[<=>]\s*0?\.\d+", source_text, flags=re.I):
+        scores["stats"] += 3
+    return scores
+
+
+def _csv_header(headers: list[str], *names: str) -> str:
+    normalized = {_norm_key(header): header for header in headers}
+    for name in names:
+        key = _norm_key(name)
+        if key in normalized:
+            return normalized[key]
+    for name in names:
+        key = _norm_key(name)
+        if key == "p":
+            continue
+        for header in headers:
+            if key and key in _norm_key(header):
+                return header
+    return ""
+
+
+def _csv_p_value_header(headers: list[str]) -> str:
+    for header in headers:
+        key = _norm_key(header)
+        if key in {"p", "pvalue", "pval"}:
+            return header
+    return _csv_header(headers, "p_value", "p-value", "pval")
+
+
+def _csv_rows_contain_label(rows: list[dict[str, str]], label: str) -> bool:
+    label_norm = _norm_key(label)
+    for row in rows:
+        for value in row.values():
+            value_norm = _norm_key(value)
+            if label_norm and value_norm and (label_norm in value_norm or value_norm in label_norm):
+                return True
+    return False
+
+
+def _has_dataset_metric_values(
+    headers: list[str],
+    dataset_header: str,
+    metric_header: str,
+    value_header: str,
+    metric: str,
+) -> bool:
+    if dataset_header and value_header:
+        return True
+    if metric_header and value_header and _norm_key(metric) in _norm_key(metric_header + " " + value_header):
+        return True
+    return _has_wide_dataset_metric(headers, metric)
+
+
+def _has_wide_dataset_metric(headers: list[str], metric: str) -> bool:
+    metric_norm = _norm_key(metric)
+    return any(metric_norm and metric_norm in _norm_key(header) and "average" not in header.lower() for header in headers)
+
+
+def _has_wide_average_metric(headers: list[str], metric: str) -> bool:
+    metric_norm = _norm_key(metric)
+    return any(metric_norm and metric_norm in _norm_key(header) and re.search(r"\b(avg|average|mean)\b", header, flags=re.I) for header in headers)
+
+
+def _has_parameter_like_header(headers: list[str]) -> bool:
+    return any(
+        re.search(r"\b(lambda(?:[_-]?[a-z]+)?|alpha|beta|gamma|parameter|hyper[-_ ]?parameter|dropout|weight|k)\b", header, flags=re.I)
+        for header in headers
+    )
+
+
+def _rows_look_like_ablation(rows: list[dict[str, str]]) -> bool:
+    text = "\n".join(" ".join(row.values()) for row in rows[:50])
+    return bool(re.search(r"\b(w/o|without|no|ablat(?:e|ed|ion)|remove(?:d)?|minus)\b", text, flags=re.I))
+
+
+def _print_detected_tcga_artifacts(detected: dict[str, Path]) -> None:
+    print("Auto-detected artifacts:")
+    for role in ("main", "ablation", "sensitivity", "stats"):
+        if role in detected:
+            print(f"- {role}: {detected[role]}")
+
+
+def _tcga_provenance_sources(
+    *,
+    main_csv: Path,
+    ablation_csv: Path | None,
+    sensitivity_csv: Path | None,
+    stats_csv: Path | None,
+) -> list[tuple[str, Path, str]]:
+    raw_sources = [
+        ("Main result CSV", main_csv, "source values for main result table"),
+        ("Ablation CSV", ablation_csv, "source values for ablation table"),
+        ("Sensitivity CSV", sensitivity_csv, "source values for sensitivity table"),
+        ("Statistical CSV", stats_csv, "source values for statistical tests"),
+    ]
+    grouped: dict[Path, tuple[list[str], list[str], Path]] = {}
+    for name, path, description in raw_sources:
+        if not path:
+            continue
+        key = path.resolve()
+        if key not in grouped:
+            grouped[key] = ([], [], path)
+        grouped[key][0].append(name)
+        grouped[key][1].append(description)
+    sources = []
+    for names, descriptions, path in grouped.values():
+        if len(names) == 1:
+            sources.append((names[0], path, descriptions[0]))
+        else:
+            roles = ", ".join(description.replace("source values for ", "") for description in descriptions)
+            sources.append(("Combined result CSV", path, f"source values for {roles}"))
+    return sources
 
 
 def _read_csv_dicts(csv_path: Path) -> list[dict[str, str]]:
@@ -1248,10 +1496,14 @@ def _tcga_single_value_table(
     label_column_candidates: tuple[str, ...],
     value_column_hint: str,
     table_label: str,
+    dataset_filter: str = "",
+    allowed_label_patterns: tuple[str, ...] = (),
 ) -> list[tuple[str, str]]:
     values_by_label: dict[str, list[float]] = {}
     for row in rows:
         if not _row_matches_metric(row, value_column_hint):
+            continue
+        if not _row_matches_dataset_filter(row, dataset_filter):
             continue
         label = ""
         for candidate in label_column_candidates:
@@ -1259,6 +1511,8 @@ def _tcga_single_value_table(
             if label:
                 break
         if not label:
+            continue
+        if allowed_label_patterns and not _label_matches_any_pattern(label, allowed_label_patterns):
             continue
         value = _lookup_row_value(row, value_column_hint)
         if value is None:
@@ -1333,6 +1587,27 @@ def _lookup_row_value(row: dict[str, str], hint: str) -> float | None:
 def _row_matches_metric(row: dict[str, str], metric: str) -> bool:
     row_metric = _csv_get(row, "metric")
     return not row_metric or _norm_key(metric) in _norm_key(row_metric)
+
+
+def _row_matches_dataset_filter(row: dict[str, str], dataset_filter: str) -> bool:
+    if not dataset_filter:
+        return True
+    row_dataset = _csv_get(row, "dataset")
+    return not row_dataset or _norm_key(row_dataset) == _norm_key(dataset_filter)
+
+
+def _label_matches_any_pattern(label: str, patterns: tuple[str, ...]) -> bool:
+    for pattern in patterns:
+        if not pattern:
+            continue
+        if _norm_key(pattern) and _norm_key(pattern) in _norm_key(label):
+            return True
+        try:
+            if re.search(pattern, label, flags=re.I):
+                return True
+        except re.error:
+            continue
+    return False
 
 
 def _csv_get(row: dict[str, str], name: str) -> str:

@@ -4339,6 +4339,135 @@ def test_cli_tcga_results_from_artifacts_averages_long_fold_csv(monkeypatch, tmp
     assert "| 0.5 | 0.676 |" in result_text
 
 
+def test_cli_tcga_results_from_artifacts_auto_detects_artifact_dir(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "tcga_main_results.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index",
+                "ProtoSurv baseline,0.646,0.669",
+                "Hyper-ProtoSurv ours,0.671,0.691",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "component_ablation.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.681",
+                "w/o reconstruction loss,0.665",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "lambda_sensitivity.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.676",
+                "1.0,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "statistical_tests.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "tcga_results.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-from-artifacts",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output",
+            str(output_path),
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_text = output_path.read_text(encoding="utf-8")
+    assert "Auto-detected artifacts:" in output
+    assert "- main:" in output
+    assert "- ablation:" in output
+    assert "- sensitivity:" in output
+    assert "- stats:" in output
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=9/9; missing=0; mismatched=0; aggregated=0; csv_artifacts=4" in output
+    assert "tcga_main_results.csv" in result_text
+    assert "component_ablation.csv" in result_text
+    assert "lambda_sensitivity.csv" in result_text
+    assert "statistical_tests.csv" in result_text
+
+
+def test_cli_tcga_results_from_artifacts_auto_detects_combined_fold_csv(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    combined_csv = logs_dir / "tcga_combined_fold_results.csv"
+    combined_csv.write_text(
+        "\n".join(
+            [
+                "method,parameter,parameter_value,comparison,dataset,metric,test,p_value,fold,seed,value",
+                "ProtoSurv baseline,,,,BLCA,C-index,,,0,2026,0.640",
+                "ProtoSurv baseline,,,,BLCA,C-index,,,1,2026,0.652",
+                "Hyper-ProtoSurv ours,,,,BLCA,C-index,,,0,2026,0.660",
+                "Hyper-ProtoSurv ours,,,,BLCA,C-index,,,1,2026,0.682",
+                "Hyper-ProtoSurv ours,,,,Average,C-index,,,0,2026,0.680",
+                "Hyper-ProtoSurv ours,,,,Average,C-index,,,1,2026,0.682",
+                "w/o reconstruction loss,,,,Average,C-index,,,0,2026,0.660",
+                "w/o reconstruction loss,,,,Average,C-index,,,1,2026,0.670",
+                ",lambda_rec,0.5,,Average,C-index,,,0,2026,0.674",
+                ",lambda_rec,0.5,,Average,C-index,,,1,2026,0.678",
+                ",lambda_rec,1.0,,Average,C-index,,,0,2026,0.680",
+                ",lambda_rec,1.0,,Average,C-index,,,1,2026,0.682",
+                ",,,Hyper-ProtoSurv ours vs ProtoSurv baseline,,C-index,Wilcoxon signed-rank,0.018,,,",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "tcga_results.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-from-artifacts",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output",
+            str(output_path),
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_text = output_path.read_text(encoding="utf-8")
+    assert "Provenance artifacts: 1" in output
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=7/7; missing=0; mismatched=0; aggregated=6; csv_artifacts=1" in output
+    assert "| ProtoSurv baseline | 0.646 |" in result_text
+    assert "| Hyper-ProtoSurv ours | 0.671 |" in result_text
+    assert "| Combined result CSV | logs/tcga_combined_fold_results.csv |" in result_text
+    assert "TODO" not in result_text
+
+
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()

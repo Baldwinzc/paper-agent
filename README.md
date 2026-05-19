@@ -265,6 +265,17 @@ file and provenance hashes directly:
 
 ```powershell
 paper-agent tcga-results-from-artifacts `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output D:\code\agent\example\results\tcga_results.md `
+  --strict
+```
+
+`--artifacts-dir` recursively scans CSV files and auto-detects main,
+ablation, sensitivity, and statistical-test artifacts. If auto-detection is
+ambiguous, pass the files explicitly:
+
+```powershell
+paper-agent tcga-results-from-artifacts `
   --main-csv D:\code\agent\example\results\logs\tcga_main.csv `
   --ablation-csv D:\code\agent\example\results\logs\tcga_ablation.csv `
   --sensitivity-csv D:\code\agent\example\results\logs\tcga_sensitivity.csv `

@@ -24,6 +24,19 @@ result file instead of copying values by hand:
 
 ```powershell
 python -m paper_agent.cli tcga-results-from-artifacts `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output D:\code\agent\example\results\tcga_results.md `
+  --strict
+```
+
+The artifact directory is scanned recursively for CSV files. The command
+auto-detects main, ablation, sensitivity, and statistical-test artifacts from
+file names and CSV schemas. If a single combined fold-level CSV contains all
+roles, the same file is used for each section and written once in the provenance
+table. Pass explicit files when auto-detection is ambiguous:
+
+```powershell
+python -m paper_agent.cli tcga-results-from-artifacts `
   --main-csv D:\code\agent\example\results\logs\tcga_main.csv `
   --ablation-csv D:\code\agent\example\results\logs\tcga_ablation.csv `
   --sensitivity-csv D:\code\agent\example\results\logs\tcga_sensitivity.csv `
