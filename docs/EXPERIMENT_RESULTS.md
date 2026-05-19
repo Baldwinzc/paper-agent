@@ -138,9 +138,9 @@ Use `--skip-result-generation` only when the result Markdown already exists.
 If the result CSV artifacts do not exist yet, add `--write-artifact-template`.
 The pipeline writes the CSV templates and `EXPORT_CONTRACT.md`, then stops
 before doctor checks or drafting. Replace every `TODO` with real trained-model
-outputs and rerun the pipeline. Early stops also write `RUN_SUMMARY.json` under
-`--output-dir` with the current phase, blocking items, missing inputs, and next
-command.
+outputs and rerun the pipeline. Pipeline stops before or during doctor/draft also
+write `RUN_SUMMARY.json` under `--output-dir` with the current phase, blocking
+items, missing inputs, and next command.
 
 For result-file quality checks, declare the expected experiment target:
 

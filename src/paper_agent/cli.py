@@ -2603,10 +2603,39 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
         doctor_args = argparse.Namespace(**vars(args))
         doctor_args.write_template = False
         doctor_args.live_llm = bool(args.live_llm_doctor)
-        _run_tcga_doctor(doctor_args)
+        try:
+            _run_tcga_doctor(doctor_args)
+        except SystemExit as exc:
+            summary_path = _write_tcga_pipeline_status(
+                args,
+                example_root,
+                phase="doctor_checks",
+                status="blocked",
+                blocking_items=[str(exc)],
+                missing_inputs=_tcga_pipeline_doctor_missing_inputs(args, example_root),
+                next_action="Fix the TCGA doctor blocking items, then rerun tcga-pipeline.",
+                next_command=_tcga_doctor_command(args, example_root),
+            )
+            print(f"Pipeline summary written to {summary_path}")
+            raise SystemExit(f"{exc} Pipeline summary: {summary_path}") from exc
 
     print("TCGA pipeline: drafting paper")
-    _run_tcga_draft(args)
+    try:
+        _run_tcga_draft(args)
+    except SystemExit as exc:
+        plan = _tcga_pipeline_draft_failure_plan(args, example_root, str(exc))
+        summary_path = _write_tcga_pipeline_status(
+            args,
+            example_root,
+            phase=plan["phase"],
+            status="blocked",
+            blocking_items=[str(exc)],
+            missing_inputs=plan["missing_inputs"],
+            next_action=plan["next_action"],
+            next_command=plan["next_command"],
+        )
+        print(f"Pipeline summary written to {summary_path}")
+        raise SystemExit(f"{exc} Pipeline summary: {summary_path}") from exc
 
 
 def _tcga_pipeline_artifact_failure_message(
@@ -2698,6 +2727,100 @@ def _tcga_pipeline_rerun_command(args: argparse.Namespace, example_root: Path) -
     if args.disable_llm:
         parts.append("--disable-llm")
     return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _tcga_doctor_command(args: argparse.Namespace, example_root: Path) -> str:
+    parts = [
+        "paper-agent",
+        "tcga-doctor",
+        "--example-root",
+        str(example_root),
+    ]
+    if args.experiment_results:
+        parts.extend(["--experiment-results", args.experiment_results])
+    if args.submission_grade:
+        parts.append("--submission-grade")
+    if args.live_llm_doctor:
+        parts.append("--live-llm")
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _validate_results_command(args: argparse.Namespace, example_root: Path) -> str:
+    parts = [
+        "paper-agent",
+        "validate-results",
+        "--experiment-results",
+        str(_tcga_result_path(args, example_root)),
+        "--strict",
+    ]
+    for dataset in getattr(args, "dataset", []) or []:
+        parts.extend(["--expected-dataset", str(dataset)])
+    if getattr(args, "method", ""):
+        parts.extend(["--expected-method", str(args.method)])
+    if getattr(args, "baseline", ""):
+        parts.extend(["--expected-baseline", str(args.baseline)])
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _tcga_pipeline_doctor_missing_inputs(args: argparse.Namespace, example_root: Path) -> list[str]:
+    missing: list[str] = []
+    try:
+        _resolve_baseline_pdf(str(example_root / "baseline"))
+    except SystemExit:
+        missing.append(f"Baseline PDF under {example_root / 'baseline'}")
+    code_path = example_root / "code" / "hyper-protosurv"
+    if not code_path.is_dir():
+        missing.append(f"Hyper-ProtoSurv code directory: {code_path}")
+    experiment_path = _tcga_result_path(args, example_root)
+    if not experiment_path.is_file():
+        missing.append(f"Strict TCGA result file: {experiment_path}")
+    if args.submission_grade and not load_llm_config().configured:
+        missing.append("Configured LLM API key/model for submission-grade drafting")
+    if args.submission_grade and not _latex_toolchain_status()["available"]:
+        missing.append("Local LaTeX compiler for submission-grade validation")
+    return missing or ["Review TCGA doctor output for the blocking check names."]
+
+
+def _tcga_pipeline_draft_failure_plan(
+    args: argparse.Namespace,
+    example_root: Path,
+    error_message: str,
+) -> dict[str, object]:
+    lower_message = error_message.lower()
+    if "llm" in lower_message and ("preflight" in lower_message or "configured" in lower_message or "quota" in lower_message):
+        return {
+            "phase": "llm_preflight",
+            "missing_inputs": ["Configured LLM API key/model with available provider quota"],
+            "next_action": "Fix LLM configuration or provider quota, then rerun tcga-pipeline.",
+            "next_command": "paper-agent llm-doctor",
+        }
+    if "latex" in lower_message or "compiler" in lower_message:
+        return {
+            "phase": "latex_validation",
+            "missing_inputs": ["Local LaTeX compiler or valid LaTeX project assets"],
+            "next_action": "Fix the local LaTeX toolchain or rerun without submission-grade compilation.",
+            "next_command": "paper-agent latex-doctor",
+        }
+    if "experiment result" in lower_message or "result validation" in lower_message:
+        return {
+            "phase": "draft_result_validation",
+            "missing_inputs": [f"Strict-acceptable TCGA result file: {_tcga_result_path(args, example_root)}"],
+            "next_action": "Validate and repair the result file before drafting.",
+            "next_command": _validate_results_command(args, example_root),
+        }
+    if "llm-written sections" in lower_message or "self-review" in lower_message:
+        return {
+            "phase": "llm_generation",
+            "missing_inputs": ["Enough successful LLM-written sections and LLM self-review output"],
+            "next_action": "Inspect LLM section errors and rerun with a working model configuration.",
+            "next_command": _tcga_pipeline_rerun_command(args, example_root),
+        }
+    return {
+        "phase": "draft_generation",
+        "missing_inputs": ["Review draft-stage exception and generated logs"],
+        "next_action": "Fix the draft-stage blocking error, then rerun tcga-pipeline.",
+        "next_command": _tcga_pipeline_rerun_command(args, example_root),
+    }
 
 
 def _run_tcga_draft(args: argparse.Namespace) -> None:

@@ -6154,6 +6154,141 @@ def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_p
     assert any("tcga_stats.csv" in item for item in summary["missing_inputs"])
 
 
+def test_cli_tcga_pipeline_writes_summary_on_doctor_failure(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    logs_dir = example_root / "results" / "logs"
+    output_dir = tmp_path / "pipeline"
+    logs_dir.mkdir(parents=True)
+    (logs_dir / "tcga_main_wide.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index,LGG C-index,LUAD C-index,UCEC C-index",
+                "ProtoSurv baseline,0.646,0.669,0.724,0.636,0.658",
+                "Hyper-ProtoSurv ours,0.671,0.691,0.746,0.661,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_ablation_wide.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.690",
+                "w/o reconstruction loss,0.672",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_sensitivity_wide.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.687",
+                "1.0,0.690",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_stats.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-pipeline",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(output_dir),
+            "--disable-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA doctor failed" in str(exc)
+        assert "Pipeline summary" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA pipeline to fail during doctor checks.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "TCGA pipeline: running doctor checks" in output
+    assert "Pipeline summary written to" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "doctor_checks"
+    assert any("Baseline PDF" in item for item in summary["missing_inputs"])
+    assert any("Hyper-ProtoSurv code directory" in item for item in summary["missing_inputs"])
+    assert summary["next_command"].startswith("paper-agent tcga-doctor")
+
+
+def test_cli_tcga_pipeline_writes_summary_on_draft_llm_failure(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    output_dir = tmp_path / "pipeline"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text("strict result placeholder", encoding="utf-8")
+
+    def fake_validate(*args, **kwargs):
+        return {
+            "experiment_evidence": {"real_result_evidence": True},
+            "experiment_contract": {"status": "complete"},
+            "experiment_quality": {"status": "complete"},
+            "experiment_provenance": {"status": "complete"},
+            "experiment_artifact_consistency": {"status": "complete"},
+        }
+
+    monkeypatch.setattr(cli_module, "_validate_results_text", fake_validate)
+    monkeypatch.setattr(
+        cli_module,
+        "load_llm_config",
+        lambda: LLMConfig(api_key="", base_url="https://api.deepseek.com", model="deepseek-v4-pro"),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-pipeline",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(output_dir),
+            "--skip-result-generation",
+            "--skip-doctor",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA draft requires a configured LLM" in str(exc)
+        assert "Pipeline summary" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA pipeline to fail during LLM preflight.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "TCGA pipeline: drafting paper" in output
+    assert "Pipeline summary written to" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "llm_preflight"
+    assert summary["next_command"] == "paper-agent llm-doctor"
+    assert any("LLM API key" in item for item in summary["missing_inputs"])
+
+
 def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "sys.argv",

@@ -393,9 +393,9 @@ be reused.
 If result CSV artifacts are not present yet, add `--write-artifact-template` to
 write `tcga_main_results.csv`, `tcga_ablation.csv`, `tcga_sensitivity.csv`,
 `tcga_stats.csv`, and `EXPORT_CONTRACT.md`, then stop before drafting. Fill the
-templates with real trained-model outputs and rerun the pipeline. Early pipeline
-stops also write `RUN_SUMMARY.json` under `--output-dir` with the current phase,
-blocking items, missing inputs, and next command.
+templates with real trained-model outputs and rerun the pipeline. Pipeline stops
+before or during doctor/draft also write `RUN_SUMMARY.json` under `--output-dir`
+with the current phase, blocking items, missing inputs, and next command.
 
 When `draft` writes `--output` or `--summary`, it also writes a Markdown
 acceptance report by default: next to the summary when `--summary` is provided,
