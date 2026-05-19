@@ -709,6 +709,69 @@ def main() -> None:
     _add_experiment_contract_options(llm_draft)
     _add_experiment_provenance_options(llm_draft)
     _add_experiment_artifact_consistency_options(llm_draft)
+    paper_smoke = sub.add_parser(
+        "paper-e2e-smoke",
+        help="Run explicit code+baseline+venue+results input-to-paper smoke test.",
+    )
+    paper_smoke.add_argument("--project-name", default="")
+    paper_smoke.add_argument(
+        "--baseline-pdf",
+        required=True,
+        help="Baseline PDF path or directory containing a PDF.",
+    )
+    paper_smoke.add_argument("--code-path", required=True, help="Project code directory.")
+    paper_smoke.add_argument(
+        "--experiment-results",
+        required=True,
+        help="Markdown/CSV/text experiment results file.",
+    )
+    paper_smoke.add_argument("--target-venue", required=True, help="Target journal or conference.")
+    paper_smoke.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
+    paper_smoke.add_argument("--output-dir", default="outputs/paper-e2e-smoke")
+    paper_smoke.add_argument("--zip", default="outputs/paper-e2e-smoke-overleaf.zip")
+    paper_smoke.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    paper_smoke.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    paper_smoke_network = paper_smoke.add_mutually_exclusive_group()
+    paper_smoke_network.add_argument(
+        "--online",
+        action="store_true",
+        help="Allow template/reference/related-work network calls.",
+    )
+    paper_smoke_network.add_argument(
+        "--offline",
+        action="store_true",
+        help="Disable template/reference/related-work network calls.",
+    )
+    paper_smoke.add_argument(
+        "--require-llm",
+        action="store_true",
+        help="Require configured live LLM preflight and section generation.",
+    )
+    paper_smoke.add_argument(
+        "--min-llm-sections",
+        type=int,
+        default=0,
+        help="Fail unless at least this many sections are written by the LLM.",
+    )
+    paper_smoke.add_argument(
+        "--include-llm-self-review",
+        action="store_true",
+        help="Require the final LLM self-review pass. Usually pair with --require-llm.",
+    )
+    paper_smoke.add_argument(
+        "--compile-latex",
+        action="store_true",
+        help="Run the local LaTeX compiler during submission validation.",
+    )
+    paper_smoke.add_argument(
+        "--strict-results",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Validate the experiment result file strictly before generation.",
+    )
+    _add_experiment_contract_options(paper_smoke)
+    _add_experiment_provenance_options(paper_smoke)
+    _add_experiment_artifact_consistency_options(paper_smoke)
     experiment_template = sub.add_parser(
         "experiment-template",
         help="Write a fill-in Markdown template for real experiment result files.",
@@ -945,6 +1008,8 @@ def main() -> None:
         _run_latex_doctor()
     elif args.command == "llm-draft-smoke":
         _run_llm_draft_smoke(args)
+    elif args.command == "paper-e2e-smoke":
+        _run_paper_e2e_smoke(args)
 
 
 def _resolve_baseline_pdf(path_value: str) -> Path:
@@ -4896,6 +4961,182 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     if args.include_llm_self_review and _llm_self_review_mode(state) != "llm":
         raise SystemExit("LLM draft smoke failed: LLM self-review did not complete in llm mode.")
     print("LLM draft smoke passed.")
+
+
+def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
+    if args.include_llm_self_review and not args.require_llm:
+        raise SystemExit(
+            "paper-e2e-smoke requires --require-llm when --include-llm-self-review is set."
+        )
+    if args.min_llm_sections and not args.require_llm:
+        raise SystemExit(
+            "paper-e2e-smoke requires --require-llm when --min-llm-sections is greater than zero."
+        )
+
+    network_mode = _configure_network_mode(args, default_offline=True)
+    compile_latex_requested = _configure_latex_compile(args)
+    baseline_pdf = _resolve_baseline_pdf(args.baseline_pdf)
+    code_path = _resolve_project_relative_path(args.code_path)
+    if not code_path.is_dir():
+        raise SystemExit(f"Project code directory not found: {code_path}")
+
+    experiment_path = _resolve_project_relative_path(args.experiment_results)
+    if not experiment_path.is_file():
+        raise SystemExit(f"Experiment results file not found: {experiment_path}")
+    experiment_results = experiment_path.read_text(encoding="utf-8")
+    result_preflight = _validate_results_text(
+        experiment_path,
+        experiment_results,
+        **_experiment_contract_kwargs(args),
+        **_experiment_provenance_kwargs(args),
+        **_experiment_artifact_consistency_kwargs(args),
+    )
+    if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
+        raise SystemExit("paper-e2e-smoke failed: experiment result validation failed in strict mode.")
+
+    runtime_llm_config = load_llm_config()
+    llm_client = None
+    llm_mode = "disabled"
+    if args.require_llm:
+        os.environ["PAPER_AGENT_DISABLE_LLM"] = "0"
+        runtime_llm_config = load_llm_config()
+        if not runtime_llm_config.configured:
+            raise SystemExit(
+                "paper-e2e-smoke requires a configured LLM. Set DEEPSEEK_API_KEY or "
+                "OPENAI_API_KEY and TEXT_MODEL, or run without --require-llm for a deterministic smoke."
+            )
+        llm_client = LLMClient(runtime_llm_config)
+        _llm_preflight_check(llm_client, runtime_llm_config, context="paper-e2e-smoke")
+        llm_mode = "required"
+    else:
+        os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
+        runtime_llm_config = load_llm_config()
+
+    output_dir = Path(args.output_dir)
+    project_name = args.project_name or _default_project_name(output_dir)
+    request = PaperRequest(
+        project_name=project_name,
+        target_venue=args.target_venue,
+        baseline_pdf_path=str(baseline_pdf),
+        code_path=str(code_path),
+        template_zip_path=args.template_zip or None,
+        template_dir_path=args.template_dir or None,
+        experiment_results=experiment_results,
+        keywords=list(args.keyword or []),
+        skip_llm_self_review=not args.include_llm_self_review,
+    )
+    state = PaperWorkflow(llm_client=llm_client).run(request)
+    _record_runtime_modes(
+        state,
+        network_mode=network_mode,
+        llm_mode=llm_mode,
+        compile_latex_requested=compile_latex_requested,
+        min_llm_sections=args.min_llm_sections if args.require_llm else 0,
+        llm_config=runtime_llm_config,
+    )
+    artifacts = state.setdefault("artifacts", {})
+    artifacts["experiment_results_source"] = "file"
+    artifacts["experiment_results_path"] = str(experiment_path)
+    artifacts["paper_e2e_smoke_inputs"] = {
+        "baseline_pdf": str(baseline_pdf),
+        "code_path": str(code_path),
+        "experiment_results": str(experiment_path),
+        "target_venue": args.target_venue,
+    }
+    _record_result_preflight(state, result_preflight)
+    SubmissionReadinessAgent().run(state)
+    DraftReportAgent().run(state)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    markdown_path = output_dir / "draft.md"
+    markdown_path.write_text(state["final_markdown"], encoding="utf-8")
+    print(f"Markdown written to {markdown_path}")
+
+    zip_path = Path(args.zip) if args.zip else None
+    if zip_path:
+        zip_path = _write_latex_zip_and_refresh(state, zip_path)
+        print(f"Overleaf zip written to {zip_path}")
+
+    summary = _build_run_summary(state, markdown_path)
+    acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    summary["outputs"]["acceptance_report_path"] = str(acceptance_report_path)
+    summary["smoke_contract"] = _paper_e2e_smoke_contract(
+        args,
+        baseline_pdf=baseline_pdf,
+        code_path=code_path,
+        experiment_path=experiment_path,
+        markdown_path=markdown_path,
+        summary_path=output_dir / "RUN_SUMMARY.json",
+        acceptance_report_path=acceptance_report_path,
+        zip_path=zip_path,
+        result_preflight=result_preflight,
+        llm_mode=llm_mode,
+    )
+    summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
+    _write_acceptance_report(
+        summary,
+        acceptance_report_path,
+        min_llm_sections=args.min_llm_sections if args.require_llm else 0,
+        require_llm_self_review=args.include_llm_self_review,
+    )
+    print(f"Run summary written to {summary_path}")
+    print(f"Acceptance report written to {acceptance_report_path}")
+
+    successes = artifacts.get("section_writer_llm_successes", [])
+    print(f"Input baseline PDF: {baseline_pdf}")
+    print(f"Input code path: {code_path}")
+    print(f"Input experiment results: {experiment_path}")
+    print(f"Target venue: {args.target_venue}")
+    print(f"LLM mode: {llm_mode}")
+    print(f"LLM section successes: {len(successes)} ({', '.join(successes) or 'none'})")
+    if len(successes) < (args.min_llm_sections if args.require_llm else 0):
+        raise SystemExit(
+            f"paper-e2e-smoke failed: expected at least {args.min_llm_sections} "
+            f"LLM-written sections, got {len(successes)}."
+        )
+    if args.include_llm_self_review and _llm_self_review_mode(state) != "llm":
+        raise SystemExit("paper-e2e-smoke failed: LLM self-review did not complete in llm mode.")
+    print("paper-e2e-smoke passed.")
+
+
+def _paper_e2e_smoke_contract(
+    args: argparse.Namespace,
+    *,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    markdown_path: Path,
+    summary_path: Path,
+    acceptance_report_path: Path,
+    zip_path: Path | None,
+    result_preflight: dict[str, object],
+    llm_mode: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": "paper-e2e-smoke/v1",
+        "status": "pass",
+        "required_inputs": {
+            "baseline_pdf": str(baseline_pdf),
+            "code_path": str(code_path),
+            "experiment_results": str(experiment_path),
+            "target_venue": args.target_venue,
+        },
+        "outputs": {
+            "markdown": str(markdown_path),
+            "summary": str(summary_path),
+            "acceptance_report": str(acceptance_report_path),
+            "zip": str(zip_path or ""),
+        },
+        "checks": {
+            "baseline_pdf_exists": baseline_pdf.is_file(),
+            "code_path_exists": code_path.is_dir(),
+            "experiment_results_exists": experiment_path.is_file(),
+            "strict_results": bool(args.strict_results),
+            "strict_results_accepted": _validated_results_are_strictly_acceptable(result_preflight),
+            "llm_mode": llm_mode,
+            "min_llm_sections": int(args.min_llm_sections if args.require_llm else 0),
+        },
+    }
 
 
 def _resolve_project_relative_path(path_value: str) -> Path:

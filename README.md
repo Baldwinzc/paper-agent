@@ -207,6 +207,29 @@ The bundled `examples\hyper_protosurv_mock_experiments.md` file is synthetic
 TCGA-style data for this smoke path only; replace it with real experiment tables
 for any research draft.
 
+For the explicit acceptance contract used during development, run the generic
+input-to-paper smoke with the same four inputs a user supplies:
+
+```powershell
+python -m paper_agent.cli paper-e2e-smoke `
+  --baseline-pdf D:\code\agent\example\baseline `
+  --code-path D:\code\agent\example\code\hyper-protosurv `
+  --experiment-results D:\code\agent\example\results\tcga_results.md `
+  --target-venue TPAMI `
+  --output-dir outputs\paper-e2e-smoke `
+  --zip outputs\paper-e2e-smoke-overleaf.zip `
+  --require-llm `
+  --min-llm-sections 4
+```
+
+`paper-e2e-smoke` always writes `draft.md`, `RUN_SUMMARY.json`, and
+`ACCEPTANCE_REPORT.md`; when `--zip` is set it also writes an Overleaf-ready
+package. It is deterministic by default so it can run without provider quota;
+add `--require-llm` to make the smoke fail unless the configured model responds
+and writes the requested minimum number of sections. Its summary includes a
+`smoke_contract` recording the exact baseline PDF, code path, target venue,
+experiment-result file, output paths, strict-result status, and LLM mode.
+
 ## Acceptance Flow
 
 Every meaningful paper-agent test should exercise the full paper-writing path:

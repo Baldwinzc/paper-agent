@@ -7595,6 +7595,145 @@ def test_cli_llm_draft_smoke_strict_results_fails_before_workflow(monkeypatch, t
     assert "Experiment result contract: invalid" in output
 
 
+def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_path, capsys):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "results.md"
+    latex_dir = tmp_path / "latex"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| ProtoSurv baseline | 0.646 |\n"
+        "| Hyper-ProtoSurv ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    def fake_write_latex_zip_and_refresh(state, zip_path):
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("main.tex", "\\documentclass{article}")
+        state["latex_zip_path"] = zip_path
+        return zip_path
+
+    output_dir = tmp_path / "paper-smoke"
+    zip_path = tmp_path / "paper-smoke.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_write_latex_zip_and_refresh", fake_write_latex_zip_and_refresh)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--no-strict-results",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "paper-e2e-smoke passed." in output
+    assert captured["llm_client"] is None
+    assert captured["request"].baseline_pdf_path == str(baseline_pdf)
+    assert captured["request"].code_path == str(code_dir)
+    assert captured["request"].target_venue == "TPAMI"
+    assert (output_dir / "draft.md").is_file()
+    assert (output_dir / "ACCEPTANCE_REPORT.md").is_file()
+    assert zip_path.exists()
+    assert summary["smoke_contract"]["schema_version"] == "paper-e2e-smoke/v1"
+    assert summary["smoke_contract"]["required_inputs"]["baseline_pdf"] == str(baseline_pdf)
+    assert summary["smoke_contract"]["required_inputs"]["code_path"] == str(code_dir)
+    assert summary["smoke_contract"]["required_inputs"]["experiment_results"] == str(experiment_path)
+    assert summary["smoke_contract"]["required_inputs"]["target_venue"] == "TPAMI"
+    assert summary["smoke_contract"]["checks"]["llm_mode"] == "disabled"
+    assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
+
+
+def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "tcga_results_template.md"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not start after strict result preflight failure.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "paper-e2e-smoke failed: experiment result validation failed in strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected paper-e2e-smoke to fail on TODO result template.")
+    output = capsys.readouterr().out
+    assert "Experiment result contract: invalid" in output
+
+
 def test_llm_self_review_records_bad_json_error(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
     state = {
