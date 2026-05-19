@@ -4580,6 +4580,133 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
     assert "Overall: FAIL" in output
 
 
+def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    logs_dir = example_root / "results" / "logs"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (logs_dir / "tcga_main_wide.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index,LGG C-index,LUAD C-index,UCEC C-index",
+                "ProtoSurv baseline,0.646,0.669,0.724,0.636,0.658",
+                "Hyper-ProtoSurv ours,0.671,0.691,0.746,0.661,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_ablation_wide.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.690",
+                "w/o reconstruction loss,0.672",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_sensitivity_wide.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.687",
+                "1.0,0.690",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_stats.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "preflight.json"
+    monkeypatch.setattr(
+        cli_module,
+        "_latex_toolchain_status",
+        lambda: {"available": True, "preferred_tool": "tectonic.exe", "install_hint": ""},
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-preflight",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+            "--submission-grade",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "TCGA preflight:" in output
+    assert "- Artifact main: PASS" in output
+    assert "- Artifact ablation: PASS" in output
+    assert "- Artifact sensitivity: PASS" in output
+    assert "- Artifact stats: PASS" in output
+    assert "- Experiment results: WARN" in output
+    assert "tcga-pipeline can generate it" in output
+    assert "- LLM static config: PASS" in output
+    assert "- LaTeX compiler: PASS" in output
+    assert "Overall: PASS" in output
+    assert "Preflight summary written" in output
+    assert summary["status"] == "pass"
+    assert summary["submission_grade"] is True
+    assert not summary["blocking_items"]
+
+
+def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        cli_module,
+        "_latex_toolchain_status",
+        lambda: {"available": True, "preferred_tool": "tectonic.exe", "install_hint": ""},
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-preflight",
+            "--example-root",
+            str(example_root),
+            "--disable-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA preflight failed" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA preflight to fail without results or artifacts.")
+
+    output = capsys.readouterr().out
+    assert "- Artifact directory: WARN" in output
+    assert "- Experiment results: FAIL" in output
+    assert "missing and no complete artifact set is available" in output
+    assert "Overall: FAIL" in output
+
+
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()

@@ -23,6 +23,19 @@ If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 
 ```powershell
+python -m paper_agent.cli tcga-preflight `
+  --example-root D:\code\agent\example `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --summary outputs\tcga-preflight.json `
+  --submission-grade
+```
+
+`tcga-preflight` is a read-only report for real-run readiness. It checks the
+baseline PDF, code directory, result artifacts, existing or generatable result
+Markdown, LLM configuration, and LaTeX compiler requirements. The JSON summary
+contains every PASS/WARN/FAIL item and blocking item.
+
+```powershell
 python -m paper_agent.cli tcga-artifacts-doctor `
   --artifacts-dir D:\code\agent\example\results\logs
 ```

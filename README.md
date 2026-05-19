@@ -264,6 +264,19 @@ If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 
 ```powershell
+paper-agent tcga-preflight `
+  --example-root D:\code\agent\example `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --summary outputs\tcga-preflight.json `
+  --submission-grade
+```
+
+`tcga-preflight` is the read-only readiness report. It checks baseline/code
+paths, result artifacts, an existing or generatable `tcga_results.md`, LLM
+configuration, and the local LaTeX compiler when submission-grade readiness is
+requested.
+
+```powershell
 paper-agent tcga-artifacts-doctor `
   --artifacts-dir D:\code\agent\example\results\logs
 ```

@@ -307,6 +307,41 @@ def main() -> None:
     tcga_artifacts_doctor.add_argument("--metric", default="C-index")
     tcga_artifacts_doctor.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
     _add_experiment_contract_options(tcga_artifacts_doctor)
+    tcga_preflight = sub.add_parser(
+        "tcga-preflight",
+        help="Run one read-only preflight report for TCGA paper generation readiness.",
+    )
+    tcga_preflight.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_preflight.add_argument(
+        "--experiment-results",
+        default="",
+        help="TCGA result file. Defaults to example-root/results/tcga_results.md.",
+    )
+    tcga_preflight.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Directory to scan recursively for TCGA result CSV artifacts.",
+    )
+    tcga_preflight.add_argument("--main-csv", default="", help="Main result CSV; wide or long format.")
+    tcga_preflight.add_argument("--ablation-csv", default="", help="Optional ablation CSV.")
+    tcga_preflight.add_argument("--sensitivity-csv", default="", help="Optional sensitivity CSV.")
+    tcga_preflight.add_argument("--stats-csv", default="", help="Optional statistical-test CSV.")
+    tcga_preflight.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_preflight.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_preflight.add_argument("--metric", default="C-index")
+    tcga_preflight.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    tcga_preflight.add_argument("--summary", default="", help="Optional JSON preflight summary path.")
+    tcga_preflight.add_argument("--live-llm", action="store_true", help="Call the configured LLM during preflight.")
+    tcga_preflight.add_argument("--disable-llm", action="store_true", help="Plan a deterministic local run without LLM calls.")
+    tcga_preflight.add_argument("--compile-latex", action="store_true", help="Require a local LaTeX compiler.")
+    tcga_preflight.add_argument("--submission-grade", action="store_true", help="Require submission-grade readiness.")
+    tcga_preflight_network = tcga_preflight.add_mutually_exclusive_group()
+    tcga_preflight_network.add_argument("--online", action="store_true", help="Plan online template/reference calls.")
+    tcga_preflight_network.add_argument("--offline", action="store_true", help="Plan offline template/reference calls.")
+    _add_experiment_contract_options(tcga_preflight)
+    _add_experiment_quality_options(tcga_preflight)
+    _add_experiment_provenance_options(tcga_preflight)
+    _add_experiment_artifact_consistency_options(tcga_preflight)
     tcga_draft = sub.add_parser(
         "tcga-draft",
         help="Run the local Hyper-ProtoSurv TCGA paper path with a real result file.",
@@ -713,6 +748,8 @@ def main() -> None:
         _run_tcga_results_from_artifacts(args)
     elif args.command == "tcga-artifacts-doctor":
         _run_tcga_artifacts_doctor(args)
+    elif args.command == "tcga-preflight":
+        _run_tcga_preflight(args)
     elif args.command == "tcga-draft":
         _run_tcga_draft(args)
     elif args.command == "tcga-pipeline":
@@ -1366,6 +1403,256 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
         print(f"Ready command: paper-agent tcga-results-from-artifacts --artifacts-dir {artifact_dir} --strict")
     else:
         print("Ready command: paper-agent tcga-results-from-artifacts --main-csv <path> --strict")
+
+
+def _run_tcga_preflight(args: argparse.Namespace) -> None:
+    checks: list[dict[str, object]] = []
+    blocking: list[str] = []
+    submission_grade = bool(args.submission_grade)
+
+    print("TCGA preflight:")
+    if submission_grade and args.offline:
+        _add_preflight_check(
+            checks,
+            "Network mode",
+            "FAIL",
+            "submission-grade requires online mode; remove --offline",
+            blocking,
+        )
+    else:
+        network_mode = "online" if args.online or submission_grade else "offline" if args.offline else "environment/default"
+        _add_preflight_check(checks, "Network mode", "PASS", network_mode, blocking, blocking_item=False)
+
+    example_root = Path(args.example_root)
+    experiment_path = _tcga_result_path(args, example_root)
+    _add_preflight_check(
+        checks,
+        "Example root",
+        "PASS" if example_root.exists() else "FAIL",
+        str(example_root),
+        blocking,
+        blocking_item=not example_root.exists(),
+    )
+    try:
+        baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
+        _add_preflight_check(checks, "Baseline PDF", "PASS", str(baseline_pdf), blocking, blocking_item=False)
+    except SystemExit as exc:
+        _add_preflight_check(checks, "Baseline PDF", "FAIL", str(exc), blocking)
+
+    code_path = example_root / "code" / "hyper-protosurv"
+    _add_preflight_check(
+        checks,
+        "Code path",
+        "PASS" if code_path.is_dir() else "FAIL",
+        str(code_path),
+        blocking,
+        blocking_item=not code_path.is_dir(),
+    )
+
+    artifact_ready = _record_tcga_artifact_preflight(args, example_root, checks, blocking)
+
+    require_provenance = bool(args.require_provenance or submission_grade)
+    require_artifact_consistency = bool(args.require_artifact_consistency or submission_grade)
+    result_summary = None
+    if experiment_path.is_file():
+        result_summary = _validate_results_file(
+            experiment_path,
+            **_experiment_contract_kwargs(args),
+            **_experiment_quality_kwargs(args, tcga_defaults=True),
+            require_provenance=require_provenance,
+            require_artifact_consistency=require_artifact_consistency,
+        )
+        result_ok = _validated_results_are_strictly_acceptable(result_summary)
+        _add_preflight_check(
+            checks,
+            "Experiment results",
+            "PASS" if result_ok else "FAIL",
+            (
+                f"{experiment_path}; contract={result_summary.get('experiment_contract', {}).get('status', 'unknown')}; "
+                f"quality={result_summary.get('experiment_quality', {}).get('status', 'unknown')}; "
+                f"provenance={result_summary.get('experiment_provenance', {}).get('status', 'unknown')}; "
+                f"artifact_consistency={result_summary.get('experiment_artifact_consistency', {}).get('status', 'unknown')}"
+            ),
+            blocking,
+            blocking_item=not result_ok,
+        )
+    else:
+        status = "WARN" if artifact_ready else "FAIL"
+        detail = (
+            f"{experiment_path} missing; tcga-pipeline can generate it from detected artifacts"
+            if artifact_ready
+            else f"{experiment_path} missing and no complete artifact set is available"
+        )
+        _add_preflight_check(checks, "Experiment results", status, detail, blocking, blocking_item=not artifact_ready)
+
+    llm_config = load_llm_config()
+    llm_required = bool(submission_grade or not args.disable_llm)
+    if args.disable_llm and not submission_grade:
+        _add_preflight_check(checks, "LLM static config", "PASS", "disabled by --disable-llm", blocking, blocking_item=False)
+    else:
+        _add_preflight_check(
+            checks,
+            "LLM static config",
+            "PASS" if llm_config.configured else "FAIL",
+            _llm_config_label(llm_config),
+            blocking,
+            blocking_item=llm_required and not llm_config.configured,
+        )
+    if args.live_llm:
+        if not llm_config.configured:
+            _add_preflight_check(checks, "LLM live preflight", "FAIL", "LLM is not configured", blocking)
+        else:
+            try:
+                _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA preflight")
+                _add_preflight_check(checks, "LLM live preflight", "PASS", _llm_config_label(llm_config), blocking, blocking_item=False)
+            except SystemExit as exc:
+                _add_preflight_check(checks, "LLM live preflight", "FAIL", str(exc), blocking)
+    else:
+        _add_preflight_check(checks, "LLM live preflight", "SKIP", "pass --live-llm to call the provider", blocking, blocking_item=False)
+
+    latex_status = _latex_toolchain_status()
+    latex_required = bool(args.compile_latex or submission_grade)
+    _add_preflight_check(
+        checks,
+        "LaTeX compiler",
+        "PASS" if latex_status["available"] else "FAIL" if latex_required else "WARN",
+        str(latex_status.get("preferred_tool") or latex_status.get("install_hint")),
+        blocking,
+        blocking_item=latex_required and not latex_status["available"],
+    )
+
+    for check in checks:
+        print(f"- {check['name']}: {check['status']} ({check['detail']})")
+    overall = "FAIL" if blocking else "PASS"
+    print(f"Overall: {overall}")
+    if blocking:
+        print("Blocking items:")
+        for item in blocking:
+            print(f"- {item}")
+    else:
+        print("Ready command: paper-agent tcga-pipeline --submission-grade" if submission_grade else "Ready command: paper-agent tcga-pipeline")
+
+    summary = {
+        "status": overall.lower(),
+        "submission_grade": submission_grade,
+        "example_root": str(example_root),
+        "experiment_results": str(experiment_path),
+        "checks": checks,
+        "blocking_items": blocking,
+        "result_validation": result_summary,
+    }
+    if args.summary:
+        summary_path = _write_run_summary_data(summary, Path(args.summary))
+        print(f"Preflight summary written to {summary_path}")
+    if blocking:
+        raise SystemExit("TCGA preflight failed: fix blocking items before running tcga-pipeline.")
+
+
+def _add_preflight_check(
+    checks: list[dict[str, object]],
+    name: str,
+    status: str,
+    detail: str,
+    blocking: list[str],
+    *,
+    blocking_item: bool = True,
+) -> None:
+    record = {"name": name, "status": status, "detail": detail}
+    checks.append(record)
+    if blocking_item and status == "FAIL":
+        blocking.append(f"{name}: {detail}")
+
+
+def _record_tcga_artifact_preflight(
+    args: argparse.Namespace,
+    example_root: Path,
+    checks: list[dict[str, object]],
+    blocking: list[str],
+) -> bool:
+    try:
+        artifact_dir = _tcga_artifact_dir(args, example_root)
+    except SystemExit as exc:
+        _add_preflight_check(checks, "Artifact directory", "FAIL", str(exc), blocking)
+        return False
+    try:
+        explicit_paths = {
+            "main": _resolve_optional_file(args.main_csv, "Main result CSV"),
+            "ablation": _resolve_optional_file(args.ablation_csv, "Ablation CSV"),
+            "sensitivity": _resolve_optional_file(args.sensitivity_csv, "Sensitivity CSV"),
+            "stats": _resolve_optional_file(args.stats_csv, "Statistical-test CSV"),
+        }
+    except SystemExit as exc:
+        _add_preflight_check(checks, "Artifact CSV paths", "FAIL", str(exc), blocking)
+        return False
+
+    detected = (
+        _detect_tcga_artifact_csvs(
+            artifact_dir,
+            method=args.method,
+            baseline=args.baseline,
+            metric=args.metric,
+        )
+        if artifact_dir
+        else {}
+    )
+    has_input = bool(artifact_dir or any(explicit_paths.values()))
+    _add_preflight_check(
+        checks,
+        "Artifact directory",
+        "PASS" if has_input else "WARN",
+        str(artifact_dir or "not provided; pass --artifacts-dir or explicit CSV paths"),
+        blocking,
+        blocking_item=False,
+    )
+    if not has_input:
+        return False
+
+    role_paths = {
+        role: explicit_paths.get(role) or detected.get(role)
+        for role in ("main", "ablation", "sensitivity", "stats")
+    }
+    required_roles = {
+        "main": True,
+        "ablation": bool(args.require_ablation),
+        "sensitivity": bool(args.require_sensitivity),
+        "stats": bool(args.require_statistical_tests),
+    }
+    datasets = list(args.dataset or [])
+    required_ok = True
+    for role in ("main", "ablation", "sensitivity", "stats"):
+        label = f"Artifact {role}"
+        path = role_paths.get(role)
+        required = required_roles[role]
+        if not path:
+            status = "FAIL" if required else "WARN"
+            _add_preflight_check(
+                checks,
+                label,
+                status,
+                f"missing; expected {_tcga_expected_artifact_schema(role)}",
+                blocking,
+                blocking_item=required,
+            )
+            required_ok = required_ok and not required
+            continue
+        diagnostic = _tcga_artifact_role_diagnostic(role, path, args=args, datasets=datasets)
+        detail = str(diagnostic["detail"])
+        issues = "; ".join(str(issue) for issue in diagnostic["issues"])
+        if issues:
+            detail = f"{detail}; {issues}"
+        ok = bool(diagnostic["ok"])
+        _add_preflight_check(
+            checks,
+            label,
+            "PASS" if ok else "FAIL",
+            detail,
+            blocking,
+            blocking_item=required,
+        )
+        required_ok = required_ok and (ok or not required)
+        if role == "main" and diagnostic["datasets"]:
+            datasets = list(diagnostic["datasets"])
+    return required_ok
 
 
 def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
