@@ -7728,10 +7728,24 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
         cli_module.main()
     except SystemExit as exc:
         assert "paper-e2e-smoke failed: experiment result validation failed in strict mode" in str(exc)
+        assert "RUN_SUMMARY.json" in str(exc)
     else:
         raise AssertionError("Expected paper-e2e-smoke to fail on TODO result template.")
     output = capsys.readouterr().out
+    summary_path = tmp_path / "out" / "RUN_SUMMARY.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "Experiment result contract: invalid" in output
+    assert "Run summary written to" in output
+    assert not (tmp_path / "out" / "draft.md").exists()
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "paper_e2e_smoke_preflight"
+    assert summary["smoke_contract"]["schema_version"] == "paper-e2e-smoke/v1"
+    assert summary["smoke_contract"]["status"] == "blocked"
+    assert summary["smoke_contract"]["checks"]["strict_results"] is True
+    assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is False
+    assert summary["smoke_contract"]["checks"]["llm_mode"] == "not_started"
+    assert summary["next_command"].startswith("paper-agent validate-results")
+    assert any("contract:" in item for item in summary["blocking_items"])
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

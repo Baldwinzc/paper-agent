@@ -4975,6 +4975,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
 
     network_mode = _configure_network_mode(args, default_offline=True)
     compile_latex_requested = _configure_latex_compile(args)
+    output_dir = Path(args.output_dir)
     baseline_pdf = _resolve_baseline_pdf(args.baseline_pdf)
     code_path = _resolve_project_relative_path(args.code_path)
     if not code_path.is_dir():
@@ -4992,7 +4993,19 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         **_experiment_artifact_consistency_kwargs(args),
     )
     if args.strict_results and not _validated_results_are_strictly_acceptable(result_preflight):
-        raise SystemExit("paper-e2e-smoke failed: experiment result validation failed in strict mode.")
+        summary_path = _write_paper_e2e_smoke_failure_summary(
+            args,
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            result_preflight=result_preflight,
+            reason="experiment result validation failed in strict mode",
+        )
+        print(f"Run summary written to {summary_path}")
+        raise SystemExit(
+            "paper-e2e-smoke failed: experiment result validation failed in strict mode. "
+            f"Summary: {summary_path}"
+        )
 
     runtime_llm_config = load_llm_config()
     llm_client = None
@@ -5012,7 +5025,6 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
         runtime_llm_config = load_llm_config()
 
-    output_dir = Path(args.output_dir)
     project_name = args.project_name or _default_project_name(output_dir)
     request = PaperRequest(
         project_name=project_name,
@@ -5071,6 +5083,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         zip_path=zip_path,
         result_preflight=result_preflight,
         llm_mode=llm_mode,
+        status="pass",
     )
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
     _write_acceptance_report(
@@ -5111,10 +5124,11 @@ def _paper_e2e_smoke_contract(
     zip_path: Path | None,
     result_preflight: dict[str, object],
     llm_mode: str,
+    status: str = "pass",
 ) -> dict[str, object]:
     return {
         "schema_version": "paper-e2e-smoke/v1",
-        "status": "pass",
+        "status": status,
         "required_inputs": {
             "baseline_pdf": str(baseline_pdf),
             "code_path": str(code_path),
@@ -5137,6 +5151,97 @@ def _paper_e2e_smoke_contract(
             "min_llm_sections": int(args.min_llm_sections if args.require_llm else 0),
         },
     }
+
+
+def _write_paper_e2e_smoke_failure_summary(
+    args: argparse.Namespace,
+    *,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    result_preflight: dict[str, object],
+    reason: str,
+) -> Path:
+    output_dir = Path(args.output_dir)
+    summary_path = output_dir / "RUN_SUMMARY.json"
+    acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    zip_path = Path(args.zip) if args.zip else None
+    blocking_items = _paper_e2e_result_preflight_issues(result_preflight)
+    if not blocking_items:
+        blocking_items = [reason]
+    summary = {
+        "status": "blocked",
+        "pipeline_phase": "paper_e2e_smoke_preflight",
+        "project_name": args.project_name or _default_project_name(output_dir),
+        "target_venue": args.target_venue,
+        "blocking_items": blocking_items,
+        "missing_inputs": [],
+        "next_action": (
+            "Repair the experiment result file until strict checks pass, or rerun with "
+            "--no-strict-results for a toolchain-only smoke."
+        ),
+        "next_command": _paper_e2e_validate_results_command(args, experiment_path),
+        "experiment_evidence": result_preflight.get("experiment_evidence", {}),
+        "experiment_contract": result_preflight.get("experiment_contract", {}),
+        "experiment_quality": result_preflight.get("experiment_quality", {}),
+        "experiment_provenance": result_preflight.get("experiment_provenance", {}),
+        "experiment_artifact_consistency": result_preflight.get(
+            "experiment_artifact_consistency",
+            {},
+        ),
+        "smoke_contract": _paper_e2e_smoke_contract(
+            args,
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            markdown_path=output_dir / "draft.md",
+            summary_path=summary_path,
+            acceptance_report_path=acceptance_report_path,
+            zip_path=zip_path,
+            result_preflight=result_preflight,
+            llm_mode="not_started",
+            status="blocked",
+        ),
+    }
+    return _write_run_summary_data(summary, summary_path)
+
+
+def _paper_e2e_result_preflight_issues(result_preflight: dict[str, object]) -> list[str]:
+    issues: list[str] = []
+    sections = (
+        ("experiment_contract", "contract"),
+        ("experiment_quality", "quality"),
+        ("experiment_provenance", "provenance"),
+        ("experiment_artifact_consistency", "artifact_consistency"),
+    )
+    for section_key, label in sections:
+        section = result_preflight.get(section_key, {})
+        if not isinstance(section, dict):
+            continue
+        for error in section.get("errors", []) or []:
+            issues.append(f"{label}: {error}")
+    if not issues and not _validated_results_are_strictly_acceptable(result_preflight):
+        issues.append("experiment result file did not satisfy strict acceptance checks")
+    return issues
+
+
+def _paper_e2e_validate_results_command(args: argparse.Namespace, experiment_path: Path) -> str:
+    parts = [
+        "paper-agent",
+        "validate-results",
+        "--experiment-results",
+        str(experiment_path),
+        "--strict",
+    ]
+    for flag in ("ablation", "sensitivity", "statistical-tests"):
+        attr = f"require_{flag.replace('-', '_')}"
+        if not bool(getattr(args, attr, True)):
+            parts.append(f"--no-require-{flag}")
+    if getattr(args, "require_provenance", False):
+        parts.append("--require-provenance")
+    if getattr(args, "require_artifact_consistency", False):
+        parts.append("--require-artifact-consistency")
+    return " ".join(_powershell_arg(part) for part in parts)
 
 
 def _resolve_project_relative_path(path_value: str) -> Path:

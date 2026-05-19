@@ -229,6 +229,9 @@ add `--require-llm` to make the smoke fail unless the configured model responds
 and writes the requested minimum number of sections. Its summary includes a
 `smoke_contract` recording the exact baseline PDF, code path, target venue,
 experiment-result file, output paths, strict-result status, and LLM mode.
+If strict result validation fails before drafting, the command still writes
+`RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
+`validate-results --strict` next command.
 
 ## Acceptance Flow
 
