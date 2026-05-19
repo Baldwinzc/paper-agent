@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import statistics
@@ -262,6 +263,25 @@ def main() -> None:
     _add_experiment_quality_options(tcga_doctor)
     _add_experiment_provenance_options(tcga_doctor)
     _add_experiment_artifact_consistency_options(tcga_doctor)
+    tcga_results = sub.add_parser(
+        "tcga-results-from-artifacts",
+        help="Build a TCGA result Markdown file from CSV artifacts and provenance hashes.",
+    )
+    tcga_results.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_results.add_argument("--main-csv", required=True, help="Main result CSV; wide or long format.")
+    tcga_results.add_argument("--ablation-csv", default="", help="Optional ablation CSV.")
+    tcga_results.add_argument("--sensitivity-csv", default="", help="Optional sensitivity CSV.")
+    tcga_results.add_argument("--stats-csv", default="", help="Optional statistical-test CSV.")
+    tcga_results.add_argument("--output", default="", help="Output Markdown path. Defaults to example-root/results/tcga_results.md.")
+    tcga_results.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_results.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_results.add_argument("--metric", default="C-index")
+    tcga_results.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    tcga_results.add_argument(
+        "--strict",
+        action="store_true",
+        help="Validate the generated file with provenance and artifact-consistency requirements.",
+    )
     tcga_draft = sub.add_parser(
         "tcga-draft",
         help="Run the local Hyper-ProtoSurv TCGA paper path with a real result file.",
@@ -574,6 +594,8 @@ def main() -> None:
         _run_hyper_protosurv_sample(args)
     elif args.command == "tcga-doctor":
         _run_tcga_doctor(args)
+    elif args.command == "tcga-results-from-artifacts":
+        _run_tcga_results_from_artifacts(args)
     elif args.command == "tcga-draft":
         _run_tcga_draft(args)
     elif args.command == "llm-ping":
@@ -1058,10 +1080,336 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
         print("Ready command: paper-agent tcga-draft")
 
 
+def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
+    example_root = Path(args.example_root)
+    output_path = _resolve_project_relative_path(args.output) if args.output else example_root / "results" / "tcga_results.md"
+    main_csv = _resolve_required_file(args.main_csv, "Main result CSV")
+    ablation_csv = _resolve_optional_file(args.ablation_csv, "Ablation CSV")
+    sensitivity_csv = _resolve_optional_file(args.sensitivity_csv, "Sensitivity CSV")
+    stats_csv = _resolve_optional_file(args.stats_csv, "Statistical-test CSV")
+
+    main_rows = _read_csv_dicts(main_csv)
+    datasets = args.dataset or _detect_result_datasets(main_rows, metric=args.metric)
+    if not datasets:
+        raise SystemExit("No datasets detected. Pass --dataset or use wide headers such as `BLCA C-index`.")
+
+    main_table = _tcga_main_result_table(
+        main_rows,
+        datasets=datasets,
+        metric=args.metric,
+        method=args.method,
+        baseline=args.baseline,
+    )
+    ablation_table = (
+        _tcga_single_value_table(
+            _read_csv_dicts(ablation_csv),
+            label_column_candidates=("variant", "method"),
+            value_column_hint=args.metric,
+            table_label="Variant",
+        )
+        if ablation_csv
+        else []
+    )
+    sensitivity_table = (
+        _tcga_single_value_table(
+            _read_csv_dicts(sensitivity_csv),
+            label_column_candidates=("lambda_rec", "parameter_value", "value_name"),
+            value_column_hint=args.metric,
+            table_label="lambda_rec",
+        )
+        if sensitivity_csv
+        else []
+    )
+    stats_table = _tcga_stats_table(_read_csv_dicts(stats_csv)) if stats_csv else []
+    provenance_sources = [
+        ("Main result CSV", main_csv, "source values for main result table"),
+        *(
+            [("Ablation CSV", ablation_csv, "source values for ablation table")]
+            if ablation_csv
+            else []
+        ),
+        *(
+            [("Sensitivity CSV", sensitivity_csv, "source values for sensitivity table")]
+            if sensitivity_csv
+            else []
+        ),
+        *(
+            [("Statistical CSV", stats_csv, "source values for statistical tests")]
+            if stats_csv
+            else []
+        ),
+    ]
+    markdown = _render_tcga_results_markdown(
+        metric=args.metric,
+        datasets=datasets,
+        main_table=main_table,
+        ablation_table=ablation_table,
+        sensitivity_table=sensitivity_table,
+        stats_table=stats_table,
+        provenance_sources=provenance_sources,
+        output_path=output_path,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(markdown, encoding="utf-8")
+    print(f"TCGA result file written to {output_path}")
+    print(f"Main datasets: {', '.join(datasets)}")
+    print(f"Provenance artifacts: {len(provenance_sources)}")
+
+    if args.strict:
+        summary = _validate_results_file(
+            output_path,
+            **_experiment_contract_kwargs(args),
+            expected_datasets=list(datasets),
+            expected_metrics=[args.metric],
+            expected_method=args.method,
+            expected_baseline=args.baseline,
+            require_provenance=True,
+            require_artifact_consistency=True,
+        )
+        if not _validated_results_are_strictly_acceptable(summary):
+            raise SystemExit("Generated TCGA result file failed strict validation.")
+
+
 def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
     if getattr(args, "experiment_results", ""):
         return _resolve_project_relative_path(args.experiment_results)
     return example_root / "results" / "tcga_results.md"
+
+
+def _resolve_required_file(path_value: str, label: str) -> Path:
+    path = _resolve_project_relative_path(path_value)
+    if not path.is_file():
+        raise SystemExit(f"{label} not found: {path}")
+    return path
+
+
+def _resolve_optional_file(path_value: str, label: str) -> Path | None:
+    if not path_value:
+        return None
+    return _resolve_required_file(path_value, label)
+
+
+def _read_csv_dicts(csv_path: Path) -> list[dict[str, str]]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {str(key or "").strip(): str(value or "").strip() for key, value in row.items()}
+            for row in reader
+        ]
+
+
+def _detect_result_datasets(rows: list[dict[str, str]], *, metric: str) -> list[str]:
+    datasets = []
+    for row in rows:
+        dataset = _csv_get(row, "dataset")
+        if dataset and dataset.lower() != "average" and dataset not in datasets:
+            datasets.append(dataset)
+    if datasets:
+        return datasets
+    metric_norm = _norm_key(metric)
+    for header in rows[0].keys() if rows else []:
+        header_norm = _norm_key(header)
+        if metric_norm and metric_norm in header_norm:
+            dataset = header[: header_norm.find(metric_norm)].strip(" _-/")
+            dataset = dataset or header.replace(metric, "").strip(" _-/")
+            if dataset and dataset not in datasets:
+                datasets.append(dataset)
+    return datasets
+
+
+def _tcga_main_result_table(
+    rows: list[dict[str, str]],
+    *,
+    datasets: list[str],
+    metric: str,
+    method: str,
+    baseline: str,
+) -> list[tuple[str, list[str]]]:
+    table = []
+    missing = []
+    for label in (baseline, method):
+        values = []
+        for dataset in datasets:
+            value = _lookup_result_value(rows, label=label, dataset=dataset, metric=metric)
+            if value is None:
+                missing.append(f"{label} / {dataset} {metric}")
+                values.append("TODO")
+            else:
+                values.append(_format_result_value(value))
+        table.append((label, values))
+    if missing:
+        raise SystemExit("Main result CSV is missing required values: " + "; ".join(missing) + ".")
+    return table
+
+
+def _tcga_single_value_table(
+    rows: list[dict[str, str]],
+    *,
+    label_column_candidates: tuple[str, ...],
+    value_column_hint: str,
+    table_label: str,
+) -> list[tuple[str, str]]:
+    values_by_label: dict[str, list[float]] = {}
+    for row in rows:
+        if not _row_matches_metric(row, value_column_hint):
+            continue
+        label = ""
+        for candidate in label_column_candidates:
+            label = _csv_get(row, candidate)
+            if label:
+                break
+        if not label:
+            continue
+        value = _lookup_row_value(row, value_column_hint)
+        if value is None:
+            continue
+        values_by_label.setdefault(label, []).append(value)
+    table = [
+        (label, _format_result_value(statistics.mean(values)))
+        for label, values in values_by_label.items()
+        if values
+    ]
+    if not table and rows:
+        raise SystemExit(f"Could not parse {table_label} values from CSV.")
+    return table
+
+
+def _tcga_stats_table(rows: list[dict[str, str]]) -> list[tuple[str, str, str, str]]:
+    table = []
+    for row in rows:
+        comparison = _csv_get(row, "comparison")
+        metric = _csv_get(row, "metric") or "C-index"
+        test = _csv_get(row, "test") or "statistical test"
+        p_value = _csv_get(row, "p_value") or _csv_get(row, "p-value") or _csv_get(row, "p")
+        if comparison and p_value:
+            table.append((comparison, metric, test, p_value))
+    if rows and not table:
+        raise SystemExit("Could not parse statistical-test values from CSV.")
+    return table
+
+
+def _lookup_result_value(
+    rows: list[dict[str, str]],
+    *,
+    label: str,
+    dataset: str,
+    metric: str,
+) -> float | None:
+    label_norm = _norm_key(label)
+    dataset_norm = _norm_key(dataset)
+    metric_norm = _norm_key(metric)
+    values = []
+    for row in rows:
+        method = _csv_get(row, "method") or _csv_get(row, "variant")
+        if method and label_norm not in _norm_key(method) and _norm_key(method) not in label_norm:
+            continue
+        row_dataset = _csv_get(row, "dataset")
+        row_metric = _csv_get(row, "metric")
+        if row_dataset and _norm_key(row_dataset) != dataset_norm:
+            continue
+        if row_metric and metric_norm not in _norm_key(row_metric):
+            continue
+        value = _lookup_row_value(row, f"{dataset} {metric}")
+        if value is not None:
+            values.append(value)
+            continue
+        value = _lookup_row_value(row, metric)
+        if value is not None and row_dataset:
+            values.append(value)
+    return statistics.mean(values) if values else None
+
+
+def _lookup_row_value(row: dict[str, str], hint: str) -> float | None:
+    hint_norm = _norm_key(hint)
+    for key, value in row.items():
+        key_norm = _norm_key(key)
+        if key_norm in {"value", "score"} or (hint_norm and hint_norm in key_norm):
+            parsed = _try_float(value)
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _row_matches_metric(row: dict[str, str], metric: str) -> bool:
+    row_metric = _csv_get(row, "metric")
+    return not row_metric or _norm_key(metric) in _norm_key(row_metric)
+
+
+def _csv_get(row: dict[str, str], name: str) -> str:
+    target = _norm_key(name)
+    for key, value in row.items():
+        if _norm_key(key) == target:
+            return value.strip()
+    return ""
+
+
+def _norm_key(text: str) -> str:
+    return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+
+def _try_float(value: str) -> float | None:
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _format_result_value(value: float | None) -> str:
+    if value is None:
+        return "TODO"
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _render_tcga_results_markdown(
+    *,
+    metric: str,
+    datasets: list[str],
+    main_table: list[tuple[str, list[str]]],
+    ablation_table: list[tuple[str, str]],
+    sensitivity_table: list[tuple[str, str]],
+    stats_table: list[tuple[str, str, str, str]],
+    provenance_sources: list[tuple[str, Path, str]],
+    output_path: Path,
+) -> str:
+    lines = [
+        "# Real Experiment Results",
+        "",
+        "Generated from local result artifacts. Verify every value before submission.",
+        "",
+        "## Main Results",
+        "",
+        f"Metric: {metric}. Higher is better.",
+        "",
+        "| Method | " + " | ".join(f"{dataset} {metric}" for dataset in datasets) + " |",
+        "|---|" + "|".join("---:" for _ in datasets) + "|",
+    ]
+    for label, values in main_table:
+        lines.append(f"| {label} | " + " | ".join(values) + " |")
+    if ablation_table:
+        lines.extend(["", "## Ablation Study", "", f"Metric: Average {metric}. Higher is better.", "", f"| Variant | Average {metric} |", "|---|---:|"])
+        lines.extend(f"| {label} | {value} |" for label, value in ablation_table)
+    if sensitivity_table:
+        lines.extend(["", "## Sensitivity Analysis", "", f"Metric: Average {metric}. Higher is better.", "", f"| lambda_rec | Average {metric} |", "|---:|---:|"])
+        lines.extend(f"| {label} | {value} |" for label, value in sensitivity_table)
+    if stats_table:
+        lines.extend(["", "## Statistical Testing", "", "| Comparison | Metric | Test | p-value |", "|---|---|---|---:|"])
+        lines.extend(f"| {comparison} | {metric_name} | {test} | {p_value} |" for comparison, metric_name, test, p_value in stats_table)
+    lines.extend(["", "## Result Provenance", "", "| Artifact | Path | SHA256 | Description |", "|---|---|---|---|"])
+    for name, path, description in provenance_sources:
+        rel_path = _relative_artifact_path(path, output_path.parent)
+        lines.append(f"| {name} | {rel_path} | {_sha256_file(path)} | {description}; seed=see-artifact; fold=see-artifact |")
+    return "\n".join(lines) + "\n"
+
+
+def _relative_artifact_path(path: Path, root: Path) -> str:
+    try:
+        return os.path.relpath(path, root).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _print_doctor_check(name: str, ok: bool, detail: str) -> None:

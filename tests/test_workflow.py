@@ -4167,6 +4167,178 @@ def test_cli_validate_results_matches_wide_csv_artifacts(monkeypatch, tmp_path, 
     assert all(match["wide"] for match in consistency["matches"] if match["role"] != "statistical_test")
 
 
+def test_cli_tcga_results_from_artifacts_writes_strict_file(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    main_csv = logs_dir / "tcga_main_wide.csv"
+    ablation_csv = logs_dir / "tcga_ablation_wide.csv"
+    sensitivity_csv = logs_dir / "tcga_sensitivity_wide.csv"
+    stats_csv = logs_dir / "tcga_stats.csv"
+    main_csv.write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index",
+                "ProtoSurv baseline,0.646,0.669",
+                "Hyper-ProtoSurv ours,0.671,0.691",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ablation_csv.write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.681",
+                "w/o reconstruction loss,0.665",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sensitivity_csv.write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.676",
+                "1.0,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stats_csv.write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "tcga_results.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-from-artifacts",
+            "--main-csv",
+            str(main_csv),
+            "--ablation-csv",
+            str(ablation_csv),
+            "--sensitivity-csv",
+            str(sensitivity_csv),
+            "--stats-csv",
+            str(stats_csv),
+            "--output",
+            str(output_path),
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_text = output_path.read_text(encoding="utf-8")
+    assert "TCGA result file written to" in output
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=9/9; missing=0; mismatched=0; aggregated=0; csv_artifacts=4" in output
+    assert "## Main Results" in result_text
+    assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 |" in result_text
+    assert "## Ablation Study" in result_text
+    assert "## Sensitivity Analysis" in result_text
+    assert "## Statistical Testing" in result_text
+    assert "## Result Provenance" in result_text
+    assert "logs/tcga_main_wide.csv" in result_text
+    assert hashlib.sha256(main_csv.read_bytes()).hexdigest() in result_text
+    assert "TODO" not in result_text
+
+
+def test_cli_tcga_results_from_artifacts_averages_long_fold_csv(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    main_csv = logs_dir / "tcga_main_folds.csv"
+    ablation_csv = logs_dir / "tcga_ablation_folds.csv"
+    sensitivity_csv = logs_dir / "tcga_sensitivity_folds.csv"
+    stats_csv = logs_dir / "tcga_stats.csv"
+    main_csv.write_text(
+        "\n".join(
+            [
+                "method,dataset,metric,fold,seed,value",
+                "ProtoSurv baseline,BLCA,C-index,0,2026,0.640",
+                "ProtoSurv baseline,BLCA,C-index,1,2026,0.652",
+                "Hyper-ProtoSurv ours,BLCA,C-index,0,2026,0.660",
+                "Hyper-ProtoSurv ours,BLCA,C-index,1,2026,0.682",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ablation_csv.write_text(
+        "\n".join(
+            [
+                "method,dataset,metric,fold,seed,value",
+                "Hyper-ProtoSurv ours,Average,C-index,0,2026,0.680",
+                "Hyper-ProtoSurv ours,Average,C-index,1,2026,0.682",
+                "w/o reconstruction loss,Average,C-index,0,2026,0.660",
+                "w/o reconstruction loss,Average,C-index,1,2026,0.670",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    sensitivity_csv.write_text(
+        "\n".join(
+            [
+                "parameter,parameter_value,dataset,metric,fold,seed,value",
+                "lambda_rec,0.5,Average,C-index,0,2026,0.674",
+                "lambda_rec,0.5,Average,C-index,1,2026,0.678",
+                "lambda_rec,1.0,Average,C-index,0,2026,0.680",
+                "lambda_rec,1.0,Average,C-index,1,2026,0.682",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stats_csv.write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "tcga_results.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-from-artifacts",
+            "--main-csv",
+            str(main_csv),
+            "--ablation-csv",
+            str(ablation_csv),
+            "--sensitivity-csv",
+            str(sensitivity_csv),
+            "--stats-csv",
+            str(stats_csv),
+            "--output",
+            str(output_path),
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_text = output_path.read_text(encoding="utf-8")
+    assert "Experiment artifact consistency: complete" in output
+    assert "Artifact consistency coverage: matched=7/7; missing=0; mismatched=0; aggregated=6; csv_artifacts=4" in output
+    assert "| ProtoSurv baseline | 0.646 |" in result_text
+    assert "| Hyper-ProtoSurv ours | 0.671 |" in result_text
+    assert "| w/o reconstruction loss | 0.665 |" in result_text
+    assert "| 0.5 | 0.676 |" in result_text
+
+
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()

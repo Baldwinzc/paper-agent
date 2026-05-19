@@ -260,6 +260,23 @@ Repeated rows for the same method/dataset/metric, for example one row per fold,
 are averaged before comparison.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
+If you already have local result CSV artifacts, generate the paper-facing result
+file and provenance hashes directly:
+
+```powershell
+paper-agent tcga-results-from-artifacts `
+  --main-csv D:\code\agent\example\results\logs\tcga_main.csv `
+  --ablation-csv D:\code\agent\example\results\logs\tcga_ablation.csv `
+  --sensitivity-csv D:\code\agent\example\results\logs\tcga_sensitivity.csv `
+  --stats-csv D:\code\agent\example\results\logs\tcga_stats.csv `
+  --output D:\code\agent\example\results\tcga_results.md `
+  --strict
+```
+
+The generator accepts wide tables such as `method,BLCA C-index,BRCA C-index`
+and long/fold-level tables such as `method,dataset,metric,fold,seed,value`. When
+fold rows repeat the same method/dataset/metric, it writes the mean value and
+then validates the generated Markdown against the source CSV artifacts.
 For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:
 
 ```powershell

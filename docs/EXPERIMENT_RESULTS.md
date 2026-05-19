@@ -19,6 +19,26 @@ and statistical-test tables are reported as contract warnings when absent; keep
 component, robustness, or significance claims out of the draft until those tables
 are supplied.
 
+If the experiment pipeline already exports CSV artifacts, generate the Markdown
+result file instead of copying values by hand:
+
+```powershell
+python -m paper_agent.cli tcga-results-from-artifacts `
+  --main-csv D:\code\agent\example\results\logs\tcga_main.csv `
+  --ablation-csv D:\code\agent\example\results\logs\tcga_ablation.csv `
+  --sensitivity-csv D:\code\agent\example\results\logs\tcga_sensitivity.csv `
+  --stats-csv D:\code\agent\example\results\logs\tcga_stats.csv `
+  --output D:\code\agent\example\results\tcga_results.md `
+  --strict
+```
+
+`tcga-results-from-artifacts` writes the main, ablation, sensitivity,
+statistical-test, and provenance sections, including SHA-256 digests for each
+local artifact. It accepts wide CSV tables and long/fold-level CSV tables. For
+repeated fold rows with the same method, dataset, and metric, it writes the mean
+value and then, with `--strict`, checks that the generated Markdown is supported
+by the source CSV artifacts.
+
 Validate a completed result file before running the full paper workflow:
 
 ```powershell
