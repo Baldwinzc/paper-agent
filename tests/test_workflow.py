@@ -4802,10 +4802,19 @@ def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(m
     assert "- LLM static config: PASS" in output
     assert "- LaTeX compiler: PASS" in output
     assert "Overall: PASS" in output
+    assert "Readiness contract:" in output
     assert "Preflight summary written" in output
     assert summary["status"] == "pass"
     assert summary["submission_grade"] is True
     assert not summary["blocking_items"]
+    assert summary["readiness_contract"]["status"] == "ready"
+    assert summary["readiness_contract"]["ready_for_submission_grade"] is True
+    assert summary["readiness_contract"]["requirements"]["experiment_results"]["status"] == "ready_to_generate"
+    assert summary["readiness_contract"]["requirements"]["result_artifacts"]["status"] == "pass"
+    assert summary["readiness_contract"]["requirements"]["llm"]["status"] == "pass"
+    assert summary["readiness_contract"]["requirements"]["latex"]["status"] == "pass"
+    assert summary["next_actions"][0]["category"] == "pipeline"
+    assert "tcga-pipeline" in summary["next_actions"][0]["command"]
     assert summary["llm"]["provider"] == "deepseek"
     assert summary["llm_live_preflight"]["status"] == "skipped"
 
@@ -4912,6 +4921,7 @@ def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_
     baseline_dir.mkdir(parents=True)
     code_dir.mkdir(parents=True)
     (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    summary_path = tmp_path / "preflight-fail.json"
     monkeypatch.setattr(
         cli_module,
         "_latex_toolchain_status",
@@ -4925,6 +4935,8 @@ def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_
             "--example-root",
             str(example_root),
             "--disable-llm",
+            "--summary",
+            str(summary_path),
         ],
     )
 
@@ -4936,11 +4948,18 @@ def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_
         raise AssertionError("Expected TCGA preflight to fail without results or artifacts.")
 
     output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "- Artifact directory: WARN" in output
     assert "- Experiment results: FAIL" in output
     assert "missing and no complete artifact set is available" in output
     assert "paper-agent tcga-artifact-template --output-dir" in output
     assert "Overall: FAIL" in output
+    assert summary["readiness_contract"]["status"] == "blocked"
+    assert summary["readiness_contract"]["requirements"]["experiment_results"]["status"] == "fail"
+    assert summary["readiness_contract"]["requirements"]["llm"]["status"] == "disabled"
+    assert summary["readiness_contract"]["requirements"]["latex"]["status"] == "pass"
+    assert summary["next_actions"][0]["category"] == "experiment_results"
+    assert "tcga-artifact-template" in summary["next_actions"][0]["command"]
 
 
 def test_cli_validate_results_matches_fold_level_csv_mean(monkeypatch, tmp_path, capsys):

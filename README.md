@@ -360,9 +360,11 @@ paper-agent tcga-preflight `
 `tcga-preflight` is the read-only readiness report. It checks baseline/code
 paths, result artifacts, an existing or generatable `tcga_results.md`, LLM
 configuration, and the local LaTeX compiler when submission-grade readiness is
-requested. When `--live-llm` is used, the JSON summary records live provider
-status, elapsed time, token usage when available, and sanitized failure
-diagnostics.
+requested. The JSON summary includes a structured `readiness_contract` with
+separate baseline, code, result-artifact, experiment-result, LLM, LaTeX, and
+venue/network requirements, plus concrete `next_actions` commands. When
+`--live-llm` is used, the JSON summary records live provider status, elapsed
+time, token usage when available, and sanitized failure diagnostics.
 
 ```powershell
 paper-agent tcga-artifacts-doctor `

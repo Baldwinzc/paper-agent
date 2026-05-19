@@ -2473,6 +2473,20 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
     else:
         print("Ready command: paper-agent tcga-pipeline --submission-grade" if submission_grade else "Ready command: paper-agent tcga-pipeline")
 
+    readiness_contract = _tcga_preflight_readiness_contract(
+        args,
+        example_root,
+        experiment_path,
+        checks,
+        blocking,
+        artifact_ready=artifact_ready,
+        result_summary=result_summary,
+        llm_config=llm_config,
+        llm_live_preflight=llm_live_preflight,
+        latex_status=latex_status,
+    )
+    _print_tcga_preflight_readiness_contract(readiness_contract)
+
     summary = {
         "status": overall.lower(),
         "submission_grade": submission_grade,
@@ -2480,6 +2494,8 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
         "experiment_results": str(experiment_path),
         "checks": checks,
         "blocking_items": blocking,
+        "readiness_contract": readiness_contract,
+        "next_actions": readiness_contract["next_actions"],
         "result_validation": result_summary,
         "llm": _llm_static_summary(llm_config),
         "llm_live_preflight": llm_live_preflight,
@@ -2489,6 +2505,235 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
         print(f"Preflight summary written to {summary_path}")
     if blocking:
         raise SystemExit("TCGA preflight failed: fix blocking items before running tcga-pipeline.")
+
+
+def _tcga_preflight_readiness_contract(
+    args: argparse.Namespace,
+    example_root: Path,
+    experiment_path: Path,
+    checks: list[dict[str, object]],
+    blocking: list[str],
+    *,
+    artifact_ready: bool,
+    result_summary: dict | None,
+    llm_config: LLMConfig,
+    llm_live_preflight: dict[str, object],
+    latex_status: dict[str, object],
+) -> dict[str, object]:
+    submission_grade = bool(args.submission_grade)
+    requirements: dict[str, dict[str, object]] = {}
+
+    def add_requirement(
+        category: str,
+        status: str,
+        detail: str,
+        *,
+        required: bool = True,
+        next_action: str = "",
+        command: str = "",
+    ) -> None:
+        requirements[category] = {
+            "status": status,
+            "required": required,
+            "detail": detail,
+            "next_action": next_action,
+            "command": command,
+        }
+
+    network_check = _preflight_check(checks, "Network mode")
+    network_failed = network_check.get("status") == "FAIL"
+    add_requirement(
+        "venue_network",
+        "fail" if network_failed else "pass",
+        str(network_check.get("detail", "")),
+        required=submission_grade,
+        next_action="Use --online or remove --offline for submission-grade runs." if network_failed else "",
+    )
+
+    baseline_check = _preflight_check(checks, "Baseline PDF")
+    baseline_failed = baseline_check.get("status") == "FAIL"
+    add_requirement(
+        "baseline_pdf",
+        "fail" if baseline_failed else "pass",
+        str(baseline_check.get("detail", "")),
+        next_action=f"Place the baseline PDF under {example_root / 'baseline'}." if baseline_failed else "",
+    )
+
+    code_check = _preflight_check(checks, "Code path")
+    code_failed = code_check.get("status") == "FAIL"
+    add_requirement(
+        "code_path",
+        "fail" if code_failed else "pass",
+        str(code_check.get("detail", "")),
+        next_action=f"Place the project code under {example_root / 'code' / 'hyper-protosurv'}." if code_failed else "",
+    )
+
+    artifact_checks = [
+        check for check in checks if str(check.get("name", "")).startswith("Artifact ")
+    ]
+    artifact_failures = [check for check in artifact_checks if check.get("status") == "FAIL"]
+    artifact_warnings = [check for check in artifact_checks if check.get("status") == "WARN"]
+    artifact_status = "pass" if artifact_ready and not artifact_failures else "fail" if artifact_failures else "warn"
+    add_requirement(
+        "result_artifacts",
+        artifact_status,
+        _tcga_preflight_artifact_detail(artifact_checks),
+        required=not bool(result_summary),
+        next_action="Create or repair real-result CSV artifacts before drafting." if artifact_status == "fail" else "",
+        command=_tcga_artifact_template_command(args, example_root) if artifact_status == "fail" else "",
+    )
+
+    result_check = _preflight_check(checks, "Experiment results")
+    result_status_raw = str(result_check.get("status", "FAIL"))
+    if result_status_raw == "PASS":
+        result_status = "pass"
+        result_next = ""
+        result_command = ""
+    elif result_status_raw == "WARN" and artifact_ready:
+        result_status = "ready_to_generate"
+        result_next = "Run tcga-pipeline to generate the paper-facing result Markdown from artifacts."
+        result_command = _tcga_preflight_pipeline_command(args, example_root, experiment_path)
+    else:
+        result_status = "fail"
+        result_next = "Provide a strict result Markdown file or create repairable result CSV artifacts."
+        result_command = _tcga_artifact_template_command(args, example_root)
+    add_requirement(
+        "experiment_results",
+        result_status,
+        str(result_check.get("detail", "")),
+        next_action=result_next,
+        command=result_command,
+    )
+
+    llm_live_status = str(llm_live_preflight.get("status", "skipped"))
+    llm_required = bool(submission_grade or not args.disable_llm)
+    if args.disable_llm and not submission_grade:
+        llm_status = "disabled"
+        llm_next = ""
+    elif not llm_config.configured and llm_required:
+        llm_status = "fail"
+        llm_next = "Configure an API key and TEXT_MODEL before LLM drafting."
+    elif llm_live_status == "fail":
+        llm_status = "fail"
+        llm_next = "Fix provider quota/configuration or rerun without --live-llm for static-only preflight."
+    else:
+        llm_status = "pass"
+        llm_next = ""
+    add_requirement(
+        "llm",
+        llm_status,
+        f"{_llm_config_label(llm_config)}; live_preflight={llm_live_status}",
+        required=llm_required,
+        next_action=llm_next,
+        command="paper-agent llm-doctor" if llm_status == "fail" else "",
+    )
+
+    latex_required = bool(args.compile_latex or submission_grade)
+    latex_available = bool(latex_status.get("available"))
+    latex_status_value = "pass" if latex_available else "fail" if latex_required else "warn"
+    add_requirement(
+        "latex",
+        latex_status_value,
+        str(latex_status.get("preferred_tool") or latex_status.get("install_hint") or "not found"),
+        required=latex_required,
+        next_action="Install a local LaTeX compiler before submission-grade drafting." if latex_status_value == "fail" else "",
+        command=str(latex_status.get("install_hint", "")) if latex_status_value == "fail" else "",
+    )
+
+    blocking_categories = [
+        category for category, requirement in requirements.items() if requirement["status"] == "fail"
+    ]
+    next_actions = _tcga_preflight_next_actions(requirements)
+    if not blocking_categories:
+        next_actions.append(
+            {
+                "category": "pipeline",
+                "action": "Run the TCGA pipeline with the checked inputs.",
+                "command": _tcga_preflight_pipeline_command(args, example_root, experiment_path),
+            }
+        )
+    return {
+        "status": "blocked" if blocking else "ready",
+        "submission_grade": submission_grade,
+        "ready_for_submission_grade": bool(submission_grade and not blocking),
+        "ready_for_deterministic_draft": bool(not blocking),
+        "blocking_categories": blocking_categories,
+        "requirements": requirements,
+        "next_actions": next_actions,
+        "artifact_warnings": [str(check.get("detail", "")) for check in artifact_warnings],
+    }
+
+
+def _print_tcga_preflight_readiness_contract(contract: dict[str, object]) -> None:
+    print("Readiness contract:")
+    requirements = contract.get("requirements", {})
+    if not isinstance(requirements, dict):
+        return
+    for category, requirement in requirements.items():
+        if not isinstance(requirement, dict):
+            continue
+        print(f"- {category}: {requirement.get('status', 'unknown')} ({requirement.get('detail', '')})")
+
+
+def _preflight_check(checks: list[dict[str, object]], name: str) -> dict[str, object]:
+    for check in checks:
+        if check.get("name") == name:
+            return check
+    return {"name": name, "status": "FAIL", "detail": "not recorded"}
+
+
+def _tcga_preflight_artifact_detail(checks: list[dict[str, object]]) -> str:
+    if not checks:
+        return "no artifact checks were run"
+    parts = []
+    for check in checks:
+        role = str(check.get("name", "Artifact")).replace("Artifact ", "")
+        parts.append(f"{role}={check.get('status', 'unknown')}")
+    return "; ".join(parts)
+
+
+def _tcga_preflight_next_actions(requirements: dict[str, dict[str, object]]) -> list[dict[str, str]]:
+    actions = []
+    for category, requirement in requirements.items():
+        if requirement.get("status") != "fail":
+            continue
+        action = str(requirement.get("next_action", "") or "")
+        command = str(requirement.get("command", "") or "")
+        if action or command:
+            actions.append({"category": category, "action": action, "command": command})
+    return actions
+
+
+def _tcga_preflight_pipeline_command(args: argparse.Namespace, example_root: Path, experiment_path: Path) -> str:
+    parts = ["paper-agent", "tcga-pipeline", "--example-root", str(example_root)]
+    if getattr(args, "artifacts_dir", ""):
+        parts.extend(["--artifacts-dir", str(_tcga_artifact_template_output_dir(args, example_root))])
+    for attr, option in (
+        ("main_csv", "--main-csv"),
+        ("ablation_csv", "--ablation-csv"),
+        ("sensitivity_csv", "--sensitivity-csv"),
+        ("stats_csv", "--stats-csv"),
+    ):
+        value = str(getattr(args, attr, "") or "")
+        if value:
+            parts.extend([option, value])
+    if experiment_path:
+        parts.extend(["--experiment-results", str(experiment_path)])
+    if getattr(args, "target_venue", ""):
+        parts.extend(["--target-venue", str(args.target_venue)])
+    for dataset in getattr(args, "dataset", []) or []:
+        parts.extend(["--dataset", str(dataset)])
+    if getattr(args, "online", False):
+        parts.append("--online")
+    if getattr(args, "offline", False):
+        parts.append("--offline")
+    if getattr(args, "disable_llm", False) and not getattr(args, "submission_grade", False):
+        parts.append("--disable-llm")
+    if getattr(args, "compile_latex", False):
+        parts.append("--compile-latex")
+    if getattr(args, "submission_grade", False):
+        parts.append("--submission-grade")
+    return " ".join(_powershell_arg(part) for part in parts)
 
 
 def _add_preflight_check(
