@@ -532,6 +532,7 @@ def main() -> None:
         action="store_true",
         help="Only print local configuration; do not call the provider.",
     )
+    llm_doctor.add_argument("--summary", default="", help="Optional JSON summary path for provider diagnostics.")
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     sub.add_parser("latex-doctor", help="Check local LaTeX compiler availability and install guidance.")
     llm_draft = sub.add_parser(
@@ -1050,9 +1051,22 @@ def _run_llm_doctor(args: argparse.Namespace) -> None:
 
     if args.no_live:
         print("Live preflight: SKIPPED (--no-live)")
+        _write_llm_doctor_summary_if_requested(
+            args,
+            config,
+            status="pass" if config.configured else "warn",
+            live_status="skipped",
+        )
         return
     if not config.configured:
         print("Live preflight: FAIL")
+        _write_llm_doctor_summary_if_requested(
+            args,
+            config,
+            status="fail",
+            live_status="fail",
+            live_error="LLM doctor failed: no configured API key/model.",
+        )
         raise SystemExit(
             "LLM doctor failed: no configured API key/model. Set DEEPSEEK_API_KEY, "
             "OPENAI_API_KEY, or ARK_API_KEY plus TEXT_MODEL, and ensure PAPER_AGENT_DISABLE_LLM is not enabled."
@@ -1063,8 +1077,79 @@ def _run_llm_doctor(args: argparse.Namespace) -> None:
         _llm_preflight_check(client, config, context="LLM doctor")
     except SystemExit as exc:
         print("Live preflight: FAIL")
+        _write_llm_doctor_summary_if_requested(
+            args,
+            config,
+            status="fail",
+            live_status="fail",
+            live_error=str(exc),
+        )
         raise exc
     print("Live preflight: PASS")
+    _write_llm_doctor_summary_if_requested(
+        args,
+        config,
+        status="pass",
+        live_status="pass",
+    )
+
+
+def _write_llm_doctor_summary_if_requested(
+    args: argparse.Namespace,
+    config: LLMConfig,
+    *,
+    status: str,
+    live_status: str,
+    live_error: str = "",
+) -> Path | None:
+    summary_path = getattr(args, "summary", "")
+    if not summary_path:
+        return None
+    summary = _llm_doctor_summary(
+        config,
+        status=status,
+        live_status=live_status,
+        live_error=live_error,
+    )
+    written = _write_run_summary_data(summary, Path(summary_path))
+    print(f"LLM doctor summary written to {written}")
+    return written
+
+
+def _llm_doctor_summary(
+    config: LLMConfig,
+    *,
+    status: str,
+    live_status: str,
+    live_error: str = "",
+) -> dict[str, object]:
+    metadata = _llm_runtime_metadata(config)
+    llm_summary = {
+        "provider": metadata["runtime_llm_provider"],
+        "model": metadata["runtime_llm_model"],
+        "endpoint_host": metadata["runtime_llm_endpoint_host"],
+        "configured": metadata["runtime_llm_configured"],
+        "api_key_source": _env_source_label(LLM_API_KEY_ENV_VARS),
+        "base_url_source": _env_source_label(LLM_BASE_URL_ENV_VARS, default_label="default"),
+        "model_source": _env_source_label(("TEXT_MODEL",), default_label="default"),
+        "disabled_by_env": _truthy_env("PAPER_AGENT_DISABLE_LLM"),
+        "timeout_seconds": metadata["runtime_llm_timeout_seconds"],
+        "connect_timeout_seconds": config.connect_timeout_seconds,
+        "max_retries": metadata["runtime_llm_max_retries"],
+        "retry_base_seconds": config.retry_base_seconds,
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "thinking": config.thinking,
+        "reasoning_effort": config.reasoning_effort,
+    }
+    live_preflight: dict[str, object] = {"status": live_status}
+    if live_error:
+        live_preflight["diagnostics"] = _llm_failure_diagnostics(config, live_error)
+    return {
+        "status": status,
+        "llm": llm_summary,
+        "live_preflight": live_preflight,
+    }
 
 
 def _env_source_label(names: tuple[str, ...], *, default_label: str = "not set") -> str:

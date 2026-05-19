@@ -6371,26 +6371,40 @@ def test_llm_failure_diagnostics_classifies_and_sanitizes_provider_errors(monkey
     assert "[redacted-api-key]" in diagnostics["raw_error"]
 
 
-def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, capsys):
+def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
     monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
-    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor", "--no-live"])
+    summary_file = tmp_path / "llm-doctor-summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["paper-agent", "llm-doctor", "--no-live", "--summary", str(summary_file)],
+    )
 
     cli_module.main()
 
     output = capsys.readouterr().out
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
     assert "LLM configuration:" in output
     assert "Provider/model: deepseek/deepseek-v4-pro at api.deepseek.com" in output
     assert "API key: configured via DEEPSEEK_API_KEY" in output
     assert "Configured: True" in output
     assert "Live preflight: SKIPPED (--no-live)" in output
+    assert "LLM doctor summary written to" in output
+    assert summary["status"] == "pass"
+    assert summary["llm"]["provider"] == "deepseek"
+    assert summary["llm"]["model"] == "deepseek-v4-pro"
+    assert summary["llm"]["configured"] is True
+    assert summary["llm"]["api_key_source"] == "configured via DEEPSEEK_API_KEY"
+    assert summary["live_preflight"]["status"] == "skipped"
+    assert "diagnostics" not in summary["live_preflight"]
     assert "doctor-secret" not in output
+    assert "doctor-secret" not in json.dumps(summary)
 
 
-def test_cli_llm_doctor_reports_live_failure(monkeypatch, capsys):
+def test_cli_llm_doctor_reports_live_failure(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
     monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
@@ -6405,7 +6419,8 @@ def test_cli_llm_doctor_reports_live_failure(monkeypatch, capsys):
             raise cli_module.LLMError("LLM HTTP 402: Insufficient Balance for doctor-secret")
 
     monkeypatch.setattr(cli_module, "LLMClient", FailingClient)
-    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor"])
+    summary_file = tmp_path / "llm-doctor-live-failure-summary.json"
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor", "--summary", str(summary_file)])
 
     try:
         cli_module.main()
@@ -6417,8 +6432,15 @@ def test_cli_llm_doctor_reports_live_failure(monkeypatch, capsys):
     else:
         raise AssertionError("Expected llm-doctor to fail when live provider preflight fails.")
     output = capsys.readouterr().out
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
     assert "LLM configuration:" in output
     assert "Live preflight: FAIL" in output
+    assert "LLM doctor summary written to" in output
+    assert summary["status"] == "fail"
+    assert summary["live_preflight"]["status"] == "fail"
+    assert summary["live_preflight"]["diagnostics"]["failure_kind"] == "quota"
+    assert summary["live_preflight"]["diagnostics"]["provider"] == "deepseek"
+    assert "doctor-secret" not in json.dumps(summary)
 
 
 def test_cli_tcga_draft_stops_before_workflow_on_llm_preflight_failure(monkeypatch, tmp_path):
