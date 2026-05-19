@@ -952,9 +952,11 @@ def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) 
 
 def _llm_preflight_failure_message(config: LLMConfig, context: str, exc: LLMError) -> str:
     raw = _sanitize_llm_error(str(exc), config)
+    diagnosis = _llm_failure_diagnosis(raw)
+    kind = _llm_failure_kind(raw)
     return (
         f"{context} LLM preflight failed for {_llm_config_label(config)}: "
-        f"{_llm_failure_diagnosis(raw)} Raw provider error: {raw}"
+        f"{diagnosis} Failure kind: {kind}. Raw provider error: {raw}"
     )
 
 
@@ -965,23 +967,62 @@ def _llm_config_label(config: LLMConfig) -> str:
 
 
 def _llm_failure_diagnosis(raw_error: str) -> str:
-    lowered = raw_error.lower()
-    if "http 402" in lowered or "insufficient balance" in lowered or "insufficient_balance" in lowered:
+    kind = _llm_failure_kind(raw_error)
+    if kind == "configuration":
+        return "LLM is not configured. Set an API key and TEXT_MODEL before running generation."
+    if kind == "quota":
         return (
             "provider account balance or quota is insufficient. Recharge/enable billing, "
             "switch to another API key, or change provider/model before running generation."
         )
-    if "http 401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+    if kind == "authentication":
         return "API authentication failed. Check the configured API key and provider base URL."
-    if "http 403" in lowered or "forbidden" in lowered or "permission" in lowered:
+    if kind == "permission":
         return "the API key is not allowed to use this model or endpoint."
-    if "http 404" in lowered or "model_not_found" in lowered or "not found" in lowered:
+    if kind == "model_not_found":
         return "the configured model or endpoint was not found. Check TEXT_MODEL and API base URL."
-    if "timed out" in lowered or "timeout" in lowered:
+    if kind == "timeout":
         return "the provider did not respond before the configured timeout."
-    if "transport error" in lowered or "connection" in lowered:
+    if kind == "transport":
         return "network transport failed before the provider returned a completion."
     return "the provider rejected or failed the health-check request."
+
+
+def _llm_failure_kind(raw_error: str) -> str:
+    lowered = raw_error.lower()
+    if "requires a configured llm" in lowered or "not configured" in lowered or "no configured api key" in lowered:
+        return "configuration"
+    if "http 402" in lowered or "insufficient balance" in lowered or "insufficient_balance" in lowered:
+        return "quota"
+    if "http 401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+        return "authentication"
+    if "http 403" in lowered or "forbidden" in lowered or "permission" in lowered:
+        return "permission"
+    if "http 404" in lowered or "model_not_found" in lowered or "not found" in lowered:
+        return "model_not_found"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "timeout"
+    if "transport error" in lowered or "connection" in lowered:
+        return "transport"
+    return "unknown"
+
+
+def _llm_failure_diagnostics(config: LLMConfig, raw_error: str) -> dict[str, object]:
+    sanitized = _sanitize_llm_error(raw_error, config)
+    metadata = _llm_runtime_metadata(config)
+    return {
+        "failure_kind": _llm_failure_kind(sanitized),
+        "diagnosis": _llm_failure_diagnosis(sanitized),
+        "raw_error": sanitized,
+        "provider": metadata["runtime_llm_provider"],
+        "model": metadata["runtime_llm_model"],
+        "endpoint_host": metadata["runtime_llm_endpoint_host"],
+        "configured": metadata["runtime_llm_configured"],
+        "timeout_seconds": metadata["runtime_llm_timeout_seconds"],
+        "connect_timeout_seconds": config.connect_timeout_seconds,
+        "max_retries": metadata["runtime_llm_max_retries"],
+        "retry_base_seconds": config.retry_base_seconds,
+    }
 
 
 def _sanitize_llm_error(raw_error: str, config: LLMConfig) -> str:
@@ -2633,6 +2674,7 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
             missing_inputs=plan["missing_inputs"],
             next_action=plan["next_action"],
             next_command=plan["next_command"],
+            diagnostics=plan.get("diagnostics"),
         )
         print(f"Pipeline summary written to {summary_path}")
         raise SystemExit(f"{exc} Pipeline summary: {summary_path}") from exc
@@ -2668,6 +2710,7 @@ def _write_tcga_pipeline_status(
     next_action: str,
     next_command: str,
     outputs: dict[str, str] | None = None,
+    diagnostics: dict[str, object] | None = None,
 ) -> Path:
     output_dir = Path(args.output_dir)
     experiment_path = _tcga_result_path(args, example_root)
@@ -2691,6 +2734,7 @@ def _write_tcga_pipeline_status(
         "missing_inputs": missing_inputs,
         "next_action": next_action,
         "next_command": next_command,
+        "diagnostics": diagnostics or {},
         "outputs": outputs or {},
     }
     return _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
@@ -2788,11 +2832,13 @@ def _tcga_pipeline_draft_failure_plan(
 ) -> dict[str, object]:
     lower_message = error_message.lower()
     if "llm" in lower_message and ("preflight" in lower_message or "configured" in lower_message or "quota" in lower_message):
+        llm_config = load_llm_config()
         return {
             "phase": "llm_preflight",
             "missing_inputs": ["Configured LLM API key/model with available provider quota"],
             "next_action": "Fix LLM configuration or provider quota, then rerun tcga-pipeline.",
             "next_command": "paper-agent llm-doctor",
+            "diagnostics": {"llm": _llm_failure_diagnostics(llm_config, error_message)},
         }
     if "latex" in lower_message or "compiler" in lower_message:
         return {

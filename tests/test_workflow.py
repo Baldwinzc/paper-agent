@@ -6287,6 +6287,10 @@ def test_cli_tcga_pipeline_writes_summary_on_draft_llm_failure(monkeypatch, tmp_
     assert summary["pipeline_phase"] == "llm_preflight"
     assert summary["next_command"] == "paper-agent llm-doctor"
     assert any("LLM API key" in item for item in summary["missing_inputs"])
+    assert summary["diagnostics"]["llm"]["failure_kind"] == "configuration"
+    assert summary["diagnostics"]["llm"]["provider"] == "deepseek"
+    assert summary["diagnostics"]["llm"]["model"] == "deepseek-v4-pro"
+    assert summary["diagnostics"]["llm"]["configured"] is False
 
 
 def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
@@ -6329,11 +6333,42 @@ def test_llm_preflight_reports_insufficient_balance_without_api_key():
         message = str(exc)
         assert "TCGA draft LLM preflight failed" in message
         assert "balance or quota is insufficient" in message
+        assert "Failure kind: quota" in message
         assert "deepseek/deepseek-v4-pro" in message
         assert "secret-key" not in message
         assert "[redacted-api-key]" in message
     else:
         raise AssertionError("Expected LLM preflight to fail on provider 402.")
+
+
+def test_llm_failure_diagnostics_classifies_and_sanitizes_provider_errors(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret-key")
+    config = LLMConfig(
+        api_key="secret-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+        timeout_seconds=45,
+        connect_timeout_seconds=7,
+        max_retries=5,
+        retry_base_seconds=0.25,
+    )
+
+    diagnostics = cli_module._llm_failure_diagnostics(
+        config,
+        "LLM HTTP 402: Insufficient Balance for secret-key",
+    )
+
+    assert diagnostics["failure_kind"] == "quota"
+    assert diagnostics["provider"] == "deepseek"
+    assert diagnostics["model"] == "deepseek-v4-pro"
+    assert diagnostics["endpoint_host"] == "api.deepseek.com"
+    assert diagnostics["configured"] is True
+    assert diagnostics["timeout_seconds"] == 45
+    assert diagnostics["connect_timeout_seconds"] == 7
+    assert diagnostics["max_retries"] == 5
+    assert diagnostics["retry_base_seconds"] == 0.25
+    assert "secret-key" not in json.dumps(diagnostics)
+    assert "[redacted-api-key]" in diagnostics["raw_error"]
 
 
 def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, capsys):
