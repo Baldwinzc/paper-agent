@@ -769,6 +769,37 @@ def main() -> None:
         default=True,
         help="Validate the experiment result file strictly before generation.",
     )
+    paper_smoke.add_argument(
+        "--write-artifact-template",
+        action="store_true",
+        help="When strict result preflight blocks, write TCGA result CSV templates.",
+    )
+    paper_smoke.add_argument(
+        "--artifact-template-dir",
+        default="",
+        help="Directory for generated result CSV templates. Defaults to experiment-results parent/logs.",
+    )
+    paper_smoke.add_argument(
+        "--artifact-template-force",
+        action="store_true",
+        help="Overwrite existing generated artifact-template files.",
+    )
+    paper_smoke.add_argument(
+        "--artifact-template-style",
+        choices=("long", "wide"),
+        default="long",
+        help="CSV schema style for --write-artifact-template.",
+    )
+    paper_smoke.add_argument("--artifact-template-seed", default="2026")
+    paper_smoke.add_argument(
+        "--artifact-template-dataset",
+        action="append",
+        default=[],
+        help="Dataset/cohort name for artifact templates; can be repeated.",
+    )
+    paper_smoke.add_argument("--artifact-method", default="Hyper-ProtoSurv ours")
+    paper_smoke.add_argument("--artifact-baseline", default="ProtoSurv baseline")
+    paper_smoke.add_argument("--artifact-metric", default="C-index")
     _add_experiment_contract_options(paper_smoke)
     _add_experiment_provenance_options(paper_smoke)
     _add_experiment_artifact_consistency_options(paper_smoke)
@@ -2382,7 +2413,7 @@ def _tcga_artifacts_doctor_summary(
 def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
     output_dir = _resolve_project_relative_path(args.output_dir)
     datasets = list(args.dataset or _tcga_default_datasets())
-    files = _tcga_artifact_template_files(
+    files = _tcga_artifact_template_bundle(
         style=args.style,
         datasets=datasets,
         method=args.method,
@@ -2390,32 +2421,21 @@ def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
         metric=args.metric,
         seed=args.seed,
     )
-    contract = _tcga_artifact_export_contract(
-        style=args.style,
-        datasets=datasets,
-        method=args.method,
-        baseline=args.baseline,
-        metric=args.metric,
-    )
-    files["EXPORT_CONTRACT.md"] = contract
-    files["ARTIFACT_SCHEMA.json"] = (
-        json.dumps(
-            _tcga_artifact_schema_manifest(
-                style=args.style,
-                datasets=datasets,
-                method=args.method,
-                baseline=args.baseline,
-                metric=args.metric,
-                seed=args.seed,
-            ),
-            indent=2,
-            ensure_ascii=False,
-        )
-        + "\n"
-    )
+    written_paths = _write_tcga_artifact_template_bundle(output_dir, files, force=bool(args.force))
+    for path in written_paths:
+        print(f"- Wrote {path}")
+    print(f"TCGA artifact export templates written to {output_dir}")
+    print("Replace every TODO with real trained-model outputs before running tcga-artifacts-doctor.")
 
+
+def _write_tcga_artifact_template_bundle(
+    output_dir: Path,
+    files: dict[str, str],
+    *,
+    force: bool = False,
+) -> list[Path]:
     conflicts = [name for name in files if (output_dir / name).exists()]
-    if conflicts and not args.force:
+    if conflicts and not force:
         raise SystemExit(
             "Refusing to overwrite existing TCGA artifact template files: "
             + ", ".join(conflicts)
@@ -2423,12 +2443,12 @@ def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    written_paths = []
     for name, content in files.items():
         path = output_dir / name
         path.write_text(content, encoding="utf-8")
-        print(f"- Wrote {path}")
-    print(f"TCGA artifact export templates written to {output_dir}")
-    print("Replace every TODO with real trained-model outputs before running tcga-artifacts-doctor.")
+        written_paths.append(path)
+    return written_paths
 
 
 def _run_tcga_preflight(args: argparse.Namespace) -> None:
@@ -3455,6 +3475,48 @@ def _tcga_artifact_template_files(
             ]
         ),
     }
+
+
+def _tcga_artifact_template_bundle(
+    *,
+    style: str,
+    datasets: list[str],
+    method: str,
+    baseline: str,
+    metric: str,
+    seed: str,
+) -> dict[str, str]:
+    files = _tcga_artifact_template_files(
+        style=style,
+        datasets=datasets,
+        method=method,
+        baseline=baseline,
+        metric=metric,
+        seed=seed,
+    )
+    files["EXPORT_CONTRACT.md"] = _tcga_artifact_export_contract(
+        style=style,
+        datasets=datasets,
+        method=method,
+        baseline=baseline,
+        metric=metric,
+    )
+    files["ARTIFACT_SCHEMA.json"] = (
+        json.dumps(
+            _tcga_artifact_schema_manifest(
+                style=style,
+                datasets=datasets,
+                method=method,
+                baseline=baseline,
+                metric=metric,
+                seed=seed,
+            ),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    return files
 
 
 def _tcga_artifact_export_contract(
@@ -5169,6 +5231,9 @@ def _write_paper_e2e_smoke_failure_summary(
     blocking_items = _paper_e2e_result_preflight_issues(result_preflight)
     if not blocking_items:
         blocking_items = [reason]
+    artifact_template = _paper_e2e_maybe_write_artifact_template(args, experiment_path)
+    if artifact_template.get("status") == "written":
+        print(f"Artifact templates written to {artifact_template.get('output_dir', '')}")
     summary = {
         "status": "blocked",
         "pipeline_phase": "paper_e2e_smoke_preflight",
@@ -5182,6 +5247,7 @@ def _write_paper_e2e_smoke_failure_summary(
         ),
         "next_command": _paper_e2e_validate_results_command(args, experiment_path),
         "next_actions": _paper_e2e_smoke_failure_next_actions(args, experiment_path),
+        "artifact_template": artifact_template,
         "experiment_evidence": result_preflight.get("experiment_evidence", {}),
         "experiment_contract": result_preflight.get("experiment_contract", {}),
         "experiment_quality": result_preflight.get("experiment_quality", {}),
@@ -5207,11 +5273,61 @@ def _write_paper_e2e_smoke_failure_summary(
     return _write_run_summary_data(summary, summary_path)
 
 
+def _paper_e2e_maybe_write_artifact_template(
+    args: argparse.Namespace,
+    experiment_path: Path,
+) -> dict[str, object]:
+    output_dir = _paper_e2e_artifact_template_dir(args, experiment_path)
+    if not getattr(args, "write_artifact_template", False):
+        return {
+            "status": "skipped",
+            "output_dir": str(output_dir),
+            "command": _paper_e2e_artifact_template_command(output_dir),
+        }
+
+    datasets = list(getattr(args, "artifact_template_dataset", []) or _tcga_default_datasets())
+    style = str(getattr(args, "artifact_template_style", "long"))
+    method = str(getattr(args, "artifact_method", "Hyper-ProtoSurv ours"))
+    baseline = str(getattr(args, "artifact_baseline", "ProtoSurv baseline"))
+    metric = str(getattr(args, "artifact_metric", "C-index"))
+    seed = str(getattr(args, "artifact_template_seed", "2026"))
+    files = _tcga_artifact_template_bundle(
+        style=style,
+        datasets=datasets,
+        method=method,
+        baseline=baseline,
+        metric=metric,
+        seed=seed,
+    )
+    try:
+        written_paths = _write_tcga_artifact_template_bundle(
+            output_dir,
+            files,
+            force=bool(getattr(args, "artifact_template_force", False)),
+        )
+    except SystemExit as exc:
+        return {
+            "status": "failed",
+            "output_dir": str(output_dir),
+            "error": str(exc),
+            "command": _paper_e2e_artifact_template_command(output_dir),
+        }
+    return {
+        "status": "written",
+        "output_dir": str(output_dir),
+        "files": [str(path) for path in written_paths],
+        "datasets": datasets,
+        "style": style,
+        "contains_todo": True,
+        "command": _paper_e2e_artifact_template_command(output_dir),
+    }
+
+
 def _paper_e2e_smoke_failure_next_actions(
     args: argparse.Namespace,
     experiment_path: Path,
 ) -> list[dict[str, str]]:
-    artifact_dir = experiment_path.parent / "logs"
+    artifact_dir = _paper_e2e_artifact_template_dir(args, experiment_path)
     return [
         {
             "category": "validate_results",
@@ -5266,6 +5382,13 @@ def _paper_e2e_artifact_template_command(artifact_dir: Path) -> str:
         str(artifact_dir),
     ]
     return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _paper_e2e_artifact_template_dir(args: argparse.Namespace, experiment_path: Path) -> Path:
+    path_value = str(getattr(args, "artifact_template_dir", "") or "")
+    if path_value:
+        return _resolve_project_relative_path(path_value)
+    return experiment_path.parent / "logs"
 
 
 def _paper_e2e_results_from_artifacts_command(artifact_dir: Path, experiment_path: Path) -> str:
@@ -5338,6 +5461,29 @@ def _paper_e2e_smoke_rerun_command(args: argparse.Namespace) -> str:
     if args.compile_latex:
         parts.append("--compile-latex")
     parts.append("--strict-results" if args.strict_results else "--no-strict-results")
+    if getattr(args, "write_artifact_template", False):
+        parts.append("--write-artifact-template")
+    if getattr(args, "artifact_template_dir", ""):
+        parts.extend(["--artifact-template-dir", args.artifact_template_dir])
+    if getattr(args, "artifact_template_force", False):
+        parts.append("--artifact-template-force")
+    style = getattr(args, "artifact_template_style", "long")
+    if style != "long":
+        parts.extend(["--artifact-template-style", style])
+    seed = getattr(args, "artifact_template_seed", "2026")
+    if seed != "2026":
+        parts.extend(["--artifact-template-seed", seed])
+    for dataset in getattr(args, "artifact_template_dataset", []) or []:
+        parts.extend(["--artifact-template-dataset", dataset])
+    artifact_method = getattr(args, "artifact_method", "Hyper-ProtoSurv ours")
+    if artifact_method != "Hyper-ProtoSurv ours":
+        parts.extend(["--artifact-method", artifact_method])
+    artifact_baseline = getattr(args, "artifact_baseline", "ProtoSurv baseline")
+    if artifact_baseline != "ProtoSurv baseline":
+        parts.extend(["--artifact-baseline", artifact_baseline])
+    artifact_metric = getattr(args, "artifact_metric", "C-index")
+    if artifact_metric != "C-index":
+        parts.extend(["--artifact-metric", artifact_metric])
     for flag in ("ablation", "sensitivity", "statistical-tests"):
         attr = f"require_{flag.replace('-', '_')}"
         if not bool(getattr(args, attr, True)):

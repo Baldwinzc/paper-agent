@@ -235,6 +235,9 @@ If strict result validation fails before drafting, the command still writes
 CSV export templates with `tcga-artifact-template`, generate
 `tcga_results.md` with `tcga-results-from-artifacts --strict`, then rerun the
 same smoke command.
+Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
+templates immediately; use `--artifact-template-dir` to choose the output
+directory and fill the generated files with real trained-model outputs.
 
 ## Acceptance Flow
 

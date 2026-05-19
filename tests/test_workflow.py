@@ -7757,6 +7757,76 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
     assert any("contract:" in item for item in summary["blocking_items"])
 
 
+def test_cli_paper_e2e_smoke_can_write_artifact_templates_on_strict_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "tcga_results_template.md"
+    template_dir = tmp_path / "repair-logs"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not start after strict result preflight failure.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--write-artifact-template",
+            "--artifact-template-dir",
+            str(template_dir),
+            "--artifact-template-dataset",
+            "BLCA",
+            "--artifact-template-dataset",
+            "BRCA",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected paper-e2e-smoke to fail on TODO result template.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((tmp_path / "out" / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "Artifact templates written to" in output
+    assert (template_dir / "tcga_main_results.csv").is_file()
+    assert (template_dir / "tcga_ablation.csv").is_file()
+    assert (template_dir / "tcga_sensitivity.csv").is_file()
+    assert (template_dir / "tcga_stats.csv").is_file()
+    assert (template_dir / "EXPORT_CONTRACT.md").is_file()
+    assert (template_dir / "ARTIFACT_SCHEMA.json").is_file()
+    assert summary["artifact_template"]["status"] == "written"
+    assert summary["artifact_template"]["output_dir"] == str(template_dir)
+    assert summary["artifact_template"]["datasets"] == ["BLCA", "BRCA"]
+    assert summary["artifact_template"]["contains_todo"] is True
+    assert str(template_dir) in summary["next_actions"][1]["command"]
+    assert "--write-artifact-template" in summary["next_actions"][3]["command"]
+
+
 def test_llm_self_review_records_bad_json_error(monkeypatch):
     monkeypatch.delenv("PAPER_AGENT_DISABLE_LLM_SELF_REVIEW", raising=False)
     state = {
