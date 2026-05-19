@@ -1598,8 +1598,11 @@ def _tcga_doctor_next_actions(
         actions.append(
             {
                 "phase": "missing_result_file",
-                "next_action": "Create a TCGA result file template, fill every TODO with real trained-model outputs, then validate it.",
-                "next_command": _tcga_doctor_write_template_command(args, example_root),
+                "next_action": "Create result CSV artifact templates, fill every TODO with real trained-model outputs, then generate the paper-facing Markdown.",
+                "next_command": _tcga_artifact_template_command(args, example_root),
+                "markdown_template_command": _tcga_doctor_write_template_command(args, example_root),
+                "results_from_artifacts_command": _tcga_results_from_artifacts_command(args, example_root),
+                "validation_command": _validate_results_command(args, example_root),
             }
         )
     elif result_summary is None and _file_contains_todo(experiment_path):
@@ -1658,8 +1661,10 @@ def _tcga_doctor_result_repair_action(
     action: dict[str, object] = {
         "phase": "result_validation",
         "next_action": next_action,
-        "next_command": _validate_results_command(args, example_root),
+        "next_command": _tcga_artifact_template_command(args, example_root) if has_todos else _validate_results_command(args, example_root),
         "artifact_template_command": _tcga_artifact_template_command(args, example_root),
+        "results_from_artifacts_command": _tcga_results_from_artifacts_command(args, example_root),
+        "validation_command": _validate_results_command(args, example_root),
         "experiment_results": str(experiment_path),
         "has_todo_placeholders": has_todos,
     }
@@ -2194,6 +2199,35 @@ def _tcga_artifact_template_command(args: argparse.Namespace, example_root: Path
     ]
     for dataset in getattr(args, "dataset", []) or []:
         parts.extend(["--dataset", str(dataset)])
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _tcga_results_from_artifacts_command(args: argparse.Namespace, example_root: Path) -> str:
+    parts = [
+        "paper-agent",
+        "tcga-results-from-artifacts",
+        "--example-root",
+        str(example_root),
+        "--artifacts-dir",
+        str(_tcga_artifact_template_output_dir(args, example_root)),
+        "--output",
+        str(_tcga_result_path(args, example_root)),
+        "--strict",
+    ]
+    method = getattr(args, "method", "") or getattr(args, "expected_method", "")
+    baseline = getattr(args, "baseline", "") or getattr(args, "expected_baseline", "")
+    metric_values = list(getattr(args, "expected_metric", []) or [])
+    metric = getattr(args, "metric", "") or (metric_values[0] if metric_values else "")
+    for dataset in getattr(args, "dataset", []) or []:
+        parts.extend(["--dataset", str(dataset)])
+    for dataset in getattr(args, "expected_dataset", []) or []:
+        parts.extend(["--dataset", str(dataset)])
+    if method:
+        parts.extend(["--method", str(method)])
+    if baseline:
+        parts.extend(["--baseline", str(baseline)])
+    if metric:
+        parts.extend(["--metric", str(metric)])
     return " ".join(_powershell_arg(part) for part in parts)
 
 

@@ -354,7 +354,10 @@ With `--summary`, the doctor writes every check, blocking item, static LLM
 configuration, live provider elapsed time/token usage, and sanitized LLM failure
 diagnostics when the provider call fails. Failed summaries also include
 `next_actions` with concrete repair commands for TODO result templates, provider
-quota/configuration failures, and missing LaTeX tooling.
+quota/configuration failures, and missing LaTeX tooling. For TODO result
+templates, the primary repair command is now `tcga-artifact-template`; the same
+summary also records the follow-up `tcga-results-from-artifacts --strict` and
+`validate-results --strict` commands.
 
 ```powershell
 paper-agent tcga-draft `

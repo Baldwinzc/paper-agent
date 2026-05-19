@@ -6877,10 +6877,12 @@ def test_cli_tcga_doctor_summary_records_next_actions_for_todo_template(monkeypa
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "Next actions:" in output
     assert summary["next_action"].startswith("Replace every TODO")
-    assert summary["next_command"].startswith("paper-agent validate-results")
+    assert summary["next_command"].startswith("paper-agent tcga-artifact-template")
     assert summary["next_actions"][0]["phase"] == "result_validation"
     assert summary["next_actions"][0]["has_todo_placeholders"] is True
     assert "tcga-artifact-template" in summary["next_actions"][0]["artifact_template_command"]
+    assert "tcga-results-from-artifacts" in summary["next_actions"][0]["results_from_artifacts_command"]
+    assert summary["next_actions"][0]["validation_command"].startswith("paper-agent validate-results")
 
 
 def test_cli_tcga_doctor_passes_complete_local_inputs(monkeypatch, tmp_path, capsys):
