@@ -1017,7 +1017,13 @@ def _llm_failure_kind(raw_error: str) -> str:
     lowered = raw_error.lower()
     if "requires a configured llm" in lowered or "not configured" in lowered or "no configured api key" in lowered:
         return "configuration"
-    if "http 402" in lowered or "insufficient balance" in lowered or "insufficient_balance" in lowered:
+    if (
+        "http 402" in lowered
+        or "insufficient balance" in lowered
+        or "insufficient_balance" in lowered
+        or "quota" in lowered
+        or "billing" in lowered
+    ):
         return "quota"
     if "http 401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
         return "authentication"
@@ -1815,6 +1821,7 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
 
     llm_config = load_llm_config()
     llm_required = bool(submission_grade or not args.disable_llm)
+    llm_live_preflight: dict[str, object] = {"status": "skipped"}
     if args.disable_llm and not submission_grade:
         _add_preflight_check(checks, "LLM static config", "PASS", "disabled by --disable-llm", blocking, blocking_item=False)
     else:
@@ -1828,12 +1835,21 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
         )
     if args.live_llm:
         if not llm_config.configured:
+            llm_live_preflight = {
+                "status": "fail",
+                "diagnostics": _llm_failure_diagnostics(llm_config, "LLM is not configured"),
+            }
             _add_preflight_check(checks, "LLM live preflight", "FAIL", "LLM is not configured", blocking)
         else:
             try:
-                _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA preflight")
+                live_result = _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA preflight")
+                llm_live_preflight = {"status": "pass", **live_result}
                 _add_preflight_check(checks, "LLM live preflight", "PASS", _llm_config_label(llm_config), blocking, blocking_item=False)
             except SystemExit as exc:
+                llm_live_preflight = {
+                    "status": "fail",
+                    "diagnostics": _llm_failure_diagnostics(llm_config, str(exc)),
+                }
                 _add_preflight_check(checks, "LLM live preflight", "FAIL", str(exc), blocking)
     else:
         _add_preflight_check(checks, "LLM live preflight", "SKIP", "pass --live-llm to call the provider", blocking, blocking_item=False)
@@ -1868,6 +1884,8 @@ def _run_tcga_preflight(args: argparse.Namespace) -> None:
         "checks": checks,
         "blocking_items": blocking,
         "result_validation": result_summary,
+        "llm": _llm_static_summary(llm_config),
+        "llm_live_preflight": llm_live_preflight,
     }
     if args.summary:
         summary_path = _write_run_summary_data(summary, Path(args.summary))

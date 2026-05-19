@@ -46,7 +46,9 @@ python -m paper_agent.cli tcga-preflight `
 `tcga-preflight` is a read-only report for real-run readiness. It checks the
 baseline PDF, code directory, result artifacts, existing or generatable result
 Markdown, LLM configuration, and LaTeX compiler requirements. The JSON summary
-contains every PASS/WARN/FAIL item and blocking item.
+contains every PASS/WARN/FAIL item and blocking item. When `--live-llm` is used,
+it also records live provider status, elapsed time, token usage when available,
+and sanitized failure diagnostics.
 
 ```powershell
 python -m paper_agent.cli tcga-artifacts-doctor `

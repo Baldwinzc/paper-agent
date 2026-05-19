@@ -4643,6 +4643,49 @@ def test_cli_tcga_artifact_template_refuses_overwrite_without_force(monkeypatch,
     assert existing_path.read_text(encoding="utf-8") == "keep this file\n"
 
 
+def _write_complete_tcga_artifacts(logs_dir: Path) -> None:
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "tcga_main_wide.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index,LGG C-index,LUAD C-index,UCEC C-index",
+                "ProtoSurv baseline,0.646,0.669,0.724,0.636,0.658",
+                "Hyper-ProtoSurv ours,0.671,0.691,0.746,0.661,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_ablation_wide.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.690",
+                "w/o reconstruction loss,0.672",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_sensitivity_wide.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.687",
+                "1.0,0.690",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_stats.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -4731,6 +4774,103 @@ def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(m
     assert summary["status"] == "pass"
     assert summary["submission_grade"] is True
     assert not summary["blocking_items"]
+    assert summary["llm"]["provider"] == "deepseek"
+    assert summary["llm_live_preflight"]["status"] == "skipped"
+
+
+def test_cli_tcga_preflight_summary_records_live_llm_pass(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    logs_dir = example_root / "results" / "logs"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    _write_complete_tcga_artifacts(logs_dir)
+    summary_path = tmp_path / "preflight-live-pass.json"
+    monkeypatch.setattr(
+        cli_module,
+        "_llm_preflight_check",
+        lambda *args, **kwargs: {
+            "elapsed_seconds": 0.25,
+            "response_model": "deepseek-v4-pro",
+            "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-preflight",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+            "--live-llm",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "- LLM live preflight: PASS" in output
+    assert summary["status"] == "pass"
+    assert summary["llm_live_preflight"]["status"] == "pass"
+    assert summary["llm_live_preflight"]["elapsed_seconds"] == 0.25
+    assert summary["llm_live_preflight"]["usage"]["total_tokens"] == 12
+    assert "test-key" not in json.dumps(summary)
+
+
+def test_cli_tcga_preflight_summary_records_live_llm_failure(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    logs_dir = example_root / "results" / "logs"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    _write_complete_tcga_artifacts(logs_dir)
+    summary_path = tmp_path / "preflight-live-fail.json"
+
+    def fail_preflight(*args, **kwargs):
+        raise SystemExit("TCGA preflight LLM preflight failed for deepseek/deepseek-v4-pro: quota blocked.")
+
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", fail_preflight)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-preflight",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+            "--live-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA preflight failed" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA preflight to fail when live LLM preflight fails.")
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "- LLM live preflight: FAIL" in output
+    assert summary["status"] == "fail"
+    assert summary["llm_live_preflight"]["status"] == "fail"
+    assert summary["llm_live_preflight"]["diagnostics"]["failure_kind"] == "quota"
+    assert summary["llm_live_preflight"]["diagnostics"]["provider"] == "deepseek"
+    assert "test-key" not in json.dumps(summary)
 
 
 def test_cli_tcga_preflight_fails_without_results_or_artifacts(monkeypatch, tmp_path, capsys):
