@@ -231,7 +231,10 @@ and writes the requested minimum number of sections. Its summary includes a
 experiment-result file, output paths, strict-result status, and LLM mode.
 If strict result validation fails before drafting, the command still writes
 `RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
-`validate-results --strict` next command.
+`next_actions` repair chain: inspect with `validate-results --strict`, create
+CSV export templates with `tcga-artifact-template`, generate
+`tcga_results.md` with `tcga-results-from-artifacts --strict`, then rerun the
+same smoke command.
 
 ## Acceptance Flow
 

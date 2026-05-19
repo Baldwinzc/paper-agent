@@ -135,7 +135,9 @@ draft, run summary, acceptance report, optional Overleaf zip, and a
 machine-readable `smoke_contract`.
 When its strict result preflight blocks generation, it still writes a blocked
 `RUN_SUMMARY.json` so automation can report contract errors and the next command
-without parsing console text.
+without parsing console text. The blocked summary includes a `next_actions`
+repair chain for validation, artifact-template creation, result generation from
+completed CSV artifacts, and smoke rerun.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

@@ -5181,6 +5181,7 @@ def _write_paper_e2e_smoke_failure_summary(
             "--no-strict-results for a toolchain-only smoke."
         ),
         "next_command": _paper_e2e_validate_results_command(args, experiment_path),
+        "next_actions": _paper_e2e_smoke_failure_next_actions(args, experiment_path),
         "experiment_evidence": result_preflight.get("experiment_evidence", {}),
         "experiment_contract": result_preflight.get("experiment_contract", {}),
         "experiment_quality": result_preflight.get("experiment_quality", {}),
@@ -5206,6 +5207,38 @@ def _write_paper_e2e_smoke_failure_summary(
     return _write_run_summary_data(summary, summary_path)
 
 
+def _paper_e2e_smoke_failure_next_actions(
+    args: argparse.Namespace,
+    experiment_path: Path,
+) -> list[dict[str, str]]:
+    artifact_dir = experiment_path.parent / "logs"
+    return [
+        {
+            "category": "validate_results",
+            "action": "Inspect strict result validation errors.",
+            "command": _paper_e2e_validate_results_command(args, experiment_path),
+        },
+        {
+            "category": "result_artifacts",
+            "action": (
+                "If result CSV artifacts do not exist yet, create the export templates and fill every "
+                "TODO with real trained-model outputs."
+            ),
+            "command": _paper_e2e_artifact_template_command(artifact_dir),
+        },
+        {
+            "category": "experiment_results",
+            "action": "Generate a strict result Markdown file from completed result CSV artifacts.",
+            "command": _paper_e2e_results_from_artifacts_command(artifact_dir, experiment_path),
+        },
+        {
+            "category": "paper_e2e_smoke",
+            "action": "Rerun the explicit input-to-paper smoke after result repair.",
+            "command": _paper_e2e_smoke_rerun_command(args),
+        },
+    ]
+
+
 def _paper_e2e_result_preflight_issues(result_preflight: dict[str, object]) -> list[str]:
     issues: list[str] = []
     sections = (
@@ -5225,6 +5258,29 @@ def _paper_e2e_result_preflight_issues(result_preflight: dict[str, object]) -> l
     return issues
 
 
+def _paper_e2e_artifact_template_command(artifact_dir: Path) -> str:
+    parts = [
+        "paper-agent",
+        "tcga-artifact-template",
+        "--output-dir",
+        str(artifact_dir),
+    ]
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _paper_e2e_results_from_artifacts_command(artifact_dir: Path, experiment_path: Path) -> str:
+    parts = [
+        "paper-agent",
+        "tcga-results-from-artifacts",
+        "--artifacts-dir",
+        str(artifact_dir),
+        "--output",
+        str(experiment_path),
+        "--strict",
+    ]
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
 def _paper_e2e_validate_results_command(args: argparse.Namespace, experiment_path: Path) -> str:
     parts = [
         "paper-agent",
@@ -5233,6 +5289,55 @@ def _paper_e2e_validate_results_command(args: argparse.Namespace, experiment_pat
         str(experiment_path),
         "--strict",
     ]
+    for flag in ("ablation", "sensitivity", "statistical-tests"):
+        attr = f"require_{flag.replace('-', '_')}"
+        if not bool(getattr(args, attr, True)):
+            parts.append(f"--no-require-{flag}")
+    if getattr(args, "require_provenance", False):
+        parts.append("--require-provenance")
+    if getattr(args, "require_artifact_consistency", False):
+        parts.append("--require-artifact-consistency")
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _paper_e2e_smoke_rerun_command(args: argparse.Namespace) -> str:
+    parts = [
+        "paper-agent",
+        "paper-e2e-smoke",
+        "--baseline-pdf",
+        args.baseline_pdf,
+        "--code-path",
+        args.code_path,
+        "--experiment-results",
+        args.experiment_results,
+        "--target-venue",
+        args.target_venue,
+        "--output-dir",
+        args.output_dir,
+    ]
+    if args.project_name:
+        parts.extend(["--project-name", args.project_name])
+    if args.zip:
+        parts.extend(["--zip", args.zip])
+    for keyword in args.keyword or []:
+        parts.extend(["--keyword", keyword])
+    if args.template_zip:
+        parts.extend(["--template-zip", args.template_zip])
+    if args.template_dir:
+        parts.extend(["--template-dir", args.template_dir])
+    if args.online:
+        parts.append("--online")
+    if args.offline:
+        parts.append("--offline")
+    if args.require_llm:
+        parts.append("--require-llm")
+    if args.min_llm_sections:
+        parts.extend(["--min-llm-sections", str(args.min_llm_sections)])
+    if args.include_llm_self_review:
+        parts.append("--include-llm-self-review")
+    if args.compile_latex:
+        parts.append("--compile-latex")
+    parts.append("--strict-results" if args.strict_results else "--no-strict-results")
     for flag in ("ablation", "sensitivity", "statistical-tests"):
         attr = f"require_{flag.replace('-', '_')}"
         if not bool(getattr(args, attr, True)):

@@ -7745,6 +7745,15 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
     assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is False
     assert summary["smoke_contract"]["checks"]["llm_mode"] == "not_started"
     assert summary["next_command"].startswith("paper-agent validate-results")
+    assert [action["category"] for action in summary["next_actions"]] == [
+        "validate_results",
+        "result_artifacts",
+        "experiment_results",
+        "paper_e2e_smoke",
+    ]
+    assert "tcga-artifact-template --output-dir" in summary["next_actions"][1]["command"]
+    assert "tcga-results-from-artifacts --artifacts-dir" in summary["next_actions"][2]["command"]
+    assert "paper-e2e-smoke --baseline-pdf" in summary["next_actions"][3]["command"]
     assert any("contract:" in item for item in summary["blocking_items"])
 
 
