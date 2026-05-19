@@ -5490,6 +5490,106 @@ def test_cli_tcga_draft_fails_when_default_result_file_is_missing(monkeypatch, t
         raise AssertionError("Expected tcga-draft to fail without default result file.")
 
 
+def test_cli_tcga_doctor_writes_missing_result_template(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-doctor",
+            "--example-root",
+            str(example_root),
+            "--write-template",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA doctor failed" in str(exc)
+    else:
+        raise AssertionError("Expected tcga-doctor to fail until generated TODOs are filled.")
+
+    output = capsys.readouterr().out
+    result_path = example_root / "results" / "tcga_results.md"
+    assert "TCGA project doctor:" in output
+    assert "Result template written" in output
+    assert "Overall: FAIL" in output
+    assert result_path.exists()
+    assert "TODO" in result_path.read_text(encoding="utf-8")
+
+
+def test_cli_tcga_doctor_passes_complete_local_inputs(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |",
+                "|---|---:|---:|---:|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.690 |",
+                "| w/o reconstruction loss | 0.672 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.687 |",
+                "| 1.0 | 0.690 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-doctor",
+            "--example-root",
+            str(example_root),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "TCGA project doctor:" in output
+    assert "- Baseline PDF: PASS" in output
+    assert "- Code path: PASS" in output
+    assert "- Experiment results: PASS" in output
+    assert "- LLM live preflight: SKIP" in output
+    assert "Overall: PASS" in output
+
+
 def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

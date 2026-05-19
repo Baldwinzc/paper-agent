@@ -233,6 +233,35 @@ def main() -> None:
     _add_experiment_contract_options(sample)
     _add_experiment_provenance_options(sample)
     _add_experiment_artifact_consistency_options(sample)
+    tcga_doctor = sub.add_parser(
+        "tcga-doctor",
+        help="Check local Hyper-ProtoSurv TCGA inputs before running paper generation.",
+    )
+    tcga_doctor.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_doctor.add_argument(
+        "--experiment-results",
+        default="",
+        help="TCGA result file. Defaults to example-root/results/tcga_results.md.",
+    )
+    tcga_doctor.add_argument(
+        "--submission-grade",
+        action="store_true",
+        help="Also require provenance, artifact consistency, LaTeX compiler, and LLM configuration.",
+    )
+    tcga_doctor.add_argument(
+        "--write-template",
+        action="store_true",
+        help="Write a missing TCGA result template at the expected experiment-results path.",
+    )
+    tcga_doctor.add_argument(
+        "--live-llm",
+        action="store_true",
+        help="Run a live LLM provider preflight in addition to static configuration checks.",
+    )
+    _add_experiment_contract_options(tcga_doctor)
+    _add_experiment_quality_options(tcga_doctor)
+    _add_experiment_provenance_options(tcga_doctor)
+    _add_experiment_artifact_consistency_options(tcga_doctor)
     tcga_draft = sub.add_parser(
         "tcga-draft",
         help="Run the local Hyper-ProtoSurv TCGA paper path with a real result file.",
@@ -543,6 +572,8 @@ def main() -> None:
             )
     elif args.command == "sample-hyper-protosurv":
         _run_hyper_protosurv_sample(args)
+    elif args.command == "tcga-doctor":
+        _run_tcga_doctor(args)
     elif args.command == "tcga-draft":
         _run_tcga_draft(args)
     elif args.command == "llm-ping":
@@ -940,6 +971,104 @@ def _run_hyper_protosurv_sample(args: argparse.Namespace) -> None:
     print(f"LLM self-review: {_llm_self_review_mode(state)}")
 
 
+def _run_tcga_doctor(args: argparse.Namespace) -> None:
+    example_root = Path(args.example_root)
+    experiment_path = _tcga_result_path(args, example_root)
+    blocking: list[str] = []
+
+    print("TCGA project doctor:")
+    _print_doctor_check("Example root", example_root.exists(), str(example_root))
+    if not example_root.exists():
+        blocking.append(f"Example root not found: {example_root}")
+
+    baseline_pdf = None
+    try:
+        baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
+        _print_doctor_check("Baseline PDF", True, str(baseline_pdf))
+    except SystemExit as exc:
+        _print_doctor_check("Baseline PDF", False, str(example_root / "baseline"))
+        blocking.append(str(exc))
+
+    code_path = example_root / "code" / "hyper-protosurv"
+    code_ok = code_path.is_dir()
+    _print_doctor_check("Code path", code_ok, str(code_path))
+    if not code_ok:
+        blocking.append(f"Hyper-ProtoSurv code directory not found: {code_path}")
+
+    if not experiment_path.is_file():
+        _print_doctor_check("Experiment results", False, str(experiment_path))
+        if args.write_template:
+            experiment_path.parent.mkdir(parents=True, exist_ok=True)
+            experiment_path.write_text(experiment_results_template(), encoding="utf-8")
+            print(f"- Result template written: {experiment_path}")
+            blocking.append(f"Fill every TODO in generated result template: {experiment_path}")
+        else:
+            blocking.append(
+                "TCGA experiment results file missing. Create one with "
+                f"`paper-agent tcga-doctor --example-root {example_root} --write-template`."
+            )
+    else:
+        _print_doctor_check("Experiment results", True, str(experiment_path))
+        result_summary = _validate_results_file(
+            experiment_path,
+            **_experiment_contract_kwargs(args),
+            **_experiment_quality_kwargs(args, tcga_defaults=True),
+            require_provenance=bool(args.require_provenance or args.submission_grade),
+            require_artifact_consistency=bool(args.require_artifact_consistency or args.submission_grade),
+        )
+        if not _validated_results_are_strictly_acceptable(result_summary):
+            blocking.append("Experiment result validation is not strict-acceptable.")
+
+    llm_config = load_llm_config()
+    _print_doctor_check("LLM static config", llm_config.configured, _llm_config_label(llm_config))
+    if args.submission_grade and not llm_config.configured:
+        blocking.append("Submission-grade TCGA generation requires a configured LLM.")
+    if args.live_llm and llm_config.configured:
+        try:
+            _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA doctor")
+            _print_doctor_check("LLM live preflight", True, _llm_config_label(llm_config))
+        except SystemExit as exc:
+            _print_doctor_check("LLM live preflight", False, _llm_config_label(llm_config))
+            blocking.append(str(exc))
+    elif args.live_llm:
+        _print_doctor_check("LLM live preflight", False, "not configured")
+        blocking.append("Cannot run LLM live preflight because LLM is not configured.")
+    else:
+        print("- LLM live preflight: SKIP (pass --live-llm to call the provider)")
+
+    latex_status = _latex_toolchain_status()
+    _print_doctor_check(
+        "LaTeX compiler",
+        bool(latex_status["available"]),
+        str(latex_status.get("preferred_tool") or latex_status.get("install_hint")),
+    )
+    if args.submission_grade and not latex_status["available"]:
+        blocking.append(f"LaTeX compiler missing. Install hint: {latex_status['install_hint']}")
+
+    if blocking:
+        print("Overall: FAIL")
+        print("Blocking items:")
+        for item in blocking:
+            print(f"- {item}")
+        raise SystemExit("TCGA doctor failed: fix blocking items before running tcga-draft.")
+    print("Overall: PASS")
+    if args.submission_grade:
+        print("Ready command: paper-agent tcga-draft --submission-grade")
+    else:
+        print("Ready command: paper-agent tcga-draft")
+
+
+def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
+    if getattr(args, "experiment_results", ""):
+        return _resolve_project_relative_path(args.experiment_results)
+    return example_root / "results" / "tcga_results.md"
+
+
+def _print_doctor_check(name: str, ok: bool, detail: str) -> None:
+    status = "PASS" if ok else "FAIL"
+    print(f"- {name}: {status} ({detail})")
+
+
 def _run_tcga_draft(args: argparse.Namespace) -> None:
     submission_grade = _apply_submission_grade_defaults(args)
     network_mode = _configure_network_mode(args, default_offline=True)
@@ -951,11 +1080,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
     if not code_path.is_dir():
         raise SystemExit(f"Hyper-ProtoSurv code directory not found: {code_path}")
 
-    experiment_path = (
-        _resolve_project_relative_path(args.experiment_results)
-        if args.experiment_results
-        else example_root / "results" / "tcga_results.md"
-    )
+    experiment_path = _tcga_result_path(args, example_root)
     if not experiment_path.is_file():
         raise SystemExit(
             "TCGA experiment results file not found: "

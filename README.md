@@ -263,6 +263,19 @@ Use `--no-require-ablation`, `--no-require-sensitivity`, or
 For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry is:
 
 ```powershell
+paper-agent tcga-doctor `
+  --example-root D:\code\agent\example `
+  --write-template
+```
+
+Use `tcga-doctor` before generation to check the baseline PDF, code directory,
+experiment result file, local LaTeX compiler, and LLM configuration. When the
+default `results\tcga_results.md` file is missing, `--write-template` creates a
+fill-in result template and exits with blocking items until every `TODO` is
+replaced with trained-model outputs. Add `--submission-grade` to require
+provenance/artifact consistency and `--live-llm` to call the configured model.
+
+```powershell
 paper-agent tcga-draft `
   --example-root D:\code\agent\example `
   --experiment-results D:\code\agent\example\results\tcga_results.md `
