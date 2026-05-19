@@ -50,6 +50,20 @@ contains every PASS/WARN/FAIL item and blocking item. When `--live-llm` is used,
 it also records live provider status, elapsed time, token usage when available,
 and sanitized failure diagnostics.
 
+For the stricter doctor gate before drafting, write the same style of diagnostic
+summary:
+
+```powershell
+python -m paper_agent.cli tcga-doctor `
+  --example-root D:\code\agent\example `
+  --summary outputs\tcga-doctor.json `
+  --live-llm
+```
+
+If the live provider call fails, `llm_live_preflight.diagnostics.failure_kind`
+classifies common configuration, authentication, quota, timeout, transport, and
+model lookup failures without writing the API key.
+
 ```powershell
 python -m paper_agent.cli tcga-artifacts-doctor `
   --artifacts-dir D:\code\agent\example\results\logs

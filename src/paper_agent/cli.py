@@ -261,6 +261,7 @@ def main() -> None:
         action="store_true",
         help="Run a live LLM provider preflight in addition to static configuration checks.",
     )
+    tcga_doctor.add_argument("--summary", default="", help="Optional JSON doctor summary path.")
     _add_experiment_contract_options(tcga_doctor)
     _add_experiment_quality_options(tcga_doctor)
     _add_experiment_provenance_options(tcga_doctor)
@@ -1447,28 +1448,30 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
     example_root = Path(args.example_root)
     experiment_path = _tcga_result_path(args, example_root)
     blocking: list[str] = []
+    checks: list[dict[str, object]] = []
+    result_summary = None
 
     print("TCGA project doctor:")
-    _print_doctor_check("Example root", example_root.exists(), str(example_root))
+    checks.append(_print_doctor_check("Example root", example_root.exists(), str(example_root)))
     if not example_root.exists():
         blocking.append(f"Example root not found: {example_root}")
 
     baseline_pdf = None
     try:
         baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
-        _print_doctor_check("Baseline PDF", True, str(baseline_pdf))
+        checks.append(_print_doctor_check("Baseline PDF", True, str(baseline_pdf)))
     except SystemExit as exc:
-        _print_doctor_check("Baseline PDF", False, str(example_root / "baseline"))
+        checks.append(_print_doctor_check("Baseline PDF", False, str(example_root / "baseline")))
         blocking.append(str(exc))
 
     code_path = example_root / "code" / "hyper-protosurv"
     code_ok = code_path.is_dir()
-    _print_doctor_check("Code path", code_ok, str(code_path))
+    checks.append(_print_doctor_check("Code path", code_ok, str(code_path)))
     if not code_ok:
         blocking.append(f"Hyper-ProtoSurv code directory not found: {code_path}")
 
     if not experiment_path.is_file():
-        _print_doctor_check("Experiment results", False, str(experiment_path))
+        checks.append(_print_doctor_check("Experiment results", False, str(experiment_path)))
         if args.write_template:
             experiment_path.parent.mkdir(parents=True, exist_ok=True)
             experiment_path.write_text(experiment_results_template(), encoding="utf-8")
@@ -1480,7 +1483,7 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
                 f"`paper-agent tcga-doctor --example-root {example_root} --write-template`."
             )
     else:
-        _print_doctor_check("Experiment results", True, str(experiment_path))
+        checks.append(_print_doctor_check("Experiment results", True, str(experiment_path)))
         result_summary = _validate_results_file(
             experiment_path,
             **_experiment_contract_kwargs(args),
@@ -1492,30 +1495,65 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
             blocking.append("Experiment result validation is not strict-acceptable.")
 
     llm_config = load_llm_config()
-    _print_doctor_check("LLM static config", llm_config.configured, _llm_config_label(llm_config))
+    checks.append(_print_doctor_check("LLM static config", llm_config.configured, _llm_config_label(llm_config)))
     if args.submission_grade and not llm_config.configured:
         blocking.append("Submission-grade TCGA generation requires a configured LLM.")
+    llm_live_preflight: dict[str, object] = {"status": "skipped"}
     if args.live_llm and llm_config.configured:
         try:
-            _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA doctor")
-            _print_doctor_check("LLM live preflight", True, _llm_config_label(llm_config))
+            live_result = _llm_preflight_check(LLMClient(llm_config), llm_config, context="TCGA doctor")
+            llm_live_preflight = {"status": "pass", **live_result}
+            checks.append(_print_doctor_check("LLM live preflight", True, _llm_config_label(llm_config)))
         except SystemExit as exc:
-            _print_doctor_check("LLM live preflight", False, _llm_config_label(llm_config))
+            llm_live_preflight = {
+                "status": "fail",
+                "diagnostics": _llm_failure_diagnostics(llm_config, str(exc)),
+            }
+            checks.append(_print_doctor_check("LLM live preflight", False, _llm_config_label(llm_config)))
             blocking.append(str(exc))
     elif args.live_llm:
-        _print_doctor_check("LLM live preflight", False, "not configured")
+        llm_live_preflight = {
+            "status": "fail",
+            "diagnostics": _llm_failure_diagnostics(llm_config, "LLM is not configured"),
+        }
+        checks.append(_print_doctor_check("LLM live preflight", False, "not configured"))
         blocking.append("Cannot run LLM live preflight because LLM is not configured.")
     else:
         print("- LLM live preflight: SKIP (pass --live-llm to call the provider)")
+        checks.append(
+            {
+                "name": "LLM live preflight",
+                "status": "SKIP",
+                "detail": "pass --live-llm to call the provider",
+            }
+        )
 
     latex_status = _latex_toolchain_status()
-    _print_doctor_check(
-        "LaTeX compiler",
-        bool(latex_status["available"]),
-        str(latex_status.get("preferred_tool") or latex_status.get("install_hint")),
+    checks.append(
+        _print_doctor_check(
+            "LaTeX compiler",
+            bool(latex_status["available"]),
+            str(latex_status.get("preferred_tool") or latex_status.get("install_hint")),
+        )
     )
     if args.submission_grade and not latex_status["available"]:
         blocking.append(f"LaTeX compiler missing. Install hint: {latex_status['install_hint']}")
+
+    summary = {
+        "status": "fail" if blocking else "pass",
+        "submission_grade": bool(args.submission_grade),
+        "example_root": str(example_root),
+        "experiment_results": str(experiment_path),
+        "checks": checks,
+        "blocking_items": blocking,
+        "result_validation": result_summary,
+        "llm": _llm_static_summary(llm_config),
+        "llm_live_preflight": llm_live_preflight,
+        "latex": latex_status,
+    }
+    if getattr(args, "summary", ""):
+        summary_path = _write_run_summary_data(summary, Path(args.summary))
+        print(f"TCGA doctor summary written to {summary_path}")
 
     if blocking:
         print("Overall: FAIL")
@@ -2765,9 +2803,10 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _print_doctor_check(name: str, ok: bool, detail: str) -> None:
+def _print_doctor_check(name: str, ok: bool, detail: str) -> dict[str, object]:
     status = "PASS" if ok else "FAIL"
     print(f"- {name}: {status} ({detail})")
+    return {"name": name, "status": status, "detail": detail}
 
 
 def _run_tcga_pipeline(args: argparse.Namespace) -> None:

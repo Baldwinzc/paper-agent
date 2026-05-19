@@ -340,7 +340,8 @@ For the local Hyper-ProtoSurv TCGA project, the higher-level real-result entry i
 ```powershell
 paper-agent tcga-doctor `
   --example-root D:\code\agent\example `
-  --write-template
+  --write-template `
+  --summary outputs\tcga-doctor.json
 ```
 
 Use `tcga-doctor` before generation to check the baseline PDF, code directory,
@@ -349,6 +350,9 @@ default `results\tcga_results.md` file is missing, `--write-template` creates a
 fill-in result template and exits with blocking items until every `TODO` is
 replaced with trained-model outputs. Add `--submission-grade` to require
 provenance/artifact consistency and `--live-llm` to call the configured model.
+With `--summary`, the doctor writes every check, blocking item, static LLM
+configuration, live provider elapsed time/token usage, and sanitized LLM failure
+diagnostics when the provider call fails.
 
 ```powershell
 paper-agent tcga-draft `

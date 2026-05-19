@@ -6906,6 +6906,140 @@ def test_cli_tcga_doctor_passes_complete_local_inputs(monkeypatch, tmp_path, cap
     assert "Overall: PASS" in output
 
 
+def test_cli_tcga_doctor_summary_records_live_llm_pass(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text("strict result placeholder", encoding="utf-8")
+    summary_path = tmp_path / "tcga-doctor-live-pass.json"
+
+    monkeypatch.setattr(
+        cli_module,
+        "_validate_results_file",
+        lambda *args, **kwargs: {
+            "experiment_evidence": {"real_result_evidence": True},
+            "experiment_contract": {"status": "complete"},
+            "experiment_quality": {"status": "complete"},
+            "experiment_provenance": {"status": "complete"},
+            "experiment_artifact_consistency": {"status": "complete"},
+        },
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_latex_toolchain_status",
+        lambda: {"available": True, "preferred_tool": "tectonic.exe", "install_hint": ""},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_llm_preflight_check",
+        lambda *args, **kwargs: {
+            "elapsed_seconds": 0.25,
+            "response_model": "deepseek-v4-pro",
+            "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-doctor",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+            "--live-llm",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "- LLM live preflight: PASS" in output
+    assert "TCGA doctor summary written to" in output
+    assert summary["status"] == "pass"
+    assert summary["llm_live_preflight"]["status"] == "pass"
+    assert summary["llm_live_preflight"]["elapsed_seconds"] == 0.25
+    assert summary["llm_live_preflight"]["usage"]["total_tokens"] == 12
+    assert summary["llm"]["provider"] == "deepseek"
+    assert "test-key" not in json.dumps(summary)
+
+
+def test_cli_tcga_doctor_summary_records_live_llm_failure(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text("strict result placeholder", encoding="utf-8")
+    summary_path = tmp_path / "tcga-doctor-live-fail.json"
+
+    monkeypatch.setattr(
+        cli_module,
+        "_validate_results_file",
+        lambda *args, **kwargs: {
+            "experiment_evidence": {"real_result_evidence": True},
+            "experiment_contract": {"status": "complete"},
+            "experiment_quality": {"status": "complete"},
+            "experiment_provenance": {"status": "complete"},
+            "experiment_artifact_consistency": {"status": "complete"},
+        },
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_latex_toolchain_status",
+        lambda: {"available": True, "preferred_tool": "tectonic.exe", "install_hint": ""},
+    )
+
+    def fail_preflight(*args, **kwargs):
+        raise SystemExit("TCGA doctor LLM preflight failed for deepseek/deepseek-v4-pro: quota blocked.")
+
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", fail_preflight)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-doctor",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+            "--live-llm",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA doctor failed" in str(exc)
+    else:
+        raise AssertionError("Expected TCGA doctor to fail when live LLM preflight fails.")
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "- LLM live preflight: FAIL" in output
+    assert "TCGA doctor summary written to" in output
+    assert summary["status"] == "fail"
+    assert summary["llm_live_preflight"]["status"] == "fail"
+    assert summary["llm_live_preflight"]["diagnostics"]["failure_kind"] == "quota"
+    assert summary["llm_live_preflight"]["diagnostics"]["provider"] == "deepseek"
+    assert "test-key" not in json.dumps(summary)
+
+
 def test_cli_llm_draft_smoke_requires_successful_llm_sections(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
