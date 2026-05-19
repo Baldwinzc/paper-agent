@@ -3983,6 +3983,16 @@ def _write_tcga_pipeline_status(
     output_dir = Path(args.output_dir)
     experiment_path = _tcga_result_path(args, example_root)
     artifact_dir = _tcga_artifact_template_output_dir(args, example_root)
+    readiness_contract = _tcga_pipeline_failure_readiness_contract(
+        args,
+        example_root,
+        phase=phase,
+        blocking_items=blocking_items,
+        missing_inputs=missing_inputs,
+        next_action=next_action,
+        next_command=next_command,
+        diagnostics=diagnostics or {},
+    )
     summary = {
         "project_name": args.project_name or _default_project_name(output_dir),
         "target_venue": args.target_venue,
@@ -4000,12 +4010,173 @@ def _write_tcga_pipeline_status(
         },
         "blocking_items": blocking_items,
         "missing_inputs": missing_inputs,
+        "readiness_contract": readiness_contract,
+        "next_actions": readiness_contract["next_actions"],
         "next_action": next_action,
         "next_command": next_command,
         "diagnostics": diagnostics or {},
         "outputs": outputs or {},
     }
     return _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
+
+
+def _tcga_pipeline_failure_readiness_contract(
+    args: argparse.Namespace,
+    example_root: Path,
+    *,
+    phase: str,
+    blocking_items: list[str],
+    missing_inputs: list[str],
+    next_action: str,
+    next_command: str,
+    diagnostics: dict[str, object],
+) -> dict[str, object]:
+    requirements: dict[str, dict[str, object]] = {}
+
+    def add_requirement(
+        category: str,
+        status: str,
+        detail: str,
+        *,
+        required: bool = True,
+        action: str = "",
+        command: str = "",
+    ) -> None:
+        requirements[category] = {
+            "status": status,
+            "required": required,
+            "detail": detail,
+            "next_action": action,
+            "command": command,
+        }
+
+    submission_grade = bool(getattr(args, "submission_grade", False))
+    offline = bool(getattr(args, "offline", False))
+    add_requirement(
+        "venue_network",
+        "fail" if submission_grade and offline else "pass",
+        "submission-grade requires online mode" if submission_grade and offline else "configured",
+        required=submission_grade,
+        action="Use --online or remove --offline for submission-grade runs." if submission_grade and offline else "",
+    )
+
+    try:
+        baseline_pdf = _resolve_baseline_pdf(str(example_root / "baseline"))
+        baseline_status = "pass"
+        baseline_detail = str(baseline_pdf)
+        baseline_action = ""
+    except SystemExit as exc:
+        baseline_status = "fail"
+        baseline_detail = str(exc)
+        baseline_action = f"Place the baseline PDF under {example_root / 'baseline'}."
+    add_requirement("baseline_pdf", baseline_status, baseline_detail, action=baseline_action)
+
+    code_path = example_root / "code" / "hyper-protosurv"
+    add_requirement(
+        "code_path",
+        "pass" if code_path.is_dir() else "fail",
+        str(code_path),
+        action=f"Place the project code under {code_path}." if not code_path.is_dir() else "",
+    )
+
+    artifact_dir = _tcga_artifact_template_output_dir(args, example_root)
+    artifact_phase = phase in {
+        "result_artifact_detection",
+        "artifact_template_write",
+        "artifact_template_written",
+    }
+    artifact_status = "fail" if artifact_phase and phase != "artifact_template_written" else "ready_to_fill" if phase == "artifact_template_written" else "pass"
+    artifact_action = (
+        "Fill the generated CSV templates with real trained-model outputs."
+        if phase == "artifact_template_written"
+        else "Create or repair real-result CSV artifacts before drafting."
+        if artifact_phase
+        else ""
+    )
+    artifact_command = _tcga_artifact_template_command(args, example_root) if artifact_phase else ""
+    add_requirement(
+        "result_artifacts",
+        artifact_status,
+        "; ".join(missing_inputs) if artifact_phase else str(artifact_dir),
+        required=artifact_phase,
+        action=artifact_action,
+        command=artifact_command,
+    )
+
+    experiment_path = _tcga_result_path(args, example_root)
+    if phase == "artifact_template_written":
+        result_status = "ready_to_generate"
+        result_action = "Rerun tcga-pipeline after replacing template TODO values."
+        result_command = _tcga_pipeline_rerun_command(args, example_root)
+    elif phase in {"result_file_check", "draft_result_validation", "result_artifact_detection", "artifact_template_write"}:
+        result_status = "fail"
+        result_action = "Create or repair the strict TCGA result Markdown before drafting."
+        result_command = _validate_results_command(args, example_root) if phase == "draft_result_validation" else ""
+    else:
+        result_status = "pass"
+        result_action = ""
+        result_command = ""
+    add_requirement(
+        "experiment_results",
+        result_status,
+        str(experiment_path),
+        action=result_action,
+        command=result_command,
+    )
+
+    llm_config = load_llm_config()
+    llm_status = "fail" if phase == "llm_preflight" else "disabled" if getattr(args, "disable_llm", False) and not submission_grade else "pass"
+    llm_diagnostics = diagnostics.get("llm", {}) if isinstance(diagnostics, dict) else {}
+    llm_detail = (
+        str(llm_diagnostics.get("diagnosis", "LLM preflight failed."))
+        if isinstance(llm_diagnostics, dict) and phase == "llm_preflight"
+        else _llm_config_label(llm_config)
+    )
+    add_requirement(
+        "llm",
+        llm_status,
+        llm_detail,
+        required=bool(submission_grade or not getattr(args, "disable_llm", False)),
+        action="Fix LLM configuration or provider quota before LLM drafting." if phase == "llm_preflight" else "",
+        command="paper-agent llm-doctor" if phase == "llm_preflight" else "",
+    )
+
+    latex_status = _latex_toolchain_status()
+    latex_failed = phase == "latex_validation"
+    add_requirement(
+        "latex",
+        "fail" if latex_failed else "pass" if latex_status.get("available") else "warn",
+        str(latex_status.get("preferred_tool") or latex_status.get("install_hint") or "not found"),
+        required=bool(submission_grade or getattr(args, "compile_latex", False)),
+        action="Install a local LaTeX compiler or rerun without submission-grade compilation." if latex_failed else "",
+        command="paper-agent latex-doctor" if latex_failed else "",
+    )
+
+    if phase in {"doctor_checks", "draft_generation", "llm_generation"}:
+        add_requirement(
+            "pipeline_stage",
+            "fail",
+            "; ".join(blocking_items) or phase,
+            action=next_action,
+            command=next_command,
+        )
+
+    blocking_categories = [
+        category for category, requirement in requirements.items() if requirement["status"] == "fail"
+    ]
+    next_actions = _tcga_preflight_next_actions(requirements)
+    if not next_actions and (next_action or next_command):
+        next_actions.append({"category": phase, "action": next_action, "command": next_command})
+    return {
+        "status": "blocked",
+        "submission_grade": submission_grade,
+        "pipeline_phase": phase,
+        "ready_for_submission_grade": False,
+        "ready_for_deterministic_draft": False,
+        "blocking_categories": blocking_categories,
+        "requirements": requirements,
+        "next_actions": next_actions,
+    }
 
 
 def _write_tcga_pipeline_success_summary(

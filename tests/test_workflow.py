@@ -6524,6 +6524,11 @@ def test_cli_tcga_pipeline_suggests_artifact_template_when_results_missing(monke
     assert summary["pipeline_phase"] == "result_artifact_detection"
     assert "paper-agent tcga-artifact-template --output-dir" in summary["next_command"]
     assert any("tcga_main_results.csv" in item for item in summary["missing_inputs"])
+    assert summary["readiness_contract"]["status"] == "blocked"
+    assert summary["readiness_contract"]["pipeline_phase"] == "result_artifact_detection"
+    assert summary["readiness_contract"]["requirements"]["result_artifacts"]["status"] == "fail"
+    assert summary["readiness_contract"]["requirements"]["experiment_results"]["status"] == "fail"
+    assert any(action["category"] == "result_artifacts" for action in summary["next_actions"])
 
 
 def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_path, capsys):
@@ -6571,6 +6576,8 @@ def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_p
     assert summary["outputs"]["artifact_schema_path"] == str(logs_dir / "ARTIFACT_SCHEMA.json")
     assert "paper-agent tcga-pipeline" in summary["next_command"]
     assert any("tcga_stats.csv" in item for item in summary["missing_inputs"])
+    assert summary["readiness_contract"]["requirements"]["result_artifacts"]["status"] == "ready_to_fill"
+    assert summary["readiness_contract"]["requirements"]["experiment_results"]["status"] == "ready_to_generate"
 
 
 def test_cli_tcga_pipeline_writes_summary_on_doctor_failure(monkeypatch, tmp_path, capsys):
@@ -6647,6 +6654,8 @@ def test_cli_tcga_pipeline_writes_summary_on_doctor_failure(monkeypatch, tmp_pat
     assert any("Baseline PDF" in item for item in summary["missing_inputs"])
     assert any("Hyper-ProtoSurv code directory" in item for item in summary["missing_inputs"])
     assert summary["next_command"].startswith("paper-agent tcga-doctor")
+    assert summary["readiness_contract"]["requirements"]["pipeline_stage"]["status"] == "fail"
+    assert "pipeline_stage" in summary["readiness_contract"]["blocking_categories"]
 
 
 def test_cli_tcga_pipeline_writes_summary_on_draft_llm_failure(monkeypatch, tmp_path, capsys):
@@ -6706,6 +6715,8 @@ def test_cli_tcga_pipeline_writes_summary_on_draft_llm_failure(monkeypatch, tmp_
     assert summary["pipeline_phase"] == "llm_preflight"
     assert summary["next_command"] == "paper-agent llm-doctor"
     assert any("LLM API key" in item for item in summary["missing_inputs"])
+    assert summary["readiness_contract"]["requirements"]["llm"]["status"] == "fail"
+    assert summary["readiness_contract"]["requirements"]["llm"]["command"] == "paper-agent llm-doctor"
     assert summary["diagnostics"]["llm"]["failure_kind"] == "configuration"
     assert summary["diagnostics"]["llm"]["provider"] == "deepseek"
     assert summary["diagnostics"]["llm"]["model"] == "deepseek-v4-pro"
