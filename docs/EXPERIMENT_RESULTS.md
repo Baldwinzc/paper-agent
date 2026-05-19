@@ -72,8 +72,10 @@ python -m paper_agent.cli tcga-demo-artifact-flow `
 
 This reads `examples\tcga_training_summary.csv`, writes artifact CSVs, generates
 a strict `tcga_results.md`, and writes `RUN_SUMMARY.json` with artifact paths,
-validation statuses, and the next command. The bundled numbers are demo values,
-not evidence for a real paper.
+validation statuses, and the next command. The summary's `draft_command` uses
+`tcga-draft --artifact-flow-summary`, so the draft stage can reuse the generated
+result path and preserve the artifact audit chain. The bundled numbers are demo
+values, not evidence for a real paper.
 
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
@@ -181,6 +183,10 @@ python -m paper_agent.cli tcga-draft `
 `tcga-draft` always runs the strict real-result preflight before spending LLM
 generation calls. It fails on TODO templates, synthetic/mock result files, and
 TCGA cohort metadata summaries.
+If the result file came from an artifact-flow summary, pass
+`--artifact-flow-summary path\to\RUN_SUMMARY.json` instead of
+`--experiment-results`; the draft summary records the upstream summary path,
+artifact directory, artifact files, and validation counts.
 By default, ablation, sensitivity, and statistical-test evidence are required for
 a complete contract. Disable requirements that are out of scope with
 `--no-require-ablation`, `--no-require-sensitivity`, or

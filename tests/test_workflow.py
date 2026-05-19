@@ -5862,6 +5862,140 @@ def test_cli_tcga_draft_uses_default_result_path_and_writes_reports(monkeypatch,
     assert "| Experiment result quality | PASS | complete;" in acceptance_report
 
 
+def test_cli_tcga_draft_uses_artifact_flow_summary_when_results_omitted(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+
+    flow_dir = tmp_path / "artifact-flow"
+    flow_dir.mkdir()
+    result_path = flow_dir / "tcga_results.md"
+    result_path.write_text(
+        "\n".join(
+            [
+                "## Main Results",
+                "",
+                "Metric: C-index. Higher is better.",
+                "",
+                "| Method | BLCA C-index | BRCA C-index | LGG C-index | LUAD C-index | UCEC C-index |",
+                "|---|---:|---:|---:|---:|---:|",
+                "| ProtoSurv baseline | 0.646 | 0.669 | 0.724 | 0.636 | 0.658 |",
+                "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |",
+                "",
+                "## Ablation Study",
+                "",
+                "| Variant | Average C-index |",
+                "|---|---:|",
+                "| Hyper-ProtoSurv ours | 0.690 |",
+                "| w/o reconstruction loss | 0.672 |",
+                "",
+                "## Sensitivity Analysis",
+                "",
+                "| lambda_rec | Average C-index |",
+                "|---:|---:|",
+                "| 0.5 | 0.687 |",
+                "| 1.0 | 0.690 |",
+                "",
+                "## Statistical Testing",
+                "",
+                "| Comparison | Metric | Test | p-value |",
+                "|---|---|---|---:|",
+                "| Hyper-ProtoSurv ours vs ProtoSurv baseline | C-index | Wilcoxon signed-rank | 0.018 |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    flow_summary_path = flow_dir / "RUN_SUMMARY.json"
+    flow_summary_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "pipeline_phase": "tcga_artifact_flow_demo",
+                "experiment_results": str(result_path),
+                "artifacts_dir": str(flow_dir / "artifacts"),
+                "artifact_files": {
+                    "tcga_main_results.csv": str(flow_dir / "artifacts" / "tcga_main_results.csv"),
+                },
+                "experiment_contract_status": "complete",
+                "experiment_quality_status": "complete",
+                "experiment_provenance_status": "complete",
+                "experiment_artifact_consistency_status": "complete",
+                "artifact_consistency_matched": 15,
+                "artifact_consistency_missing": 0,
+                "artifact_consistency_mismatched": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "llm_self_review": {"mode": "disabled"},
+                    "experiment_result_tables": [{"title": "Main results"}],
+                    "experiment_ablation_evidence": [{"variant": "w/o reconstruction loss"}],
+                    "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
+                    "experiment_statistical_tests": [{"comparison": "ours vs baseline"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    output_dir = tmp_path / "tcga-draft"
+    zip_path = tmp_path / "tcga-draft.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-draft",
+            "--example-root",
+            str(example_root),
+            "--artifact-flow-summary",
+            str(flow_summary_path),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--disable-llm",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "TCGA artifact flow summary loaded from" in output
+    assert "TCGA draft run completed." in output
+    assert captured["llm_client"] is None
+    assert captured["request"].experiment_results
+    assert summary["inputs"]["experiment_results_path"] == str(result_path)
+    assert summary["inputs"]["tcga_artifact_flow_summary_path"] == str(flow_summary_path)
+    assert summary["inputs"]["tcga_artifact_flow_summary_status"] == "pass"
+    assert summary["inputs"]["tcga_artifact_flow_pipeline_phase"] == "tcga_artifact_flow_demo"
+    assert summary["inputs"]["tcga_artifact_flow_validation"]["artifact_consistency_matched"] == 15
+    assert zip_path.exists()
+
+
 def test_cli_tcga_submission_grade_forces_full_acceptance_path(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

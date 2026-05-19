@@ -321,8 +321,10 @@ paper-agent tcga-demo-artifact-flow `
 
 This reads `examples\tcga_training_summary.csv`, writes standard artifact CSVs,
 generates a strict `tcga_results.md`, and writes `RUN_SUMMARY.json` with
-artifact paths, validation statuses, and the next command. The bundled numbers
-are demo values, not evidence for a real paper.
+artifact paths, validation statuses, and the next command. The summary's
+`draft_command` points `tcga-draft` at `--artifact-flow-summary` so the draft
+run can reuse the generated result path and preserve the artifact audit chain.
+The bundled numbers are demo values, not evidence for a real paper.
 
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
@@ -417,6 +419,11 @@ requires the configured LLM by default. Pass `--disable-llm` only for determinis
 debug runs. The preflight also runs TCGA quality checks for the expected BLCA,
 BRCA, LGG, LUAD, and UCEC cohorts, C-index, `Hyper-ProtoSurv`, and `ProtoSurv`;
 use the `--expected-*` options to override those defaults.
+If a previous artifact-flow step wrote `RUN_SUMMARY.json`, pass
+`--artifact-flow-summary path\to\RUN_SUMMARY.json` instead of
+`--experiment-results`; `tcga-draft` reads the result path from that summary and
+records the summary path, artifact directory, artifact files, and validation
+counts in the final draft `RUN_SUMMARY.json`.
 If you only want to run the built-in local TCGA
 showcase, use `sample-hyper-protosurv`; it reads `dataset_csv/*.csv` directly as
 cohort metadata, not as performance evidence.

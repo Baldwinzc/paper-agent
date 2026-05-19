@@ -407,6 +407,14 @@ def main() -> None:
         help="Real TCGA result file. Defaults to example-root/results/tcga_results.md.",
     )
     tcga_draft.add_argument(
+        "--artifact-flow-summary",
+        default="",
+        help=(
+            "Optional RUN_SUMMARY.json from tcga-demo-artifact-flow. "
+            "When --experiment-results is omitted, tcga-draft uses the summary's experiment_results path."
+        ),
+    )
+    tcga_draft.add_argument(
         "--project-name",
         default="",
         help="Project name for generated LaTeX artifacts. Defaults to the output directory name.",
@@ -1910,6 +1918,7 @@ def _run_tcga_demo_artifact_flow(args: argparse.Namespace) -> None:
         output_dir,
         artifacts_dir,
         result_path,
+        summary_path,
         written,
         result_summary,
     )
@@ -1925,6 +1934,7 @@ def _tcga_demo_artifact_flow_summary(
     output_dir: Path,
     artifacts_dir: Path,
     result_path: Path,
+    summary_path: Path,
     written_artifacts: dict[str, Path],
     result_summary: dict,
 ) -> dict[str, object]:
@@ -1954,7 +1964,7 @@ def _tcga_demo_artifact_flow_summary(
         "metric": args.metric,
         "seed": args.seed,
         "next_command": f"paper-agent validate-results --experiment-results {_powershell_arg(result_path)} --strict",
-        "draft_command": f"paper-agent tcga-draft --experiment-results {_powershell_arg(result_path)}",
+        "draft_command": f"paper-agent tcga-draft --artifact-flow-summary {_powershell_arg(summary_path)}",
         "note": "Bundled demo values are for local workflow validation only, not evidence for a real paper.",
     }
 
@@ -2431,6 +2441,69 @@ def _tcga_result_path(args: argparse.Namespace, example_root: Path) -> Path:
     if getattr(args, "experiment_results", ""):
         return _resolve_project_relative_path(args.experiment_results)
     return example_root / "results" / "tcga_results.md"
+
+
+def _load_tcga_artifact_flow_summary(args: argparse.Namespace) -> tuple[Path | None, dict]:
+    summary_value = str(getattr(args, "artifact_flow_summary", "") or "")
+    if not summary_value:
+        return None, {}
+    summary_path = _resolve_project_relative_path(summary_value)
+    if not summary_path.is_file():
+        raise SystemExit(f"TCGA artifact flow summary not found: {summary_path}")
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"TCGA artifact flow summary is invalid JSON: {summary_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"TCGA artifact flow summary must be a JSON object: {summary_path}")
+    status = str(payload.get("status", "unknown"))
+    if status != "pass":
+        raise SystemExit(
+            f"TCGA artifact flow summary is not pass: {summary_path} status={status}. "
+            "Rerun tcga-demo-artifact-flow or validate the result artifacts before drafting."
+        )
+    if not str(payload.get("experiment_results", "") or ""):
+        raise SystemExit(f"TCGA artifact flow summary is missing experiment_results: {summary_path}")
+    return summary_path, payload
+
+
+def _tcga_result_path_from_artifact_flow_summary(summary_path: Path, summary: dict) -> Path:
+    result_value = str(summary.get("experiment_results", "") or "")
+    result_path = Path(result_value)
+    if result_path.is_absolute():
+        return result_path
+    summary_relative = summary_path.parent / result_path
+    if summary_relative.exists():
+        return summary_relative
+    return _resolve_project_relative_path(result_value)
+
+
+def _record_tcga_artifact_flow_summary(
+    state: dict,
+    summary_path: Path | None,
+    summary: dict,
+) -> None:
+    if not summary_path or not summary:
+        return
+    artifacts = state.setdefault("artifacts", {})
+    artifacts["tcga_artifact_flow_summary_path"] = str(summary_path)
+    artifacts["tcga_artifact_flow_summary_status"] = str(summary.get("status", "unknown"))
+    artifacts["tcga_artifact_flow_pipeline_phase"] = str(summary.get("pipeline_phase", "unknown"))
+    artifacts["tcga_artifact_flow_artifacts_dir"] = str(summary.get("artifacts_dir", ""))
+    artifact_files = summary.get("artifact_files", {})
+    artifacts["tcga_artifact_flow_artifact_files"] = artifact_files if isinstance(artifact_files, dict) else {}
+    artifacts["tcga_artifact_flow_validation"] = {
+        "experiment_contract_status": summary.get("experiment_contract_status", "unknown"),
+        "experiment_quality_status": summary.get("experiment_quality_status", "unknown"),
+        "experiment_provenance_status": summary.get("experiment_provenance_status", "unknown"),
+        "experiment_artifact_consistency_status": summary.get(
+            "experiment_artifact_consistency_status",
+            "unknown",
+        ),
+        "artifact_consistency_matched": summary.get("artifact_consistency_matched", 0),
+        "artifact_consistency_missing": summary.get("artifact_consistency_missing", 0),
+        "artifact_consistency_mismatched": summary.get("artifact_consistency_mismatched", 0),
+    }
 
 
 def _tcga_artifact_template_output_dir(args: argparse.Namespace, example_root: Path) -> Path:
@@ -3663,7 +3736,16 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
     if not code_path.is_dir():
         raise SystemExit(f"Hyper-ProtoSurv code directory not found: {code_path}")
 
-    experiment_path = _tcga_result_path(args, example_root)
+    artifact_flow_summary_path, artifact_flow_summary = _load_tcga_artifact_flow_summary(args)
+    if artifact_flow_summary_path and not getattr(args, "experiment_results", ""):
+        experiment_path = _tcga_result_path_from_artifact_flow_summary(
+            artifact_flow_summary_path,
+            artifact_flow_summary,
+        )
+    else:
+        experiment_path = _tcga_result_path(args, example_root)
+    if artifact_flow_summary_path:
+        print(f"TCGA artifact flow summary loaded from {artifact_flow_summary_path}")
     if not experiment_path.is_file():
         raise SystemExit(
             "TCGA experiment results file not found: "
@@ -3736,6 +3818,7 @@ def _run_tcga_draft(args: argparse.Namespace) -> None:
     state.setdefault("artifacts", {})["experiment_results_source"] = "file"
     state["artifacts"]["experiment_results_path"] = str(experiment_path)
     _record_result_preflight(state, result_preflight)
+    _record_tcga_artifact_flow_summary(state, artifact_flow_summary_path, artifact_flow_summary)
     SubmissionReadinessAgent().run(state)
     DraftReportAgent().run(state)
 
@@ -4897,6 +4980,12 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "experiment_results_path": artifacts.get("experiment_results_path", ""),
             "experiment_evidence_kind": experiment_evidence.get("kind", "unknown"),
             "experiment_evidence_note": experiment_evidence.get("note", ""),
+            "tcga_artifact_flow_summary_path": artifacts.get("tcga_artifact_flow_summary_path", ""),
+            "tcga_artifact_flow_summary_status": artifacts.get("tcga_artifact_flow_summary_status", ""),
+            "tcga_artifact_flow_pipeline_phase": artifacts.get("tcga_artifact_flow_pipeline_phase", ""),
+            "tcga_artifact_flow_artifacts_dir": artifacts.get("tcga_artifact_flow_artifacts_dir", ""),
+            "tcga_artifact_flow_artifact_files": artifacts.get("tcga_artifact_flow_artifact_files", {}),
+            "tcga_artifact_flow_validation": artifacts.get("tcga_artifact_flow_validation", {}),
             "keywords": list(getattr(request, "keywords", []) or []),
             "template_zip_path": getattr(request, "template_zip_path", "") or "",
             "template_dir_path": getattr(request, "template_dir_path", "") or "",

@@ -184,5 +184,6 @@ def test_cli_tcga_demo_artifact_flow_uses_bundled_example(monkeypatch, tmp_path,
     assert summary["experiment_artifact_consistency_status"] == "complete"
     assert summary["artifact_consistency_matched"] == 15
     assert summary["artifact_files"]["tcga_main_results.csv"].endswith("tcga_main_results.csv")
+    assert "tcga-draft --artifact-flow-summary" in summary["draft_command"]
     result_text = (output_dir / "tcga_results.md").read_text(encoding="utf-8")
     assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |" in result_text
