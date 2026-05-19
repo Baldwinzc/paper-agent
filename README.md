@@ -365,6 +365,13 @@ separate baseline, code, result-artifact, experiment-result, LLM, LaTeX, and
 venue/network requirements, plus concrete `next_actions` commands. When
 `--live-llm` is used, the JSON summary records live provider status, elapsed
 time, token usage when available, and sanitized failure diagnostics.
+The readiness payload is versioned as `tcga-readiness-contract/v1`; write the
+machine-readable schema or a sample payload with:
+
+```powershell
+paper-agent tcga-readiness-schema --output outputs\tcga-readiness-schema.json
+paper-agent tcga-readiness-schema --example --output outputs\tcga-readiness-example.json
+```
 
 ```powershell
 paper-agent tcga-artifacts-doctor `

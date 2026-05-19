@@ -113,6 +113,13 @@ experiment-result, LLM, LaTeX, and venue/network requirements. It also includes
 concrete `next_actions` commands. When `--live-llm` is used, it records live
 provider status, elapsed time, token usage when available, and sanitized failure
 diagnostics.
+The readiness payload is versioned as `tcga-readiness-contract/v1`; write the
+machine-readable schema or a sample payload with:
+
+```powershell
+python -m paper_agent.cli tcga-readiness-schema --output outputs\tcga-readiness-schema.json
+python -m paper_agent.cli tcga-readiness-schema --example --output outputs\tcga-readiness-example.json
+```
 
 For the stricter doctor gate before drafting, write the same style of diagnostic
 summary:

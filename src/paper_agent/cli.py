@@ -31,6 +31,27 @@ from paper_agent.tcga_artifacts import write_tcga_artifact_exports_from_rows
 from paper_agent.workflow import PaperWorkflow
 
 
+TCGA_READINESS_CONTRACT_SCHEMA_VERSION = "tcga-readiness-contract/v1"
+TCGA_READINESS_CONTRACT_CATEGORIES = (
+    "venue_network",
+    "baseline_pdf",
+    "code_path",
+    "result_artifacts",
+    "experiment_results",
+    "llm",
+    "latex",
+    "pipeline_stage",
+)
+TCGA_READINESS_REQUIREMENT_STATUSES = (
+    "pass",
+    "warn",
+    "fail",
+    "disabled",
+    "ready_to_fill",
+    "ready_to_generate",
+)
+
+
 def _add_experiment_contract_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--require-ablation",
@@ -612,6 +633,16 @@ def main() -> None:
     _add_experiment_quality_options(tcga_pipeline)
     _add_experiment_provenance_options(tcga_pipeline)
     _add_experiment_artifact_consistency_options(tcga_pipeline)
+    tcga_readiness_schema = sub.add_parser(
+        "tcga-readiness-schema",
+        help="Print or write the versioned JSON schema/example for TCGA readiness_contract payloads.",
+    )
+    tcga_readiness_schema.add_argument("--output", default="", help="Optional path to write JSON.")
+    tcga_readiness_schema.add_argument(
+        "--example",
+        action="store_true",
+        help="Write an example readiness_contract instead of the schema.",
+    )
     sub.add_parser("llm-ping", help="Test the configured OpenAI-compatible LLM.")
     llm_doctor = sub.add_parser("llm-doctor", help="Inspect LLM configuration and provider health.")
     llm_doctor.add_argument(
@@ -887,6 +918,8 @@ def main() -> None:
         _run_tcga_draft(args)
     elif args.command == "tcga-pipeline":
         _run_tcga_pipeline(args)
+    elif args.command == "tcga-readiness-schema":
+        _run_tcga_readiness_schema(args)
     elif args.command == "llm-ping":
         config = load_llm_config()
         client = LLMClient(config)
@@ -2653,6 +2686,7 @@ def _tcga_preflight_readiness_contract(
             }
         )
     return {
+        "schema_version": TCGA_READINESS_CONTRACT_SCHEMA_VERSION,
         "status": "blocked" if blocking else "ready",
         "submission_grade": submission_grade,
         "ready_for_submission_grade": bool(submission_grade and not blocking),
@@ -3948,6 +3982,155 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
     print("TCGA pipeline completed.")
 
 
+def _run_tcga_readiness_schema(args: argparse.Namespace) -> None:
+    payload = _tcga_readiness_contract_example() if args.example else _tcga_readiness_contract_schema()
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
+    if args.output:
+        output_path = _resolve_project_relative_path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text + "\n", encoding="utf-8")
+        print(f"TCGA readiness {'example' if args.example else 'schema'} written to {output_path}")
+    else:
+        print(text)
+
+
+def _tcga_readiness_contract_schema() -> dict[str, object]:
+    requirement_schema = {
+        "type": "object",
+        "required": ["status", "required", "detail", "next_action", "command"],
+        "properties": {
+            "status": {"type": "string", "enum": list(TCGA_READINESS_REQUIREMENT_STATUSES)},
+            "required": {"type": "boolean"},
+            "detail": {"type": "string"},
+            "next_action": {"type": "string"},
+            "command": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://paper-agent.local/schemas/tcga-readiness-contract/v1.json",
+        "title": "TCGA readiness_contract",
+        "schema_version": TCGA_READINESS_CONTRACT_SCHEMA_VERSION,
+        "type": "object",
+        "required": [
+            "schema_version",
+            "status",
+            "submission_grade",
+            "ready_for_submission_grade",
+            "ready_for_deterministic_draft",
+            "blocking_categories",
+            "requirements",
+            "next_actions",
+        ],
+        "properties": {
+            "schema_version": {"const": TCGA_READINESS_CONTRACT_SCHEMA_VERSION},
+            "status": {"type": "string", "enum": ["ready", "blocked"]},
+            "submission_grade": {"type": "boolean"},
+            "pipeline_phase": {"type": "string"},
+            "ready_for_submission_grade": {"type": "boolean"},
+            "ready_for_deterministic_draft": {"type": "boolean"},
+            "blocking_categories": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(TCGA_READINESS_CONTRACT_CATEGORIES)},
+            },
+            "requirements": {
+                "type": "object",
+                "properties": {
+                    category: requirement_schema for category in TCGA_READINESS_CONTRACT_CATEGORIES
+                },
+                "additionalProperties": requirement_schema,
+            },
+            "next_actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["category", "action", "command"],
+                    "properties": {
+                        "category": {"type": "string"},
+                        "action": {"type": "string"},
+                        "command": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "artifact_warnings": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _tcga_readiness_contract_example() -> dict[str, object]:
+    return {
+        "schema_version": TCGA_READINESS_CONTRACT_SCHEMA_VERSION,
+        "status": "blocked",
+        "submission_grade": True,
+        "pipeline_phase": "llm_preflight",
+        "ready_for_submission_grade": False,
+        "ready_for_deterministic_draft": False,
+        "blocking_categories": ["llm"],
+        "requirements": {
+            "venue_network": {
+                "status": "pass",
+                "required": True,
+                "detail": "online",
+                "next_action": "",
+                "command": "",
+            },
+            "baseline_pdf": {
+                "status": "pass",
+                "required": True,
+                "detail": "D:/code/agent/example/baseline/baseline.pdf",
+                "next_action": "",
+                "command": "",
+            },
+            "code_path": {
+                "status": "pass",
+                "required": True,
+                "detail": "D:/code/agent/example/code/hyper-protosurv",
+                "next_action": "",
+                "command": "",
+            },
+            "result_artifacts": {
+                "status": "pass",
+                "required": False,
+                "detail": "main=PASS; ablation=PASS; sensitivity=PASS; stats=PASS",
+                "next_action": "",
+                "command": "",
+            },
+            "experiment_results": {
+                "status": "pass",
+                "required": True,
+                "detail": "D:/code/agent/example/results/tcga_results.md",
+                "next_action": "",
+                "command": "",
+            },
+            "llm": {
+                "status": "fail",
+                "required": True,
+                "detail": "Provider quota or configuration blocked the live LLM preflight.",
+                "next_action": "Fix LLM configuration or provider quota before LLM drafting.",
+                "command": "paper-agent llm-doctor",
+            },
+            "latex": {
+                "status": "pass",
+                "required": True,
+                "detail": "tectonic.exe",
+                "next_action": "",
+                "command": "",
+            },
+        },
+        "next_actions": [
+            {
+                "category": "llm",
+                "action": "Fix LLM configuration or provider quota before LLM drafting.",
+                "command": "paper-agent llm-doctor",
+            }
+        ],
+        "artifact_warnings": [],
+    }
+
+
 def _tcga_pipeline_artifact_failure_message(
     args: argparse.Namespace,
     example_root: Path,
@@ -4168,6 +4351,7 @@ def _tcga_pipeline_failure_readiness_contract(
     if not next_actions and (next_action or next_command):
         next_actions.append({"category": phase, "action": next_action, "command": next_command})
     return {
+        "schema_version": TCGA_READINESS_CONTRACT_SCHEMA_VERSION,
         "status": "blocked",
         "submission_grade": submission_grade,
         "pipeline_phase": phase,
