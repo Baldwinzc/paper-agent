@@ -318,6 +318,22 @@ paper-agent tcga-export-artifacts `
 For a local end-to-end demo with bundled example values:
 
 ```powershell
+paper-agent tcga-demo-paper `
+  --example-root D:\code\agent\example `
+  --output-dir outputs\tcga-demo-paper `
+  --zip outputs\tcga-demo-paper.zip `
+  --force
+```
+
+This one command runs the bundled artifact export, generates `tcga_results.md`,
+drafts the local paper package with deterministic section writing by default,
+and writes a top-level `RUN_SUMMARY.json` that links the artifact-flow summary,
+draft summary, Markdown draft, LaTeX project, Overleaf zip, and acceptance
+report. Add `--use-llm` when you want the configured provider to write sections.
+
+For only the artifact/result half of the same demo:
+
+```powershell
 paper-agent tcga-demo-artifact-flow `
   --output-dir outputs\tcga-artifact-flow `
   --force

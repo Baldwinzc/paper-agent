@@ -324,6 +324,48 @@ def main() -> None:
         default="",
         help="Optional JSON summary path. Defaults to output-dir/RUN_SUMMARY.json.",
     )
+    tcga_demo_paper = sub.add_parser(
+        "tcga-demo-paper",
+        help="Run the bundled TCGA artifact-flow demo and draft a complete local paper package.",
+    )
+    tcga_demo_paper.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_demo_paper.add_argument("--input-csv", default="examples/tcga_training_summary.csv")
+    tcga_demo_paper.add_argument("--output-dir", default="outputs/tcga-demo-paper")
+    tcga_demo_paper.add_argument("--zip", default="", help="Optional Overleaf zip path. Defaults under output-dir.")
+    tcga_demo_paper.add_argument("--target-venue", default="TPAMI")
+    tcga_demo_paper.add_argument("--project-name", default="")
+    tcga_demo_paper.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_demo_paper.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_demo_paper.add_argument("--metric", default="C-index")
+    tcga_demo_paper.add_argument("--seed", default="2026")
+    tcga_demo_paper.add_argument("--force", action="store_true", help="Overwrite existing demo artifact outputs.")
+    tcga_demo_paper.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Use the configured LLM for section drafting. Default is deterministic local drafting.",
+    )
+    tcga_demo_paper.add_argument(
+        "--min-llm-sections",
+        type=int,
+        default=4,
+        help="Minimum LLM-written sections when --use-llm is enabled.",
+    )
+    tcga_demo_paper.add_argument(
+        "--skip-llm-self-review",
+        action="store_true",
+        help="Skip the final LLM self-review pass when --use-llm is enabled.",
+    )
+    tcga_demo_paper.add_argument("--compile-latex", action="store_true", help="Run local LaTeX compile validation.")
+    tcga_demo_paper.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    tcga_demo_paper.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    tcga_demo_paper_network = tcga_demo_paper.add_mutually_exclusive_group()
+    tcga_demo_paper_network.add_argument("--online", action="store_true", help="Allow template/reference network calls.")
+    tcga_demo_paper_network.add_argument("--offline", action="store_true", help="Disable template/reference network calls.")
+    tcga_demo_paper.add_argument("--keyword", action="append", default=[], help="Additional keyword; can be repeated.")
+    _add_experiment_contract_options(tcga_demo_paper)
+    _add_experiment_quality_options(tcga_demo_paper)
+    _add_experiment_provenance_options(tcga_demo_paper)
+    _add_experiment_artifact_consistency_options(tcga_demo_paper)
     tcga_artifacts_doctor = sub.add_parser(
         "tcga-artifacts-doctor",
         help="Diagnose TCGA result CSV artifacts before generating the result Markdown file.",
@@ -833,6 +875,8 @@ def main() -> None:
         _run_tcga_export_artifacts(args)
     elif args.command == "tcga-demo-artifact-flow":
         _run_tcga_demo_artifact_flow(args)
+    elif args.command == "tcga-demo-paper":
+        _run_tcga_demo_paper(args)
     elif args.command == "tcga-artifacts-doctor":
         _run_tcga_artifacts_doctor(args)
     elif args.command == "tcga-artifact-template":
@@ -1966,6 +2010,123 @@ def _tcga_demo_artifact_flow_summary(
         "next_command": f"paper-agent validate-results --experiment-results {_powershell_arg(result_path)} --strict",
         "draft_command": f"paper-agent tcga-draft --artifact-flow-summary {_powershell_arg(summary_path)}",
         "note": "Bundled demo values are for local workflow validation only, not evidence for a real paper.",
+    }
+
+
+def _run_tcga_demo_paper(args: argparse.Namespace) -> None:
+    output_dir = _resolve_project_relative_path(args.output_dir)
+    artifact_flow_dir = output_dir / "artifact-flow"
+    draft_dir = output_dir / "draft"
+    artifact_summary_path = artifact_flow_dir / "RUN_SUMMARY.json"
+    draft_summary_path = draft_dir / "RUN_SUMMARY.json"
+    zip_path = _resolve_project_relative_path(args.zip) if args.zip else output_dir / "paper-overleaf.zip"
+
+    print("TCGA demo paper: generating artifact flow")
+    flow_args = argparse.Namespace(
+        input_csv=args.input_csv,
+        output_dir=str(artifact_flow_dir),
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        seed=args.seed,
+        force=bool(args.force),
+        summary=str(artifact_summary_path),
+    )
+    _run_tcga_demo_artifact_flow(flow_args)
+
+    print("TCGA demo paper: drafting paper package")
+    project_name = args.project_name or f"{_default_project_name(output_dir)}-draft"
+    draft_args = argparse.Namespace(
+        example_root=args.example_root,
+        experiment_results="",
+        artifact_flow_summary=str(artifact_summary_path),
+        project_name=project_name,
+        target_venue=args.target_venue,
+        output_dir=str(draft_dir),
+        zip=str(zip_path),
+        template_zip=args.template_zip,
+        template_dir=args.template_dir,
+        online=bool(getattr(args, "online", False)),
+        offline=bool(getattr(args, "offline", False)),
+        disable_llm=not bool(args.use_llm),
+        min_llm_sections=args.min_llm_sections,
+        skip_llm_self_review=bool(args.skip_llm_self_review),
+        compile_latex=bool(args.compile_latex),
+        submission_grade=False,
+        keyword=list(args.keyword or []),
+        require_ablation=bool(args.require_ablation),
+        require_sensitivity=bool(args.require_sensitivity),
+        require_statistical_tests=bool(args.require_statistical_tests),
+        expected_dataset=list(args.expected_dataset or []),
+        expected_metric=list(args.expected_metric or []),
+        expected_method=args.expected_method,
+        expected_baseline=args.expected_baseline,
+        require_provenance=bool(args.require_provenance),
+        require_artifact_consistency=bool(args.require_artifact_consistency),
+    )
+    _run_tcga_draft(draft_args)
+
+    artifact_summary = _read_json_object(artifact_summary_path, "TCGA artifact-flow summary")
+    draft_summary = _read_json_object(draft_summary_path, "TCGA draft summary")
+    demo_summary = _tcga_demo_paper_summary(
+        args,
+        output_dir,
+        artifact_flow_dir,
+        draft_dir,
+        artifact_summary_path,
+        draft_summary_path,
+        zip_path,
+        artifact_summary,
+        draft_summary,
+    )
+    summary_path = _write_run_summary_data(demo_summary, output_dir / "RUN_SUMMARY.json")
+    print(f"TCGA demo paper summary written to {summary_path}")
+    print("TCGA demo paper completed.")
+
+
+def _tcga_demo_paper_summary(
+    args: argparse.Namespace,
+    output_dir: Path,
+    artifact_flow_dir: Path,
+    draft_dir: Path,
+    artifact_summary_path: Path,
+    draft_summary_path: Path,
+    zip_path: Path,
+    artifact_summary: dict,
+    draft_summary: dict,
+) -> dict[str, object]:
+    draft_outputs = draft_summary.get("outputs", {}) if isinstance(draft_summary.get("outputs", {}), dict) else {}
+    return {
+        "status": "pass",
+        "pipeline_phase": "tcga_demo_paper",
+        "target_venue": args.target_venue,
+        "project_name": args.project_name or f"{_default_project_name(output_dir)}-draft",
+        "output_dir": str(output_dir),
+        "artifact_flow_dir": str(artifact_flow_dir),
+        "draft_dir": str(draft_dir),
+        "artifact_flow_summary_path": str(artifact_summary_path),
+        "draft_summary_path": str(draft_summary_path),
+        "experiment_results": artifact_summary.get("experiment_results", ""),
+        "artifact_flow_status": artifact_summary.get("status", "unknown"),
+        "draft_experiment_contract_status": draft_summary.get("experiment_contract_status", "unknown"),
+        "draft_experiment_quality_status": draft_summary.get("experiment_quality_status", "unknown"),
+        "draft_experiment_provenance_status": draft_summary.get("experiment_provenance_status", "unknown"),
+        "draft_experiment_artifact_consistency_status": draft_summary.get(
+            "experiment_artifact_consistency_status",
+            "unknown",
+        ),
+        "llm_mode": draft_summary.get("inputs", {}).get("llm_mode", "unknown")
+        if isinstance(draft_summary.get("inputs", {}), dict)
+        else "unknown",
+        "outputs": {
+            "markdown": draft_outputs.get("markdown", ""),
+            "latex_project_dir": draft_outputs.get("latex_project_dir", ""),
+            "latex_output_path": draft_outputs.get("latex_output_path", ""),
+            "latex_zip_path": str(zip_path),
+            "draft_report_path": draft_outputs.get("draft_report_path", ""),
+            "acceptance_report_path": draft_outputs.get("acceptance_report_path", ""),
+        },
+        "note": "Bundled TCGA demo values are for local workflow validation only, not evidence for a real paper.",
     }
 
 
@@ -4392,6 +4553,16 @@ def _write_run_summary_data(summary: dict, summary_path: Path) -> Path:
         encoding="utf-8",
     )
     return summary_path
+
+
+def _read_json_object(path: Path, label: str) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{label} could not be read as JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{label} must be a JSON object: {path}")
+    return payload
 
 
 def _write_acceptance_report(
