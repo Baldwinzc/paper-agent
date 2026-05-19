@@ -320,8 +320,9 @@ paper-agent tcga-demo-artifact-flow `
 ```
 
 This reads `examples\tcga_training_summary.csv`, writes standard artifact CSVs,
-and generates a strict `tcga_results.md`. The bundled numbers are demo values,
-not evidence for a real paper.
+generates a strict `tcga_results.md`, and writes `RUN_SUMMARY.json` with
+artifact paths, validation statuses, and the next command. The bundled numbers
+are demo values, not evidence for a real paper.
 
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:

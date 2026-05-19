@@ -319,6 +319,11 @@ def main() -> None:
     tcga_demo_flow.add_argument("--metric", default="C-index")
     tcga_demo_flow.add_argument("--seed", default="2026")
     tcga_demo_flow.add_argument("--force", action="store_true", help="Overwrite existing demo outputs.")
+    tcga_demo_flow.add_argument(
+        "--summary",
+        default="",
+        help="Optional JSON summary path. Defaults to output-dir/RUN_SUMMARY.json.",
+    )
     tcga_artifacts_doctor = sub.add_parser(
         "tcga-artifacts-doctor",
         help="Diagnose TCGA result CSV artifacts before generating the result Markdown file.",
@@ -1737,7 +1742,7 @@ def _tcga_doctor_write_template_command(args: argparse.Namespace, example_root: 
     return " ".join(_powershell_arg(part) for part in parts)
 
 
-def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
+def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> dict | None:
     example_root = Path(args.example_root)
     output_path = _resolve_project_relative_path(args.output) if args.output else example_root / "results" / "tcga_results.md"
     artifact_dir = _tcga_artifact_dir(args, example_root)
@@ -1829,6 +1834,8 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
         )
         if not _validated_results_are_strictly_acceptable(summary):
             raise SystemExit("Generated TCGA result file failed strict validation.")
+        return summary
+    return None
 
 
 def _run_tcga_export_artifacts(args: argparse.Namespace) -> None:
@@ -1895,9 +1902,61 @@ def _run_tcga_demo_artifact_flow(args: argparse.Namespace) -> None:
         require_sensitivity=True,
         require_statistical_tests=True,
     )
-    _run_tcga_results_from_artifacts(result_args)
+    result_summary = _run_tcga_results_from_artifacts(result_args) or {}
+    summary_path = _resolve_project_relative_path(args.summary) if args.summary else output_dir / "RUN_SUMMARY.json"
+    run_summary = _tcga_demo_artifact_flow_summary(
+        args,
+        input_csv,
+        output_dir,
+        artifacts_dir,
+        result_path,
+        written,
+        result_summary,
+    )
+    written_summary = _write_run_summary_data(run_summary, summary_path)
     print(f"TCGA demo result Markdown written to {result_path}")
+    print(f"TCGA demo summary written to {written_summary}")
     print(f"Ready command: paper-agent validate-results --experiment-results {result_path} --strict")
+
+
+def _tcga_demo_artifact_flow_summary(
+    args: argparse.Namespace,
+    input_csv: Path,
+    output_dir: Path,
+    artifacts_dir: Path,
+    result_path: Path,
+    written_artifacts: dict[str, Path],
+    result_summary: dict,
+) -> dict[str, object]:
+    contract = result_summary.get("experiment_contract", {})
+    quality = result_summary.get("experiment_quality", {})
+    provenance = result_summary.get("experiment_provenance", {})
+    consistency = result_summary.get("experiment_artifact_consistency", {})
+    return {
+        "status": "pass" if _validated_results_are_strictly_acceptable(result_summary) else "fail",
+        "pipeline_phase": "tcga_artifact_flow_demo",
+        "input_csv": str(input_csv),
+        "output_dir": str(output_dir),
+        "artifacts_dir": str(artifacts_dir),
+        "experiment_results": str(result_path),
+        "artifact_files": {name: str(path) for name, path in sorted(written_artifacts.items())},
+        "artifact_schema_path": str(written_artifacts.get("ARTIFACT_SCHEMA.json", artifacts_dir / "ARTIFACT_SCHEMA.json")),
+        "result_validation": result_summary,
+        "experiment_contract_status": contract.get("status", "unknown"),
+        "experiment_quality_status": quality.get("status", "unknown"),
+        "experiment_provenance_status": provenance.get("status", "unknown"),
+        "experiment_artifact_consistency_status": consistency.get("status", "unknown"),
+        "artifact_consistency_matched": consistency.get("checks", {}).get("matched_values", 0),
+        "artifact_consistency_missing": consistency.get("checks", {}).get("missing_values", 0),
+        "artifact_consistency_mismatched": consistency.get("checks", {}).get("mismatched_values", 0),
+        "method": args.method,
+        "baseline": args.baseline,
+        "metric": args.metric,
+        "seed": args.seed,
+        "next_command": f"paper-agent validate-results --experiment-results {_powershell_arg(result_path)} --strict",
+        "draft_command": f"paper-agent tcga-draft --experiment-results {_powershell_arg(result_path)}",
+        "note": "Bundled demo values are for local workflow validation only, not evidence for a real paper.",
+    }
 
 
 def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:

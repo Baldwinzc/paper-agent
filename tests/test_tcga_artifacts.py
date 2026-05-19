@@ -173,8 +173,16 @@ def test_cli_tcga_demo_artifact_flow_uses_bundled_example(monkeypatch, tmp_path,
     output = capsys.readouterr().out
     assert "TCGA demo artifacts written" in output
     assert "TCGA demo result Markdown written" in output
+    assert "TCGA demo summary written" in output
     assert "Experiment artifact consistency: complete" in output
     assert (output_dir / "artifacts" / "tcga_main_results.csv").is_file()
     assert (output_dir / "artifacts" / "ARTIFACT_SCHEMA.json").is_file()
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "pass"
+    assert summary["pipeline_phase"] == "tcga_artifact_flow_demo"
+    assert summary["experiment_contract_status"] == "complete"
+    assert summary["experiment_artifact_consistency_status"] == "complete"
+    assert summary["artifact_consistency_matched"] == 15
+    assert summary["artifact_files"]["tcga_main_results.csv"].endswith("tcga_main_results.csv")
     result_text = (output_dir / "tcga_results.md").read_text(encoding="utf-8")
     assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 | 0.746 | 0.661 | 0.681 |" in result_text
