@@ -142,6 +142,7 @@ Inspect the active provider/model/key-source configuration before a full run:
 python -m paper_agent.cli llm-doctor
 python -m paper_agent.cli llm-doctor --no-live
 python -m paper_agent.cli llm-doctor --summary outputs\llm-doctor.json
+python -m paper_agent.cli llm-live-smoke --summary outputs\llm-live-smoke.json
 ```
 
 `llm-doctor` reports the provider host, model, which environment variable
@@ -150,6 +151,9 @@ without printing the API key itself. With `--summary`, it writes the same static
 configuration plus live pass/fail diagnostics to JSON, including sanitized
 failure kind, elapsed time, token usage when provided by the model, and
 retry/timeout settings for reproducibility.
+`llm-live-smoke` is an explicit one-call provider smoke test. It writes a JSON
+record with prompt hash, expected response, elapsed time, response model, token
+usage when available, and sanitized failure diagnostics.
 
 The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises

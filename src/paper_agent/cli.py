@@ -534,6 +534,15 @@ def main() -> None:
         help="Only print local configuration; do not call the provider.",
     )
     llm_doctor.add_argument("--summary", default="", help="Optional JSON summary path for provider diagnostics.")
+    llm_live = sub.add_parser(
+        "llm-live-smoke",
+        help="Run one explicit live LLM call and write a reproducible diagnostic summary.",
+    )
+    llm_live.add_argument("--summary", default="outputs/llm-live-smoke.json", help="JSON summary path.")
+    llm_live.add_argument("--prompt", default="Reply with exactly: paper-agent-live-ok")
+    llm_live.add_argument("--expect", default="paper-agent-live-ok")
+    llm_live.add_argument("--max-tokens", type=int, default=32)
+    llm_live.add_argument("--temperature", type=float, default=0.0)
     sub.add_parser("llm-self-review-smoke", help="Run a tiny configured-LLM self-review smoke test.")
     sub.add_parser("latex-doctor", help="Check local LaTeX compiler availability and install guidance.")
     llm_draft = sub.add_parser(
@@ -803,6 +812,8 @@ def main() -> None:
         print(result.content.strip())
     elif args.command == "llm-doctor":
         _run_llm_doctor(args)
+    elif args.command == "llm-live-smoke":
+        _run_llm_live_smoke(args)
     elif args.command == "llm-self-review-smoke":
         _run_llm_self_review_smoke()
     elif args.command == "latex-doctor":
@@ -1140,8 +1151,120 @@ def _llm_doctor_summary(
     live_error: str = "",
     live_result: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    live_preflight: dict[str, object] = {"status": live_status}
+    if live_result:
+        live_preflight.update(live_result)
+    if live_error:
+        live_preflight["diagnostics"] = _llm_failure_diagnostics(config, live_error)
+    return {
+        "status": status,
+        "llm": _llm_static_summary(config),
+        "live_preflight": live_preflight,
+    }
+
+
+def _run_llm_live_smoke(args: argparse.Namespace) -> None:
+    config = load_llm_config()
+    summary_path = Path(args.summary)
+    request = _llm_live_smoke_request(args)
+    print("LLM live smoke:")
+    print(f"- Provider/model: {_llm_config_label(config)}")
+    print(f"- Summary: {summary_path}")
+    if not config.configured:
+        diagnostics = _llm_failure_diagnostics(config, "LLM live smoke failed: no configured API key/model.")
+        summary = _llm_live_smoke_summary(
+            config,
+            status="fail",
+            request=request,
+            live_call={"status": "fail", "diagnostics": diagnostics},
+        )
+        written = _write_run_summary_data(summary, summary_path)
+        print(f"LLM live smoke summary written to {written}")
+        raise SystemExit(
+            "LLM live smoke failed: no configured API key/model. "
+            "Run `paper-agent llm-doctor --no-live` to inspect configuration."
+        )
+
+    client = LLMClient(config)
+    started = time.perf_counter()
+    try:
+        result = client.chat(
+            [
+                ChatMessage(role="system", content="You are a concise API smoke-test assistant."),
+                ChatMessage(role="user", content=args.prompt),
+            ],
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
+    except LLMError as exc:
+        elapsed = max(0.0, time.perf_counter() - started)
+        diagnostics = _llm_failure_diagnostics(config, str(exc))
+        live_call = {
+            "status": "fail",
+            "elapsed_seconds": round(elapsed, 3),
+            "diagnostics": diagnostics,
+        }
+        summary = _llm_live_smoke_summary(config, status="fail", request=request, live_call=live_call)
+        written = _write_run_summary_data(summary, summary_path)
+        print("LLM live smoke: FAIL")
+        print(f"LLM live smoke summary written to {written}")
+        raise SystemExit(f"LLM live smoke failed: {diagnostics['diagnosis']} Summary: {written}") from exc
+
+    elapsed = max(0.0, time.perf_counter() - started)
+    response = result.content.strip()
+    matched = response == args.expect
+    live_call = {
+        "status": "pass" if matched else "fail",
+        "matched_expectation": matched,
+        "elapsed_seconds": round(elapsed, 3),
+        "response_model": str(result.model),
+        "usage": result.usage if isinstance(result.usage, dict) else {},
+        "response_preview": response[:240],
+    }
+    if not matched:
+        live_call["diagnostics"] = {
+            "failure_kind": "unexpected_response",
+            "diagnosis": "The provider responded, but the content did not match the expected smoke-test string.",
+        }
+    status = "pass" if matched else "fail"
+    summary = _llm_live_smoke_summary(config, status=status, request=request, live_call=live_call)
+    written = _write_run_summary_data(summary, summary_path)
+    print(f"LLM live smoke: {status.upper()}")
+    print(f"Response preview: {response[:120]}")
+    print(f"LLM live smoke summary written to {written}")
+    if not matched:
+        raise SystemExit(f"LLM live smoke failed: response did not match expected string. Summary: {written}")
+
+
+def _llm_live_smoke_request(args: argparse.Namespace) -> dict[str, object]:
+    prompt = str(args.prompt)
+    return {
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "prompt_preview": prompt[:120],
+        "expected_response": str(args.expect),
+        "temperature": float(args.temperature),
+        "max_tokens": int(args.max_tokens),
+    }
+
+
+def _llm_live_smoke_summary(
+    config: LLMConfig,
+    *,
+    status: str,
+    request: dict[str, object],
+    live_call: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "llm": _llm_static_summary(config),
+        "request": request,
+        "live_call": live_call,
+    }
+
+
+def _llm_static_summary(config: LLMConfig) -> dict[str, object]:
     metadata = _llm_runtime_metadata(config)
-    llm_summary = {
+    return {
         "provider": metadata["runtime_llm_provider"],
         "model": metadata["runtime_llm_model"],
         "endpoint_host": metadata["runtime_llm_endpoint_host"],
@@ -1158,16 +1281,6 @@ def _llm_doctor_summary(
         "temperature": config.temperature,
         "thinking": config.thinking,
         "reasoning_effort": config.reasoning_effort,
-    }
-    live_preflight: dict[str, object] = {"status": live_status}
-    if live_result:
-        live_preflight.update(live_result)
-    if live_error:
-        live_preflight["diagnostics"] = _llm_failure_diagnostics(config, live_error)
-    return {
-        "status": status,
-        "llm": llm_summary,
-        "live_preflight": live_preflight,
     }
 
 

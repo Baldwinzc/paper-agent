@@ -6462,6 +6462,82 @@ def test_cli_llm_doctor_writes_live_pass_usage_summary(monkeypatch, tmp_path, ca
     assert "doctor-secret" not in json.dumps(summary)
 
 
+def test_cli_llm_live_smoke_writes_pass_summary(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "smoke-secret")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    class PassingClient:
+        def __init__(self, config):
+            self.config = config
+
+        def chat(self, messages, **kwargs):
+            assert kwargs["temperature"] == 0.0
+            assert kwargs["max_tokens"] == 32
+            return SimpleNamespace(
+                content="paper-agent-live-ok",
+                model="deepseek-v4-pro",
+                usage={"prompt_tokens": 9, "completion_tokens": 5, "total_tokens": 14},
+            )
+
+    times = iter([30.0, 30.333])
+    summary_file = tmp_path / "llm-live-smoke.json"
+    monkeypatch.setattr(cli_module, "LLMClient", PassingClient)
+    monkeypatch.setattr(cli_module.time, "perf_counter", lambda: next(times))
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-live-smoke", "--summary", str(summary_file)])
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    assert "LLM live smoke: PASS" in output
+    assert summary["status"] == "pass"
+    assert summary["llm"]["provider"] == "deepseek"
+    assert summary["request"]["expected_response"] == "paper-agent-live-ok"
+    assert summary["live_call"]["matched_expectation"] is True
+    assert summary["live_call"]["elapsed_seconds"] == 0.333
+    assert summary["live_call"]["usage"]["total_tokens"] == 14
+    assert "smoke-secret" not in json.dumps(summary)
+
+
+def test_cli_llm_live_smoke_writes_failure_summary(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "smoke-secret")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    class FailingClient:
+        def __init__(self, config):
+            self.config = config
+
+        def chat(self, *args, **kwargs):
+            raise cli_module.LLMError("LLM HTTP 402: Insufficient Balance for smoke-secret")
+
+    times = iter([40.0, 40.25])
+    summary_file = tmp_path / "llm-live-smoke-fail.json"
+    monkeypatch.setattr(cli_module, "LLMClient", FailingClient)
+    monkeypatch.setattr(cli_module.time, "perf_counter", lambda: next(times))
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-live-smoke", "--summary", str(summary_file)])
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "LLM live smoke failed" in str(exc)
+    else:
+        raise AssertionError("Expected llm-live-smoke to fail when provider call fails.")
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    assert "LLM live smoke: FAIL" in output
+    assert summary["status"] == "fail"
+    assert summary["live_call"]["elapsed_seconds"] == 0.25
+    assert summary["live_call"]["diagnostics"]["failure_kind"] == "quota"
+    assert "smoke-secret" not in json.dumps(summary)
+
+
 def test_cli_llm_doctor_reports_live_failure(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
