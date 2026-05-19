@@ -4363,6 +4363,110 @@ def _tcga_pipeline_failure_readiness_contract(
     }
 
 
+def _tcga_pipeline_success_readiness_contract(
+    args: argparse.Namespace,
+    example_root: Path,
+    *,
+    summary: dict[str, object],
+    result_generation_mode: str,
+    doctor_mode: str,
+) -> dict[str, object]:
+    submission_grade = bool(getattr(args, "submission_grade", False))
+    compile_latex = bool(getattr(args, "compile_latex", False) or submission_grade)
+    disable_llm = bool(getattr(args, "disable_llm", False))
+    experiment_path = _tcga_result_path(args, example_root)
+    artifact_dir = _tcga_artifact_template_output_dir(args, example_root)
+    baseline_dir = example_root / "baseline"
+    baseline_pdfs = sorted(baseline_dir.glob("*.pdf")) if baseline_dir.is_dir() else []
+    code_path = example_root / "code" / "hyper-protosurv"
+    latex_status = _latex_toolchain_status()
+    package = summary.get("artifacts", {})
+    package_status = ""
+    if isinstance(package, dict):
+        submission_package = package.get("submission_package", {})
+        if isinstance(submission_package, dict):
+            package_status = str(submission_package.get("status", "") or "")
+
+    requirements = {
+        "venue_network": {
+            "status": "pass",
+            "required": submission_grade,
+            "detail": "online submission-grade run" if submission_grade else "not required",
+            "next_action": "",
+            "command": "",
+        },
+        "baseline_pdf": {
+            "status": "pass",
+            "required": True,
+            "detail": str(baseline_pdfs[0] if baseline_pdfs else baseline_dir),
+            "next_action": "",
+            "command": "",
+        },
+        "code_path": {
+            "status": "pass" if code_path.is_dir() else "warn",
+            "required": True,
+            "detail": str(code_path),
+            "next_action": "" if code_path.is_dir() else "Restore the project code directory for reproducible reruns.",
+            "command": "",
+        },
+        "result_artifacts": {
+            "status": "pass",
+            "required": result_generation_mode == "generated_from_artifacts",
+            "detail": f"{artifact_dir}; result_generation={result_generation_mode}",
+            "next_action": "",
+            "command": "",
+        },
+        "experiment_results": {
+            "status": "pass",
+            "required": True,
+            "detail": str(experiment_path),
+            "next_action": "",
+            "command": "",
+        },
+        "llm": {
+            "status": "disabled" if disable_llm and not submission_grade else "pass",
+            "required": bool(submission_grade or not disable_llm),
+            "detail": _llm_config_label(load_llm_config()),
+            "next_action": "",
+            "command": "",
+        },
+        "latex": {
+            "status": "pass" if compile_latex or latex_status.get("available") else "warn",
+            "required": compile_latex,
+            "detail": package_status
+            or str(latex_status.get("preferred_tool") or latex_status.get("install_hint") or "not found"),
+            "next_action": "",
+            "command": "",
+        },
+        "pipeline_stage": {
+            "status": "pass",
+            "required": True,
+            "detail": f"tcga_pipeline_complete; doctor_checks={doctor_mode}",
+            "next_action": "",
+            "command": "",
+        },
+    }
+    next_actions = [
+        {
+            "category": "pipeline_stage",
+            "action": "Review the generated draft package and validate the result contract before submission.",
+            "command": _validate_results_command(args, example_root),
+        }
+    ]
+    return {
+        "schema_version": TCGA_READINESS_CONTRACT_SCHEMA_VERSION,
+        "status": "ready",
+        "submission_grade": submission_grade,
+        "pipeline_phase": "tcga_pipeline_complete",
+        "ready_for_submission_grade": submission_grade,
+        "ready_for_deterministic_draft": True,
+        "blocking_categories": [],
+        "requirements": requirements,
+        "next_actions": next_actions,
+        "artifact_warnings": [],
+    }
+
+
 def _write_tcga_pipeline_success_summary(
     args: argparse.Namespace,
     example_root: Path,
@@ -4401,6 +4505,15 @@ def _write_tcga_pipeline_success_summary(
     summary["missing_inputs"] = []
     summary["next_action"] = "Review the generated draft package and replace demo or weak evidence before submission."
     summary["next_command"] = _validate_results_command(args, example_root)
+    readiness_contract = _tcga_pipeline_success_readiness_contract(
+        args,
+        example_root,
+        summary=summary,
+        result_generation_mode=result_generation_mode,
+        doctor_mode=doctor_mode,
+    )
+    summary["readiness_contract"] = readiness_contract
+    summary["next_actions"] = readiness_contract["next_actions"]
     return _write_run_summary_data(summary, summary_path)
 
 

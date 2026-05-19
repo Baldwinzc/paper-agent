@@ -493,9 +493,10 @@ This generates `results\tcga_results.md` from the CSV artifacts, validates the
 result file, runs `tcga-doctor`, and then runs `tcga-draft`. On success,
 `RUN_SUMMARY.json` under `--output-dir` keeps the normal draft summary fields and
 adds `status=pass`, `pipeline_phase=tcga_pipeline_complete`, result-generation
-mode, doctor-check mode, artifact directory, and the pipeline summary path. Pass
-`--skip-result-generation` only when `tcga_results.md` already exists and should
-be reused.
+mode, doctor-check mode, artifact directory, the pipeline summary path, and a
+ready `readiness_contract` using the same schema as preflight/failure summaries.
+Pass `--skip-result-generation` only when `tcga_results.md` already exists and
+should be reused.
 If result CSV artifacts are not present yet, add `--write-artifact-template` to
 write `tcga_main_results.csv`, `tcga_ablation.csv`, `tcga_sensitivity.csv`,
 `tcga_stats.csv`, `EXPORT_CONTRACT.md`, and `ARTIFACT_SCHEMA.json`, then stop

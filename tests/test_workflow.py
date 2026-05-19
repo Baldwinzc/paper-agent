@@ -6551,6 +6551,14 @@ def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypat
     assert summary["pipeline"]["result_generation"] == "generated_from_artifacts"
     assert summary["pipeline"]["doctor_checks"] == "completed"
     assert summary["pipeline"]["experiment_results_path"] == str(result_path)
+    assert summary["readiness_contract"]["schema_version"] == "tcga-readiness-contract/v1"
+    assert summary["readiness_contract"]["status"] == "ready"
+    assert summary["readiness_contract"]["pipeline_phase"] == "tcga_pipeline_complete"
+    assert summary["readiness_contract"]["ready_for_submission_grade"] is True
+    assert summary["readiness_contract"]["blocking_categories"] == []
+    assert summary["readiness_contract"]["requirements"]["pipeline_stage"]["status"] == "pass"
+    assert summary["readiness_contract"]["requirements"]["result_artifacts"]["status"] == "pass"
+    assert summary["next_actions"][0]["category"] == "pipeline_stage"
     assert summary["outputs"]["pipeline_summary_path"].endswith("RUN_SUMMARY.json")
     assert summary["experiment_provenance_status"] == "complete"
     assert summary["experiment_artifact_consistency_status"] == "complete"
