@@ -238,6 +238,9 @@ same smoke command.
 Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
 templates immediately; use `--artifact-template-dir` to choose the output
 directory and fill the generated files with real trained-model outputs.
+After filling those CSVs, rerun with `--generate-results-from-artifacts` and
+`--artifacts-dir path\to\logs` to regenerate `tcga_results.md`, validate it
+strictly, and continue into the paper smoke in one command.
 
 ## Acceptance Flow
 

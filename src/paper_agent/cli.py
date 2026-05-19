@@ -800,6 +800,16 @@ def main() -> None:
     paper_smoke.add_argument("--artifact-method", default="Hyper-ProtoSurv ours")
     paper_smoke.add_argument("--artifact-baseline", default="ProtoSurv baseline")
     paper_smoke.add_argument("--artifact-metric", default="C-index")
+    paper_smoke.add_argument(
+        "--generate-results-from-artifacts",
+        action="store_true",
+        help="Generate experiment-results Markdown from completed TCGA result CSV artifacts before validation.",
+    )
+    paper_smoke.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Completed result CSV artifact directory for --generate-results-from-artifacts.",
+    )
     _add_experiment_contract_options(paper_smoke)
     _add_experiment_provenance_options(paper_smoke)
     _add_experiment_artifact_consistency_options(paper_smoke)
@@ -5044,6 +5054,9 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         raise SystemExit(f"Project code directory not found: {code_path}")
 
     experiment_path = _resolve_project_relative_path(args.experiment_results)
+    generated_result_summary = None
+    if args.generate_results_from_artifacts:
+        generated_result_summary = _paper_e2e_generate_results_from_artifacts(args, experiment_path)
     if not experiment_path.is_file():
         raise SystemExit(f"Experiment results file not found: {experiment_path}")
     experiment_results = experiment_path.read_text(encoding="utf-8")
@@ -5117,6 +5130,8 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         "experiment_results": str(experiment_path),
         "target_venue": args.target_venue,
     }
+    if generated_result_summary:
+        artifacts["paper_e2e_generated_results_from_artifacts"] = generated_result_summary
     _record_result_preflight(state, result_preflight)
     SubmissionReadinessAgent().run(state)
     DraftReportAgent().run(state)
@@ -5145,6 +5160,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         zip_path=zip_path,
         result_preflight=result_preflight,
         llm_mode=llm_mode,
+        generated_results_from_artifacts=bool(args.generate_results_from_artifacts),
         status="pass",
     )
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
@@ -5186,6 +5202,7 @@ def _paper_e2e_smoke_contract(
     zip_path: Path | None,
     result_preflight: dict[str, object],
     llm_mode: str,
+    generated_results_from_artifacts: bool = False,
     status: str = "pass",
 ) -> dict[str, object]:
     return {
@@ -5209,6 +5226,10 @@ def _paper_e2e_smoke_contract(
             "experiment_results_exists": experiment_path.is_file(),
             "strict_results": bool(args.strict_results),
             "strict_results_accepted": _validated_results_are_strictly_acceptable(result_preflight),
+            "generated_results_from_artifacts": generated_results_from_artifacts,
+            "artifacts_dir": str(_paper_e2e_completed_artifacts_dir(args, experiment_path))
+            if generated_results_from_artifacts
+            else "",
             "llm_mode": llm_mode,
             "min_llm_sections": int(args.min_llm_sections if args.require_llm else 0),
         },
@@ -5267,6 +5288,7 @@ def _write_paper_e2e_smoke_failure_summary(
             zip_path=zip_path,
             result_preflight=result_preflight,
             llm_mode="not_started",
+            generated_results_from_artifacts=bool(getattr(args, "generate_results_from_artifacts", False)),
             status="blocked",
         ),
     }
@@ -5320,6 +5342,51 @@ def _paper_e2e_maybe_write_artifact_template(
         "style": style,
         "contains_todo": True,
         "command": _paper_e2e_artifact_template_command(output_dir),
+    }
+
+
+def _paper_e2e_generate_results_from_artifacts(
+    args: argparse.Namespace,
+    experiment_path: Path,
+) -> dict[str, object]:
+    artifact_dir = _paper_e2e_completed_artifacts_dir(args, experiment_path)
+    result_args = argparse.Namespace(
+        example_root=str(experiment_path.parent.parent),
+        artifacts_dir=str(artifact_dir),
+        main_csv="",
+        ablation_csv="",
+        sensitivity_csv="",
+        stats_csv="",
+        output=str(experiment_path),
+        method=str(getattr(args, "artifact_method", "Hyper-ProtoSurv ours")),
+        baseline=str(getattr(args, "artifact_baseline", "ProtoSurv baseline")),
+        metric=str(getattr(args, "artifact_metric", "C-index")),
+        dataset=list(getattr(args, "artifact_template_dataset", []) or []),
+        strict=True,
+        require_ablation=bool(getattr(args, "require_ablation", True)),
+        require_sensitivity=bool(getattr(args, "require_sensitivity", True)),
+        require_statistical_tests=bool(getattr(args, "require_statistical_tests", True)),
+    )
+    summary = _run_tcga_results_from_artifacts(result_args) or {}
+    return {
+        "status": "generated",
+        "artifacts_dir": str(artifact_dir),
+        "experiment_results": str(experiment_path),
+        "experiment_contract_status": str(
+            summary.get("experiment_contract", {}).get("status", "unknown")
+        )
+        if isinstance(summary.get("experiment_contract", {}), dict)
+        else "unknown",
+        "experiment_provenance_status": str(
+            summary.get("experiment_provenance", {}).get("status", "unknown")
+        )
+        if isinstance(summary.get("experiment_provenance", {}), dict)
+        else "unknown",
+        "experiment_artifact_consistency_status": str(
+            summary.get("experiment_artifact_consistency", {}).get("status", "unknown")
+        )
+        if isinstance(summary.get("experiment_artifact_consistency", {}), dict)
+        else "unknown",
     }
 
 
@@ -5389,6 +5456,13 @@ def _paper_e2e_artifact_template_dir(args: argparse.Namespace, experiment_path: 
     if path_value:
         return _resolve_project_relative_path(path_value)
     return experiment_path.parent / "logs"
+
+
+def _paper_e2e_completed_artifacts_dir(args: argparse.Namespace, experiment_path: Path) -> Path:
+    path_value = str(getattr(args, "artifacts_dir", "") or "")
+    if path_value:
+        return _resolve_project_relative_path(path_value)
+    return _paper_e2e_artifact_template_dir(args, experiment_path)
 
 
 def _paper_e2e_results_from_artifacts_command(artifact_dir: Path, experiment_path: Path) -> str:
@@ -5484,6 +5558,10 @@ def _paper_e2e_smoke_rerun_command(args: argparse.Namespace) -> str:
     artifact_metric = getattr(args, "artifact_metric", "C-index")
     if artifact_metric != "C-index":
         parts.extend(["--artifact-metric", artifact_metric])
+    if getattr(args, "generate_results_from_artifacts", False):
+        parts.append("--generate-results-from-artifacts")
+    if getattr(args, "artifacts_dir", ""):
+        parts.extend(["--artifacts-dir", args.artifacts_dir])
     for flag in ("ablation", "sensitivity", "statistical-tests"):
         attr = f"require_{flag.replace('-', '_')}"
         if not bool(getattr(args, attr, True)):

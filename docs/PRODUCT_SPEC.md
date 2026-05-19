@@ -140,7 +140,8 @@ repair chain for validation, artifact-template creation, result generation from
 completed CSV artifacts, and smoke rerun.
 With `--write-artifact-template`, the blocked smoke can also write the TODO CSV
 artifact templates immediately while still refusing to draft from incomplete
-results.
+results. With `--generate-results-from-artifacts`, a later smoke run can turn
+completed CSV artifacts into strict result Markdown before drafting.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

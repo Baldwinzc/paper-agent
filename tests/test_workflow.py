@@ -7690,6 +7690,88 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
 
 
+def test_cli_paper_e2e_smoke_generates_results_from_artifacts_before_strict_validation(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    logs_dir = tmp_path / "logs"
+    experiment_path = tmp_path / "results" / "tcga_results.md"
+    latex_dir = tmp_path / "latex"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    _write_complete_tcga_artifacts(logs_dir)
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    output_dir = tmp_path / "paper-smoke"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--generate-results-from-artifacts",
+            "--artifacts-dir",
+            str(logs_dir),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    result_text = experiment_path.read_text(encoding="utf-8")
+    assert "TCGA result file written to" in output
+    assert "paper-e2e-smoke passed." in output
+    assert captured["llm_client"] is None
+    assert "## Result Provenance" in captured["request"].experiment_results
+    assert "## Result Provenance" in result_text
+    assert summary["smoke_contract"]["checks"]["generated_results_from_artifacts"] is True
+    assert summary["smoke_contract"]["checks"]["artifacts_dir"] == str(logs_dir)
+    assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is True
+    assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"
