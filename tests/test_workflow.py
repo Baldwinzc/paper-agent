@@ -6074,6 +6074,7 @@ def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypat
 
 def test_cli_tcga_pipeline_suggests_artifact_template_when_results_missing(monkeypatch, tmp_path, capsys):
     example_root = tmp_path / "example"
+    output_dir = tmp_path / "pipeline"
     example_root.mkdir()
     monkeypatch.setattr(
         "sys.argv",
@@ -6082,6 +6083,8 @@ def test_cli_tcga_pipeline_suggests_artifact_template_when_results_missing(monke
             "tcga-pipeline",
             "--example-root",
             str(example_root),
+            "--output-dir",
+            str(output_dir),
             "--disable-llm",
         ],
     )
@@ -6097,11 +6100,18 @@ def test_cli_tcga_pipeline_suggests_artifact_template_when_results_missing(monke
         raise AssertionError("Expected TCGA pipeline to fail with artifact-template guidance.")
 
     output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
     assert "TCGA pipeline: generating result file" in output
+    assert "Pipeline summary written to" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "result_artifact_detection"
+    assert "paper-agent tcga-artifact-template --output-dir" in summary["next_command"]
+    assert any("tcga_main_results.csv" in item for item in summary["missing_inputs"])
 
 
 def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_path, capsys):
     example_root = tmp_path / "example"
+    output_dir = tmp_path / "pipeline"
     example_root.mkdir()
     monkeypatch.setattr(
         "sys.argv",
@@ -6110,6 +6120,8 @@ def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_p
             "tcga-pipeline",
             "--example-root",
             str(example_root),
+            "--output-dir",
+            str(output_dir),
             "--write-artifact-template",
             "--dataset",
             "BLCA",
@@ -6127,12 +6139,19 @@ def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_p
         raise AssertionError("Expected TCGA pipeline to stop after writing artifact templates.")
 
     output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
     logs_dir = example_root / "results" / "logs"
     assert "TCGA pipeline: result artifacts are missing or incomplete; writing artifact templates" in output
+    assert "Pipeline summary written to" in output
     assert (logs_dir / "EXPORT_CONTRACT.md").is_file()
     main_csv = (logs_dir / "tcga_main_results.csv").read_text(encoding="utf-8")
     assert "ProtoSurv baseline,BLCA,C-index,0,2026,TODO" in main_csv
     assert "Hyper-ProtoSurv ours,BRCA,C-index,0,2026,TODO" in main_csv
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "artifact_template_written"
+    assert summary["outputs"]["artifact_contract_path"] == str(logs_dir / "EXPORT_CONTRACT.md")
+    assert "paper-agent tcga-pipeline" in summary["next_command"]
+    assert any("tcga_stats.csv" in item for item in summary["missing_inputs"])
 
 
 def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
