@@ -9,6 +9,7 @@ import json
 import os
 import re
 import statistics
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -932,7 +933,8 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) -> None:
+def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) -> dict[str, object]:
+    started = time.perf_counter()
     try:
         result = client.chat(
             [
@@ -949,6 +951,17 @@ def _llm_preflight_check(client: LLMClient, config: LLMConfig, *, context: str) 
             f"{context} LLM preflight failed: unexpected provider response "
             f"from {_llm_config_label(config)}: {result.content.strip()[:120]!r}."
         )
+    elapsed_seconds = max(0.0, time.perf_counter() - started)
+    return _llm_preflight_success_diagnostics(result, elapsed_seconds)
+
+
+def _llm_preflight_success_diagnostics(result: object, elapsed_seconds: float) -> dict[str, object]:
+    usage = getattr(result, "usage", {})
+    return {
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "response_model": str(getattr(result, "model", "")),
+        "usage": usage if isinstance(usage, dict) else {},
+    }
 
 
 def _llm_preflight_failure_message(config: LLMConfig, context: str, exc: LLMError) -> str:
@@ -1074,7 +1087,7 @@ def _run_llm_doctor(args: argparse.Namespace) -> None:
 
     client = LLMClient(config)
     try:
-        _llm_preflight_check(client, config, context="LLM doctor")
+        live_result = _llm_preflight_check(client, config, context="LLM doctor")
     except SystemExit as exc:
         print("Live preflight: FAIL")
         _write_llm_doctor_summary_if_requested(
@@ -1091,6 +1104,7 @@ def _run_llm_doctor(args: argparse.Namespace) -> None:
         config,
         status="pass",
         live_status="pass",
+        live_result=live_result,
     )
 
 
@@ -1101,6 +1115,7 @@ def _write_llm_doctor_summary_if_requested(
     status: str,
     live_status: str,
     live_error: str = "",
+    live_result: dict[str, object] | None = None,
 ) -> Path | None:
     summary_path = getattr(args, "summary", "")
     if not summary_path:
@@ -1110,6 +1125,7 @@ def _write_llm_doctor_summary_if_requested(
         status=status,
         live_status=live_status,
         live_error=live_error,
+        live_result=live_result,
     )
     written = _write_run_summary_data(summary, Path(summary_path))
     print(f"LLM doctor summary written to {written}")
@@ -1122,6 +1138,7 @@ def _llm_doctor_summary(
     status: str,
     live_status: str,
     live_error: str = "",
+    live_result: dict[str, object] | None = None,
 ) -> dict[str, object]:
     metadata = _llm_runtime_metadata(config)
     llm_summary = {
@@ -1143,6 +1160,8 @@ def _llm_doctor_summary(
         "reasoning_effort": config.reasoning_effort,
     }
     live_preflight: dict[str, object] = {"status": live_status}
+    if live_result:
+        live_preflight.update(live_result)
     if live_error:
         live_preflight["diagnostics"] = _llm_failure_diagnostics(config, live_error)
     return {

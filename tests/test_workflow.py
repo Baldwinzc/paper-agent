@@ -6371,6 +6371,26 @@ def test_llm_failure_diagnostics_classifies_and_sanitizes_provider_errors(monkey
     assert "[redacted-api-key]" in diagnostics["raw_error"]
 
 
+def test_llm_preflight_returns_usage_and_elapsed(monkeypatch):
+    class PassingClient:
+        def chat(self, *args, **kwargs):
+            return SimpleNamespace(
+                content="paper-agent-ok",
+                model="deepseek-v4-pro",
+                usage={"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            )
+
+    times = iter([10.0, 10.257])
+    monkeypatch.setattr(cli_module.time, "perf_counter", lambda: next(times))
+    config = LLMConfig(api_key="test-key", base_url="https://api.deepseek.com", model="deepseek-v4-pro")
+
+    diagnostics = cli_module._llm_preflight_check(PassingClient(), config, context="LLM doctor")
+
+    assert diagnostics["elapsed_seconds"] == 0.257
+    assert diagnostics["response_model"] == "deepseek-v4-pro"
+    assert diagnostics["usage"] == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+
+
 def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
@@ -6401,6 +6421,44 @@ def test_cli_llm_doctor_no_live_prints_static_config(monkeypatch, tmp_path, caps
     assert summary["live_preflight"]["status"] == "skipped"
     assert "diagnostics" not in summary["live_preflight"]
     assert "doctor-secret" not in output
+    assert "doctor-secret" not in json.dumps(summary)
+
+
+def test_cli_llm_doctor_writes_live_pass_usage_summary(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "doctor-secret")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    class PassingClient:
+        def __init__(self, config):
+            self.config = config
+
+        def chat(self, *args, **kwargs):
+            return SimpleNamespace(
+                content="paper-agent-ok",
+                model="deepseek-v4-pro",
+                usage={"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            )
+
+    times = iter([20.0, 20.125])
+    summary_file = tmp_path / "llm-doctor-live-pass-summary.json"
+    monkeypatch.setattr(cli_module, "LLMClient", PassingClient)
+    monkeypatch.setattr(cli_module.time, "perf_counter", lambda: next(times))
+    monkeypatch.setattr("sys.argv", ["paper-agent", "llm-doctor", "--summary", str(summary_file)])
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    assert "Live preflight: PASS" in output
+    assert summary["status"] == "pass"
+    assert summary["live_preflight"]["status"] == "pass"
+    assert summary["live_preflight"]["elapsed_seconds"] == 0.125
+    assert summary["live_preflight"]["response_model"] == "deepseek-v4-pro"
+    assert summary["live_preflight"]["usage"]["total_tokens"] == 12
+    assert "diagnostics" not in summary["live_preflight"]
     assert "doctor-secret" not in json.dumps(summary)
 
 

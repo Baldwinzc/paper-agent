@@ -148,7 +148,8 @@ python -m paper_agent.cli llm-doctor --summary outputs\llm-doctor.json
 supplies the API key, timeout/retry settings, and live preflight diagnosis
 without printing the API key itself. With `--summary`, it writes the same static
 configuration plus live pass/fail diagnostics to JSON, including sanitized
-failure kind and retry/timeout settings for reproducibility.
+failure kind, elapsed time, token usage when provided by the model, and
+retry/timeout settings for reproducibility.
 
 The smoke command prints the LLM self-review mode and any unsupported claims it
 finds. It is useful after changing providers or model names because it exercises
