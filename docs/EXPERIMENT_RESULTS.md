@@ -84,6 +84,22 @@ a complete contract. Disable requirements that are out of scope with
 `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests`.
 
+To generate the result file and immediately run the TCGA checks plus draft path,
+use `tcga-pipeline`:
+
+```powershell
+python -m paper_agent.cli tcga-pipeline `
+  --example-root D:\code\agent\example `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output-dir outputs\hyper-protosurv-tcga-submission `
+  --zip outputs\hyper-protosurv-tcga-submission-overleaf.zip `
+  --submission-grade
+```
+
+The pipeline writes `results\tcga_results.md`, runs strict result validation,
+runs `tcga-doctor`, and then calls `tcga-draft` with the generated result file.
+Use `--skip-result-generation` only when the result Markdown already exists.
+
 For result-file quality checks, declare the expected experiment target:
 
 ```powershell

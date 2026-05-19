@@ -5605,6 +5605,170 @@ def test_cli_tcga_submission_grade_forces_full_acceptance_path(monkeypatch, tmp_
     assert zip_path.exists()
 
 
+def test_cli_tcga_pipeline_generates_results_and_runs_submission_grade(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_MODEL", "deepseek-v4-pro")
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    logs_dir = example_root / "results" / "logs"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (logs_dir / "tcga_main_wide.csv").write_text(
+        "\n".join(
+            [
+                "method,BLCA C-index,BRCA C-index,LGG C-index,LUAD C-index,UCEC C-index",
+                "ProtoSurv baseline,0.646,0.669,0.724,0.636,0.658",
+                "Hyper-ProtoSurv ours,0.671,0.691,0.746,0.661,0.681",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_ablation_wide.csv").write_text(
+        "\n".join(
+            [
+                "variant,Average C-index",
+                "Hyper-ProtoSurv ours,0.690",
+                "w/o reconstruction loss,0.672",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_sensitivity_wide.csv").write_text(
+        "\n".join(
+            [
+                "lambda_rec,Average C-index",
+                "0.5,0.687",
+                "1.0,0.690",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (logs_dir / "tcga_stats.csv").write_text(
+        "\n".join(
+            [
+                "comparison,metric,test,p_value",
+                "Hyper-ProtoSurv ours vs ProtoSurv baseline,C-index,Wilcoxon signed-rank,0.018",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    latex_dir = tmp_path / "latex"
+    latex_dir.mkdir()
+    (latex_dir / "main.tex").write_text("\\documentclass{IEEEtran}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_available"] = bool(llm_client and llm_client.available)
+
+        def run(self, request):
+            captured["request"] = request
+            captured["disable_template_fetch"] = os.getenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH")
+            captured["disable_reference_resolve"] = os.getenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE")
+            captured["disable_related_work_discovery"] = os.getenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY")
+            captured["compile_latex"] = os.getenv("PAPER_AGENT_RUN_LATEX_COMPILE")
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "llm",
+                    "section_writer_llm_attempted_sections": [
+                        "abstract",
+                        "introduction",
+                        "related_work",
+                        "method",
+                    ],
+                    "section_writer_llm_successes": [
+                        "abstract",
+                        "introduction",
+                        "related_work",
+                        "method",
+                    ],
+                    "llm_self_review": {"mode": "llm"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                    "experiment_ablation_evidence": [{"variant": "w/o reconstruction loss"}],
+                    "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
+                    "experiment_statistical_tests": [{"comparison": "ours vs baseline"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    def fake_write_latex_zip_and_refresh(state, zip_path):
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
+        with ZipFile(zip_path, "w") as archive:
+            archive.writestr("main.tex", "\\documentclass{IEEEtran}")
+        artifacts = state.setdefault("artifacts", {})
+        artifacts["submission_package"] = {
+            "status": "valid",
+            "errors": [],
+            "warnings": [],
+            "checks": {"compile": {"mode": "compile", "status": "passed", "tool": "tectonic.exe"}},
+        }
+        artifacts["submission_readiness"] = {"overall_score": 100, "status": "reviewable"}
+        state["latex_zip_path"] = zip_path
+        return zip_path
+
+    output_dir = tmp_path / "pipeline"
+    zip_path = tmp_path / "pipeline.zip"
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_write_latex_zip_and_refresh", fake_write_latex_zip_and_refresh)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_latex_toolchain_status",
+        lambda: {"available": True, "preferred_tool": "tectonic.exe", "install_hint": ""},
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-pipeline",
+            "--example-root",
+            str(example_root),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--min-llm-sections",
+            "1",
+            "--submission-grade",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_path = example_root / "results" / "tcga_results.md"
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "TCGA pipeline: generating result file" in output
+    assert "TCGA pipeline: running doctor checks" in output
+    assert "TCGA pipeline: drafting paper" in output
+    assert "TCGA draft run completed." in output
+    assert result_path.exists()
+    assert "## Result Provenance" in result_path.read_text(encoding="utf-8")
+    assert captured["llm_available"]
+    assert captured["disable_template_fetch"] == "0"
+    assert captured["disable_reference_resolve"] == "0"
+    assert captured["disable_related_work_discovery"] == "0"
+    assert captured["compile_latex"] == "1"
+    assert summary["inputs"]["submission_grade"] is True
+    assert summary["inputs"]["experiment_results_path"] == str(result_path)
+    assert summary["inputs"]["min_llm_sections"] == 4
+    assert summary["experiment_provenance_status"] == "complete"
+    assert summary["experiment_artifact_consistency_status"] == "complete"
+    assert zip_path.exists()
+
+
 def test_cli_tcga_submission_grade_rejects_disabled_llm(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "sys.argv",

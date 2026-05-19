@@ -337,6 +337,23 @@ consistency checks. It rejects `--offline`, `--disable-llm`, and
 `--skip-llm-self-review` because those would make the run weaker than the
 acceptance contract.
 
+To run the whole local TCGA path from result CSV artifacts in one command, use
+`tcga-pipeline`:
+
+```powershell
+paper-agent tcga-pipeline `
+  --example-root D:\code\agent\example `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output-dir outputs\hyper-protosurv-tcga-submission `
+  --zip outputs\hyper-protosurv-tcga-submission-overleaf.zip `
+  --submission-grade
+```
+
+This generates `results\tcga_results.md` from the CSV artifacts, validates the
+result file, runs `tcga-doctor`, and then runs `tcga-draft`. Pass
+`--skip-result-generation` only when `tcga_results.md` already exists and should
+be reused.
+
 When `draft` writes `--output` or `--summary`, it also writes a Markdown
 acceptance report by default: next to the summary when `--summary` is provided,
 otherwise next to the draft Markdown. Override the path with
