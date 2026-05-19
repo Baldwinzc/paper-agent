@@ -307,6 +307,23 @@ def main() -> None:
     tcga_artifacts_doctor.add_argument("--metric", default="C-index")
     tcga_artifacts_doctor.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
     _add_experiment_contract_options(tcga_artifacts_doctor)
+    tcga_artifact_template = sub.add_parser(
+        "tcga-artifact-template",
+        help="Write TCGA result CSV export templates and an artifact export contract.",
+    )
+    tcga_artifact_template.add_argument("--output-dir", default=r"D:\code\agent\example\results\logs")
+    tcga_artifact_template.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_artifact_template.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_artifact_template.add_argument("--metric", default="C-index")
+    tcga_artifact_template.add_argument("--seed", default="2026")
+    tcga_artifact_template.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    tcga_artifact_template.add_argument(
+        "--style",
+        choices=("long", "wide"),
+        default="long",
+        help="CSV schema style to generate. Long keeps fold/seed columns; wide is compact for paper tables.",
+    )
+    tcga_artifact_template.add_argument("--force", action="store_true", help="Overwrite existing template files.")
     tcga_preflight = sub.add_parser(
         "tcga-preflight",
         help="Run one read-only preflight report for TCGA paper generation readiness.",
@@ -748,6 +765,8 @@ def main() -> None:
         _run_tcga_results_from_artifacts(args)
     elif args.command == "tcga-artifacts-doctor":
         _run_tcga_artifacts_doctor(args)
+    elif args.command == "tcga-artifact-template":
+        _run_tcga_artifact_template(args)
     elif args.command == "tcga-preflight":
         _run_tcga_preflight(args)
     elif args.command == "tcga-draft":
@@ -1405,6 +1424,43 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
         print("Ready command: paper-agent tcga-results-from-artifacts --main-csv <path> --strict")
 
 
+def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
+    output_dir = _resolve_project_relative_path(args.output_dir)
+    datasets = list(args.dataset or _tcga_default_datasets())
+    files = _tcga_artifact_template_files(
+        style=args.style,
+        datasets=datasets,
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        seed=args.seed,
+    )
+    contract = _tcga_artifact_export_contract(
+        style=args.style,
+        datasets=datasets,
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+    )
+    files["EXPORT_CONTRACT.md"] = contract
+
+    conflicts = [name for name in files if (output_dir / name).exists()]
+    if conflicts and not args.force:
+        raise SystemExit(
+            "Refusing to overwrite existing TCGA artifact template files: "
+            + ", ".join(conflicts)
+            + ". Pass --force to overwrite."
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        path = output_dir / name
+        path.write_text(content, encoding="utf-8")
+        print(f"- Wrote {path}")
+    print(f"TCGA artifact export templates written to {output_dir}")
+    print("Replace every TODO with real trained-model outputs before running tcga-artifacts-doctor.")
+
+
 def _run_tcga_preflight(args: argparse.Namespace) -> None:
     checks: list[dict[str, object]] = []
     blocking: list[str] = []
@@ -1977,6 +2033,135 @@ def _tcga_expected_artifact_schema(role: str) -> str:
         "stats": "`comparison,metric,test,p_value` rows",
     }
     return schemas.get(role, "supported TCGA result CSV schema")
+
+
+def _tcga_artifact_template_files(
+    *,
+    style: str,
+    datasets: list[str],
+    method: str,
+    baseline: str,
+    metric: str,
+    seed: str,
+) -> dict[str, str]:
+    if style == "wide":
+        return {
+            "tcga_main_results.csv": _csv_text(
+                [
+                    ["method", *[f"{dataset} {metric}" for dataset in datasets]],
+                    [baseline, *(["TODO"] * len(datasets))],
+                    [method, *(["TODO"] * len(datasets))],
+                ]
+            ),
+            "tcga_ablation.csv": _csv_text(
+                [
+                    ["variant", f"Average {metric}"],
+                    [method, "TODO"],
+                    ["w/o reconstruction loss", "TODO"],
+                ]
+            ),
+            "tcga_sensitivity.csv": _csv_text(
+                [
+                    ["lambda_rec", f"Average {metric}"],
+                    ["0.5", "TODO"],
+                    ["1.0", "TODO"],
+                ]
+            ),
+            "tcga_stats.csv": _csv_text(
+                [
+                    ["comparison", "metric", "test", "p_value"],
+                    [f"{method} vs {baseline}", metric, "Wilcoxon signed-rank", "TODO"],
+                ]
+            ),
+        }
+    return {
+        "tcga_main_results.csv": _csv_text(
+            [
+                ["method", "dataset", "metric", "fold", "seed", "value"],
+                *[[baseline, dataset, metric, "0", seed, "TODO"] for dataset in datasets],
+                *[[method, dataset, metric, "0", seed, "TODO"] for dataset in datasets],
+            ]
+        ),
+        "tcga_ablation.csv": _csv_text(
+            [
+                ["method", "dataset", "metric", "fold", "seed", "value"],
+                [method, "Average", metric, "0", seed, "TODO"],
+                ["w/o reconstruction loss", "Average", metric, "0", seed, "TODO"],
+            ]
+        ),
+        "tcga_sensitivity.csv": _csv_text(
+            [
+                ["parameter", "parameter_value", "dataset", "metric", "fold", "seed", "value"],
+                ["lambda_rec", "0.5", "Average", metric, "0", seed, "TODO"],
+                ["lambda_rec", "1.0", "Average", metric, "0", seed, "TODO"],
+            ]
+        ),
+        "tcga_stats.csv": _csv_text(
+            [
+                ["comparison", "metric", "test", "p_value"],
+                [f"{method} vs {baseline}", metric, "Wilcoxon signed-rank", "TODO"],
+            ]
+        ),
+    }
+
+
+def _tcga_artifact_export_contract(
+    *,
+    style: str,
+    datasets: list[str],
+    method: str,
+    baseline: str,
+    metric: str,
+) -> str:
+    dataset_text = ", ".join(datasets)
+    return "\n".join(
+        [
+            "# TCGA Artifact Export Contract",
+            "",
+            "These files define the CSV artifacts that paper-agent can turn into a paper-facing result file.",
+            "Replace every `TODO` with real trained-model outputs before using them for a draft.",
+            "",
+            f"- Style: {style}",
+            f"- Proposed method label: `{method}`",
+            f"- Baseline label: `{baseline}`",
+            f"- Metric: `{metric}`",
+            f"- Datasets: {dataset_text}",
+            "",
+            "## Required Files",
+            "",
+            "- `tcga_main_results.csv`: baseline and proposed-method performance per TCGA cohort.",
+            "- `tcga_ablation.csv`: full method and removed-component variants on the average metric.",
+            "- `tcga_sensitivity.csv`: hyperparameter sweep rows on the average metric.",
+            "- `tcga_stats.csv`: statistical comparison rows with numeric `p_value`.",
+            "",
+            "## Validation Flow",
+            "",
+            "```powershell",
+            "paper-agent tcga-artifacts-doctor --artifacts-dir .",
+            "paper-agent tcga-results-from-artifacts --artifacts-dir . --strict",
+            "paper-agent tcga-preflight --artifacts-dir . --submission-grade",
+            "```",
+            "",
+            "Do not use synthetic, mock, or cohort-metadata-only values for submission claims.",
+            "",
+        ]
+    )
+
+
+def _csv_text(rows: list[list[str]]) -> str:
+    return "\n".join(",".join(_csv_cell(cell) for cell in row) for row in rows) + "\n"
+
+
+def _csv_cell(value: object) -> str:
+    text = str(value)
+    if any(char in text for char in [",", '"', "\n"]):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
+def _tcga_default_datasets() -> list[str]:
+    defaults = tcga_experiment_quality_kwargs().get("expected_datasets", [])
+    return [str(item) for item in defaults] or ["BLCA", "BRCA", "LGG", "LUAD", "UCEC"]
 
 
 def _tcga_provenance_sources(

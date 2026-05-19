@@ -19,6 +19,19 @@ and statistical-test tables are reported as contract warnings when absent; keep
 component, robustness, or significance claims out of the draft until those tables
 are supplied.
 
+If the experiment pipeline does not yet export the required CSV schemas, create
+the export contract and fill-in templates first:
+
+```powershell
+python -m paper_agent.cli tcga-artifact-template `
+  --output-dir D:\code\agent\example\results\logs `
+  --style long
+```
+
+This writes `tcga_main_results.csv`, `tcga_ablation.csv`,
+`tcga_sensitivity.csv`, `tcga_stats.csv`, and `EXPORT_CONTRACT.md`. Replace every
+`TODO` with real trained-model outputs. These files are templates, not evidence.
+
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 

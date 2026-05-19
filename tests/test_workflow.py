@@ -4580,6 +4580,69 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
     assert "Overall: FAIL" in output
 
 
+def test_cli_tcga_artifact_template_writes_long_contract(monkeypatch, tmp_path, capsys):
+    logs_dir = tmp_path / "logs"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-artifact-template",
+            "--output-dir",
+            str(logs_dir),
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "TCGA artifact export templates written" in output
+    expected_files = {
+        "tcga_main_results.csv",
+        "tcga_ablation.csv",
+        "tcga_sensitivity.csv",
+        "tcga_stats.csv",
+        "EXPORT_CONTRACT.md",
+    }
+    assert {path.name for path in logs_dir.iterdir()} == expected_files
+    main_csv = (logs_dir / "tcga_main_results.csv").read_text(encoding="utf-8")
+    assert "method,dataset,metric,fold,seed,value" in main_csv
+    assert "ProtoSurv baseline,BLCA,C-index,0,2026,TODO" in main_csv
+    assert "Hyper-ProtoSurv ours,BRCA,C-index,0,2026,TODO" in main_csv
+    contract = (logs_dir / "EXPORT_CONTRACT.md").read_text(encoding="utf-8")
+    assert "# TCGA Artifact Export Contract" in contract
+    assert "paper-agent tcga-artifacts-doctor --artifacts-dir ." in contract
+    assert "Do not use synthetic" in contract
+
+
+def test_cli_tcga_artifact_template_refuses_overwrite_without_force(monkeypatch, tmp_path):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    existing_path = logs_dir / "tcga_main_results.csv"
+    existing_path.write_text("keep this file\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-artifact-template",
+            "--output-dir",
+            str(logs_dir),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "Refusing to overwrite existing TCGA artifact template files" in str(exc)
+    else:
+        raise AssertionError("Expected template command to refuse overwriting existing artifacts.")
+
+    assert existing_path.read_text(encoding="utf-8") == "keep this file\n"
+
+
 def test_cli_tcga_preflight_passes_with_complete_artifacts_without_result_file(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

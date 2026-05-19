@@ -260,6 +260,20 @@ Repeated rows for the same method/dataset/metric, for example one row per fold,
 are averaged before comparison.
 Use `--no-require-ablation`, `--no-require-sensitivity`, or
 `--no-require-statistical-tests` when those analyses are outside the paper scope.
+If your experiment code does not yet export result CSVs in a stable shape, write
+the artifact contract and fill-in CSV templates first:
+
+```powershell
+paper-agent tcga-artifact-template `
+  --output-dir D:\code\agent\example\results\logs `
+  --style long
+```
+
+This writes `tcga_main_results.csv`, `tcga_ablation.csv`,
+`tcga_sensitivity.csv`, `tcga_stats.csv`, and `EXPORT_CONTRACT.md`. Replace every
+`TODO` with real trained-model outputs before running doctor, preflight, or draft
+commands.
+
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 
