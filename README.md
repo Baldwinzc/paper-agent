@@ -192,6 +192,10 @@ findings with suggested fixes when the reviewer gate raises warnings.
 The report separates pipeline status from submission evidence status: synthetic
 or cohort-metadata inputs can prove the toolchain runs, but they fail the
 submission-evidence gate until replaced with real trained-model results.
+When a TCGA draft is started from an artifact-flow `RUN_SUMMARY.json`, the same
+acceptance report also records the upstream summary path and a TCGA artifact-flow
+trace check with contract, quality, provenance, consistency, and matched-value
+counts.
 When `--project-name` is omitted, the smoke command uses the output directory
 name as the LaTeX project name, keeping generated artifacts easier to locate.
 Add `--strict-results` when the smoke run should fail before any LLM generation

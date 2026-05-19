@@ -186,7 +186,10 @@ TCGA cohort metadata summaries.
 If the result file came from an artifact-flow summary, pass
 `--artifact-flow-summary path\to\RUN_SUMMARY.json` instead of
 `--experiment-results`; the draft summary records the upstream summary path,
-artifact directory, artifact files, and validation counts.
+artifact directory, artifact files, and validation counts. The generated
+`ACCEPTANCE_REPORT.md` also includes a TCGA artifact-flow trace check so the
+paper package shows whether the upstream artifact export, result Markdown, and
+strict validation agreed.
 By default, ablation, sensitivity, and statistical-test evidence are required for
 a complete contract. Disable requirements that are out of scope with
 `--no-require-ablation`, `--no-require-sensitivity`, or

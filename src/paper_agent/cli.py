@@ -4460,6 +4460,8 @@ def _build_acceptance_report(
         f"- Baseline PDF: {inputs.get('baseline_pdf_path', '')}",
         f"- Experiment results: {inputs.get('experiment_results_path', '') or inputs.get('experiment_results_source', '')}",
         f"- Experiment evidence kind: {experiment_evidence.get('kind', 'unknown')}",
+        f"- TCGA artifact-flow summary: {inputs.get('tcga_artifact_flow_summary_path', '') or 'not provided'}",
+        f"- TCGA artifact-flow status: {inputs.get('tcga_artifact_flow_summary_status', '') or 'not provided'}",
         f"- Template source: {summary.get('template_source', '')}",
         f"- Network mode: {inputs.get('network_mode', '')}",
         f"- LLM mode: {inputs.get('llm_mode', '')}",
@@ -4567,6 +4569,7 @@ def _acceptance_checks(
     experiment_quality = _summary_experiment_quality(summary)
     experiment_provenance = _summary_experiment_provenance(summary)
     artifact_consistency = _summary_experiment_artifact_consistency(summary)
+    artifact_flow_item = _tcga_artifact_flow_acceptance_item(inputs)
     checks = [
         _acceptance_item(
             "Input contract",
@@ -4600,6 +4603,7 @@ def _acceptance_checks(
         *_experiment_quality_acceptance_items(experiment_quality),
         *_experiment_provenance_acceptance_items(experiment_provenance),
         *_experiment_artifact_consistency_acceptance_items(artifact_consistency),
+        *([artifact_flow_item] if artifact_flow_item else []),
         _acceptance_item(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
@@ -4815,6 +4819,34 @@ def _experiment_artifact_consistency_acceptance_items(consistency: dict[str, obj
     if status == "invalid":
         return [{"name": "Experiment artifact consistency", "status": "FAIL", "detail": _table_safe(detail)}]
     return [{"name": "Experiment artifact consistency", "status": "WARN", "detail": _table_safe(detail)}]
+
+
+def _tcga_artifact_flow_acceptance_item(inputs: dict[str, object]) -> dict[str, str] | None:
+    summary_path = str(inputs.get("tcga_artifact_flow_summary_path", "") or "")
+    if not summary_path:
+        return None
+    validation = inputs.get("tcga_artifact_flow_validation", {})
+    if not isinstance(validation, dict):
+        validation = {}
+    status = str(inputs.get("tcga_artifact_flow_summary_status", "unknown") or "unknown")
+    phase = str(inputs.get("tcga_artifact_flow_pipeline_phase", "unknown") or "unknown")
+    contract_status = str(validation.get("experiment_contract_status", "unknown") or "unknown")
+    quality_status = str(validation.get("experiment_quality_status", "unknown") or "unknown")
+    provenance_status = str(validation.get("experiment_provenance_status", "unknown") or "unknown")
+    consistency_status = str(validation.get("experiment_artifact_consistency_status", "unknown") or "unknown")
+    detail = (
+        f"summary={summary_path}; status={status}; phase={phase}; "
+        f"contract={contract_status}; quality={quality_status}; provenance={provenance_status}; "
+        f"consistency={consistency_status}; matched={validation.get('artifact_consistency_matched', 0)}; "
+        f"missing={validation.get('artifact_consistency_missing', 0)}; "
+        f"mismatched={validation.get('artifact_consistency_mismatched', 0)}"
+    )
+    validation_statuses = {contract_status, quality_status, provenance_status, consistency_status}
+    if status != "pass" or "invalid" in validation_statuses:
+        return {"name": "TCGA artifact flow trace", "status": "FAIL", "detail": _table_safe(detail)}
+    if "needs_attention" in validation_statuses or "unknown" in validation_statuses:
+        return {"name": "TCGA artifact flow trace", "status": "WARN", "detail": _table_safe(detail)}
+    return {"name": "TCGA artifact flow trace", "status": "PASS", "detail": _table_safe(detail)}
 
 
 def _compile_acceptance_item(status: str, tool: str, mode: str, install_hint: str = "") -> dict[str, str]:

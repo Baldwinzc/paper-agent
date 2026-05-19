@@ -5984,6 +5984,7 @@ def test_cli_tcga_draft_uses_artifact_flow_summary_when_results_omitted(monkeypa
 
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "TCGA artifact flow summary loaded from" in output
     assert "TCGA draft run completed." in output
     assert captured["llm_client"] is None
@@ -5993,6 +5994,10 @@ def test_cli_tcga_draft_uses_artifact_flow_summary_when_results_omitted(monkeypa
     assert summary["inputs"]["tcga_artifact_flow_summary_status"] == "pass"
     assert summary["inputs"]["tcga_artifact_flow_pipeline_phase"] == "tcga_artifact_flow_demo"
     assert summary["inputs"]["tcga_artifact_flow_validation"]["artifact_consistency_matched"] == 15
+    assert f"- TCGA artifact-flow summary: {flow_summary_path}" in acceptance_report
+    assert "| TCGA artifact flow trace | PASS |" in acceptance_report
+    assert "phase=tcga_artifact_flow_demo" in acceptance_report
+    assert "matched=15; missing=0; mismatched=0" in acceptance_report
     assert zip_path.exists()
 
 
