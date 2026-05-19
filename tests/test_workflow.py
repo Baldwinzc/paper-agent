@@ -50,8 +50,10 @@ os.environ.setdefault("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", "1")
 
 
 class FakeLLMClient:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, *, model: str = "fake", usage: dict | None = None) -> None:
         self.content = content
+        self.model = model
+        self.usage = usage or {}
         self.calls = []
 
     @property
@@ -60,12 +62,14 @@ class FakeLLMClient:
 
     def chat(self, messages, **kwargs):
         self.calls.append({"messages": messages, "kwargs": kwargs})
-        return SimpleNamespace(content=self.content, model="fake", usage={}, raw={})
+        return SimpleNamespace(content=self.content, model=self.model, usage=dict(self.usage), raw={})
 
 
 class FakeSequenceLLMClient:
-    def __init__(self, contents: list[str]) -> None:
+    def __init__(self, contents: list[str], *, model: str = "fake", usage: dict | None = None) -> None:
         self.contents = contents
+        self.model = model
+        self.usage = usage or {}
         self.calls = []
 
     @property
@@ -74,7 +78,7 @@ class FakeSequenceLLMClient:
 
     def chat(self, messages, **kwargs):
         self.calls.append({"messages": messages, "kwargs": kwargs})
-        return SimpleNamespace(content=self.contents.pop(0), model="fake", usage={}, raw={})
+        return SimpleNamespace(content=self.contents.pop(0), model=self.model, usage=dict(self.usage), raw={})
 
 
 def _write_pdf(path: Path, text: str) -> None:
@@ -2712,6 +2716,20 @@ def test_run_summary_records_llm_runtime_metadata_without_api_key(tmp_path):
             "section_writer_llm_attempted_sections": ["abstract"],
             "section_writer_llm_successes": ["abstract"],
             "section_writer_section_errors": {},
+            "section_writer_llm_call_trace": [
+                {
+                    "section": "abstract",
+                    "phase": "draft",
+                    "status": "success",
+                    "model": "deepseek-v4-pro",
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+                    "elapsed_seconds": 0.25,
+                    "prompt_chars": 120,
+                    "output_chars": 32,
+                    "temperature": 0.25,
+                    "max_tokens": 450,
+                }
+            ],
             "llm_self_review": {"mode": "disabled", "unsupported_claims": []},
             "experiment_result_tables": [{"caption": "Main Results"}],
             "submission_readiness": {"overall_score": 95, "status": "reviewable"},
@@ -2743,9 +2761,13 @@ def test_run_summary_records_llm_runtime_metadata_without_api_key(tmp_path):
     assert summary["inputs"]["llm_configured"] is True
     assert summary["inputs"]["llm_timeout_seconds"] == 30
     assert summary["inputs"]["llm_max_retries"] == 2
+    assert summary["section_writer_llm_call_count"] == 1
+    assert summary["section_writer_llm_call_successes"] == 1
+    assert summary["section_writer_llm_total_tokens"] == 12
     assert "secret-test-key" not in serialized
     assert "- LLM provider/model: deepseek / deepseek-v4-pro" in report
     assert "- LLM endpoint host: api.deepseek.com" in report
+    assert "- LLM section call trace: 1/1 successful; total_tokens=12" in report
     assert "secret-test-key" not in report
 
 
@@ -2778,6 +2800,9 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
             "experiments",
             "conclusion",
         ],
+        "section_writer_llm_call_count": 6,
+        "section_writer_llm_call_successes": 6,
+        "section_writer_llm_total_tokens": 4800,
         "section_writer_section_errors": {},
         "evidence_guard_findings": 0,
         "review_findings": 0,
@@ -2852,6 +2877,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "- Unresolved seed references: 0" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
+    assert "| LLM call trace | PASS | 6/6 calls succeeded; total_tokens=4800; required >= 4 |" in report
     assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report
     assert "outputs/hyper-protosurv-llm-smoke/main.tex" in report
 
@@ -3236,6 +3262,37 @@ def test_llm_section_writer_records_successful_sections():
     ]
 
 
+def test_llm_section_writer_records_sanitized_call_trace():
+    client = FakeLLMClient(
+        "A cautious section.",
+        model="deepseek-v4-pro",
+        usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [],
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    SectionWriterAgent(llm_client=client).run(state)
+
+    trace = state["artifacts"]["section_writer_llm_call_trace"]
+    assert len(trace) == 6
+    assert trace[0]["section"] == "abstract"
+    assert trace[0]["phase"] == "draft"
+    assert trace[0]["status"] == "success"
+    assert trace[0]["model"] == "deepseek-v4-pro"
+    assert trace[0]["usage"]["total_tokens"] == 18
+    assert trace[0]["prompt_chars"] > 0
+    assert trace[0]["output_chars"] == len("A cautious section.")
+    assert "messages" not in trace[0]
+    assert "content" not in trace[0]
+
+
 def test_llm_related_work_gets_citation_backstop_when_model_omits_cites():
     client = FakeLLMClient("Prior survival-prediction work motivates this setting.")
     state = {
@@ -3300,6 +3357,11 @@ def test_llm_section_writer_repairs_rejected_method_once():
     assert "method" not in state["artifacts"].get("section_writer_section_errors", {})
     assert "replaces" not in state["sections"].method
     assert "offline optimal-transport prototype geometry" in state["sections"].method
+    trace = state["artifacts"]["section_writer_llm_call_trace"]
+    assert trace[3]["section"] == "method"
+    assert trace[3]["phase"] == "draft"
+    assert trace[4]["section"] == "method"
+    assert trace[4]["phase"] == "repair"
     assert len(client.calls) == 7
     repair_payload = json.loads(client.calls[4]["messages"][1].content)
     assert repair_payload["task"] == "Repair the rejected method section."

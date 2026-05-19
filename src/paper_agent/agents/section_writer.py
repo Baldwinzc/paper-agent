@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
@@ -557,7 +558,10 @@ class SectionWriterAgent:
         missing_experiment_details = experiments.missing_details if experiments else []
         messages = self._section_messages(state, section_name)
 
-        result = self.llm_client.chat(
+        result = self._chat_with_trace(
+            state,
+            section_name,
+            "draft",
             messages,
             temperature=0.25,
             max_tokens=spec["max_tokens"],
@@ -665,7 +669,10 @@ class SectionWriterAgent:
         experiments = state.get("experiments")
         spec = self.SECTION_SPECS[section_name]
         missing_experiment_details = experiments.missing_details if experiments else []
-        repair_result = self.llm_client.chat(
+        repair_result = self._chat_with_trace(
+            state,
+            section_name,
+            "repair",
             self._section_repair_messages(
                 state,
                 section_name,
@@ -721,6 +728,90 @@ class SectionWriterAgent:
         artifacts.setdefault("section_writer_repaired_sections", []).append(section_name)
         artifacts.setdefault("section_writer_repair_attempts", {})[section_name] = validation_error
         return repaired_text
+
+    def _chat_with_trace(
+        self,
+        state: PaperState,
+        section_name: str,
+        phase: str,
+        messages: list[ChatMessage],
+        *,
+        temperature: float,
+        max_tokens: int,
+    ):
+        start = time.monotonic()
+        try:
+            result = self.llm_client.chat(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except LLMError as exc:
+            self._record_llm_call_trace(
+                state,
+                section_name=section_name,
+                phase=phase,
+                status="fail",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                elapsed_seconds=time.monotonic() - start,
+                error=exc,
+            )
+            raise
+
+        self._record_llm_call_trace(
+            state,
+            section_name=section_name,
+            phase=phase,
+            status="success",
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            elapsed_seconds=time.monotonic() - start,
+            result=result,
+        )
+        return result
+
+    def _record_llm_call_trace(
+        self,
+        state: PaperState,
+        *,
+        section_name: str,
+        phase: str,
+        status: str,
+        messages: list[ChatMessage],
+        temperature: float,
+        max_tokens: int,
+        elapsed_seconds: float,
+        result=None,
+        error: Exception | None = None,
+    ) -> None:
+        usage = getattr(result, "usage", {}) if result is not None else {}
+        item: dict[str, Any] = {
+            "section": section_name,
+            "phase": phase,
+            "status": status,
+            "model": str(getattr(result, "model", "")) if result is not None else "",
+            "usage": usage if isinstance(usage, dict) else {},
+            "elapsed_seconds": round(max(elapsed_seconds, 0.0), 3),
+            "prompt_chars": sum(len(message.content or "") for message in messages),
+            "output_chars": len(getattr(result, "content", "") or "") if result is not None else 0,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if error is not None:
+            item["error_type"] = type(error).__name__
+            item["error"] = self._safe_trace_error(str(error))
+        state.setdefault("artifacts", {}).setdefault("section_writer_llm_call_trace", []).append(item)
+
+    def _safe_trace_error(self, text: str, limit: int = 240) -> str:
+        redacted = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-***", text or "")
+        redacted = re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer ***", redacted)
+        compact = re.sub(r"\s+", " ", redacted).strip()
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
 
     def _augment_method_with_missing_innovations(
         self,

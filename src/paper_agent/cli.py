@@ -6211,6 +6211,11 @@ def _build_acceptance_report(
             f"{inputs.get('llm_model', '') or 'not recorded'}"
         ),
         f"- LLM endpoint host: {inputs.get('llm_endpoint_host', '') or 'not recorded'}",
+        (
+            f"- LLM section call trace: {summary.get('section_writer_llm_call_successes', 0)}/"
+            f"{summary.get('section_writer_llm_call_count', 0)} successful; "
+            f"total_tokens={summary.get('section_writer_llm_total_tokens', 0)}"
+        ),
         f"- LLM self-review auto revisions: {summary.get('llm_self_review_auto_revisions', 0)}",
         f"- LaTeX compile requested: {inputs.get('latex_compile_requested', False)}",
         "",
@@ -6298,6 +6303,9 @@ def _acceptance_checks(
     successes = summary.get("section_writer_llm_successes", [])
     attempted = summary.get("section_writer_llm_attempted_sections", [])
     section_errors = summary.get("section_writer_section_errors", {})
+    llm_call_count = int(summary.get("section_writer_llm_call_count", 0) or 0)
+    llm_call_successes = int(summary.get("section_writer_llm_call_successes", 0) or 0)
+    llm_total_tokens = int(summary.get("section_writer_llm_total_tokens", 0) or 0)
     compile_status = summary.get("submission_compile_status", "not_run")
     compile_tool = summary.get("submission_compile_tool", "")
     compile_mode = summary.get("submission_compile_mode", "")
@@ -6348,6 +6356,20 @@ def _acceptance_checks(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
             f"{len(successes)}/{len(attempted) or '?'} sections succeeded; required >= {min_llm_sections}; successes={', '.join(successes) or 'none'}",
+        ),
+        *(
+            [
+                _acceptance_item(
+                    "LLM call trace",
+                    llm_call_successes >= min_llm_sections,
+                    (
+                        f"{llm_call_successes}/{llm_call_count} calls succeeded; "
+                        f"total_tokens={llm_total_tokens}; required >= {min_llm_sections}"
+                    ),
+                )
+            ]
+            if min_llm_sections > 0 and (llm_call_count or inputs.get("llm_mode") == "required")
+            else []
         ),
         _acceptance_item(
             "LLM section errors",
@@ -6730,6 +6752,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifact_consistency = artifacts.get("experiment_artifact_consistency", {})
     if not isinstance(artifact_consistency, dict) or not artifact_consistency:
         artifact_consistency = _summary_experiment_artifact_consistency({})
+    llm_call_trace = _section_writer_llm_call_trace(artifacts)
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
         "experiment_results_source", "provided" if experiment_results_present else "none"
@@ -6849,6 +6872,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "section_writer_llm_successes": artifacts.get("section_writer_llm_successes", []),
         "section_writer_repaired_sections": artifacts.get("section_writer_repaired_sections", []),
         "section_writer_section_errors": artifacts.get("section_writer_section_errors", {}),
+        "section_writer_llm_call_trace": llm_call_trace,
+        "section_writer_llm_call_count": len(llm_call_trace),
+        "section_writer_llm_call_successes": _section_writer_llm_successful_call_count(llm_call_trace),
+        "section_writer_llm_total_tokens": _section_writer_llm_total_tokens(llm_call_trace),
         "outputs": {
             "markdown": str(markdown_path) if markdown_path else "",
             "latex_project_dir": str(state.get("latex_project_dir", "")),
@@ -6859,6 +6886,30 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "presentation_plan_path": artifacts.get("presentation_plan_path", ""),
         },
     }
+
+
+def _section_writer_llm_call_trace(artifacts: dict) -> list[dict[str, object]]:
+    trace = artifacts.get("section_writer_llm_call_trace", [])
+    if not isinstance(trace, list):
+        return []
+    return [item for item in trace if isinstance(item, dict)]
+
+
+def _section_writer_llm_successful_call_count(trace: list[dict[str, object]]) -> int:
+    return sum(1 for item in trace if item.get("status") == "success")
+
+
+def _section_writer_llm_total_tokens(trace: list[dict[str, object]]) -> int:
+    total = 0
+    for item in trace:
+        usage = item.get("usage", {})
+        if not isinstance(usage, dict):
+            continue
+        try:
+            total += int(usage.get("total_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def _review_finding_severity(finding: object) -> str:

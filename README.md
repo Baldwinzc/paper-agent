@@ -187,8 +187,9 @@ paper-writing path itself can call the model. The command writes both
 human-readable pass/fail view of the input contract, LLM-written sections,
 experiment-source integrity, evidence checks, LaTeX package status, compile
 check, and output paths. The report records the configured LLM provider, model,
-and endpoint host without recording API keys, and it lists concrete reviewer
-findings with suggested fixes when the reviewer gate raises warnings.
+endpoint host, and section-call trace counts without recording API keys, prompts,
+or generated section text; it lists concrete reviewer findings with suggested
+fixes when the reviewer gate raises warnings.
 The report separates pipeline status from submission evidence status: synthetic
 or cohort-metadata inputs can prove the toolchain runs, but they fail the
 submission-evidence gate until replaced with real trained-model results.

@@ -593,9 +593,19 @@ class DraftReportAgent:
         section_errors = artifacts.get("section_writer_section_errors", {})
         section_successes = artifacts.get("section_writer_llm_successes", [])
         repaired_sections = artifacts.get("section_writer_repaired_sections", [])
-        if section_successes:
+        llm_call_trace = [
+            item for item in artifacts.get("section_writer_llm_call_trace", []) if isinstance(item, dict)
+        ]
+        if section_successes or llm_call_trace:
             lines.extend(["", "## LLM Section Drafting", ""])
             lines.append(f"- Successful sections: {', '.join(section_successes)}")
+            if llm_call_trace:
+                successful_calls = sum(1 for item in llm_call_trace if item.get("status") == "success")
+                total_tokens = self._llm_trace_total_tokens(llm_call_trace)
+                lines.append(
+                    f"- Call trace: {successful_calls}/{len(llm_call_trace)} successful; "
+                    f"total tokens: {total_tokens}"
+                )
             if repaired_sections:
                 lines.append(f"- Repaired sections: {', '.join(repaired_sections)}")
         if section_errors:
@@ -655,3 +665,15 @@ class DraftReportAgent:
         if len(compact) <= limit:
             return compact or "not detected"
         return compact[: limit - 3].rstrip() + "..."
+
+    def _llm_trace_total_tokens(self, trace: list[dict]) -> int:
+        total = 0
+        for item in trace:
+            usage = item.get("usage", {})
+            if not isinstance(usage, dict):
+                continue
+            try:
+                total += int(usage.get("total_tokens", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
