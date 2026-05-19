@@ -52,6 +52,16 @@ write_tcga_artifact_exports(
 )
 ```
 
+If the run already writes one summary CSV, add a `role` column with values
+`main`, `ablation`, `sensitivity`, or `stats`, then convert it:
+
+```powershell
+python -m paper_agent.cli tcga-export-artifacts `
+  --input-csv D:\code\agent\example\results\training_summary.csv `
+  --output-dir D:\code\agent\example\results\logs `
+  --force
+```
+
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 

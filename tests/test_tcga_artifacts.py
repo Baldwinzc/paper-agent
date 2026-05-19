@@ -1,3 +1,4 @@
+import csv
 import json
 
 from paper_agent import cli as cli_module
@@ -75,3 +76,76 @@ def test_tcga_artifact_exporter_rejects_todo_values(tmp_path):
         assert "TODO" in str(exc)
     else:
         raise AssertionError("Expected exporter to reject TODO artifact values.")
+
+
+def test_cli_tcga_export_artifacts_converts_flat_training_csv(monkeypatch, tmp_path, capsys):
+    input_csv = tmp_path / "training_summary.csv"
+    fieldnames = [
+        "role",
+        "method",
+        "dataset",
+        "metric",
+        "fold",
+        "seed",
+        "value",
+        "variant",
+        "parameter",
+        "parameter_value",
+        "comparison",
+        "test",
+        "p_value",
+    ]
+    rows = [
+        {"role": "main", "method": "ProtoSurv baseline", "dataset": "BLCA", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.646},
+        {"role": "main", "method": "ProtoSurv baseline", "dataset": "BRCA", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.669},
+        {"role": "main", "method": "Hyper-ProtoSurv ours", "dataset": "BLCA", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.671},
+        {"role": "main", "method": "Hyper-ProtoSurv ours", "dataset": "BRCA", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.691},
+        {"role": "ablation", "dataset": "Average", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.681, "variant": "Hyper-ProtoSurv ours"},
+        {"role": "ablation", "dataset": "Average", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.665, "variant": "w/o reconstruction loss"},
+        {"role": "sensitivity", "dataset": "Average", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.676, "parameter": "lambda_rec", "parameter_value": 0.5},
+        {"role": "sensitivity", "dataset": "Average", "metric": "C-index", "fold": 0, "seed": 2026, "value": 0.681, "parameter": "lambda_rec", "parameter_value": 1.0},
+        {"role": "stats", "metric": "C-index", "comparison": "Hyper-ProtoSurv ours vs ProtoSurv baseline", "test": "Wilcoxon signed-rank", "p_value": 0.018},
+    ]
+    with input_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    logs_dir = tmp_path / "logs"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-export-artifacts",
+            "--input-csv",
+            str(input_csv),
+            "--output-dir",
+            str(logs_dir),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    assert "TCGA artifact exports written" in output
+    assert (logs_dir / "tcga_main_results.csv").is_file()
+    assert (logs_dir / "ARTIFACT_SCHEMA.json").is_file()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-from-artifacts",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output",
+            str(tmp_path / "tcga_results_from_flat.md"),
+            "--strict",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    result_text = (tmp_path / "tcga_results_from_flat.md").read_text(encoding="utf-8")
+    assert "Experiment artifact consistency: complete" in output
+    assert "| Hyper-ProtoSurv ours | 0.671 | 0.691 |" in result_text

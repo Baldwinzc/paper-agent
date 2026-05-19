@@ -301,6 +301,16 @@ write_tcga_artifact_exports(
 )
 ```
 
+If your training run already emits a single summary CSV, add a `role` column
+with values `main`, `ablation`, `sensitivity`, or `stats`, then convert it:
+
+```powershell
+paper-agent tcga-export-artifacts `
+  --input-csv D:\code\agent\example\results\training_summary.csv `
+  --output-dir D:\code\agent\example\results\logs `
+  --force
+```
+
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 

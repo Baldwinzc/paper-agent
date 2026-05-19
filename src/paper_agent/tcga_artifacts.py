@@ -144,6 +144,47 @@ def write_tcga_artifact_exports(
     return written
 
 
+def write_tcga_artifact_exports_from_rows(
+    output_dir: str | Path,
+    rows: Sequence[RowInput],
+    *,
+    role_column: str = "role",
+    method: str = "Hyper-ProtoSurv ours",
+    baseline: str = "ProtoSurv baseline",
+    metric: str = "C-index",
+    seed: int | str = 2026,
+    force: bool = False,
+    require_complete: bool = True,
+) -> dict[str, Path]:
+    """Write artifact CSVs from a single flat table with a role column."""
+
+    grouped: dict[str, list[dict[str, object]]] = {
+        "main": [],
+        "ablation": [],
+        "sensitivity": [],
+        "stats": [],
+    }
+    for index, row in enumerate(rows, start=2):
+        values = _row_dict(row)
+        role_value = _first_present(values, role_column, "role", "section", "type")
+        role = _canonical_role(_text(role_value, role_column), row_number=index)
+        grouped[role].append({key: value for key, value in values.items() if key != role_column})
+
+    return write_tcga_artifact_exports(
+        output_dir,
+        main_results=grouped["main"],
+        ablation_results=grouped["ablation"],
+        sensitivity_results=grouped["sensitivity"],
+        statistical_tests=grouped["stats"],
+        method=method,
+        baseline=baseline,
+        metric=metric,
+        seed=seed,
+        force=force,
+        require_complete=require_complete,
+    )
+
+
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -164,22 +205,22 @@ def _main_row(row: RowInput, *, default_metric: str, default_seed: int | str) ->
     return {
         "method": _required_text(values, "method"),
         "dataset": _required_text(values, "dataset"),
-        "metric": _text(values.get("metric", default_metric), "metric"),
-        "fold": _text(values.get("fold", 0), "fold"),
-        "seed": _text(values.get("seed", default_seed), "seed"),
+        "metric": _text(_value_or_default(values, "metric", default_metric), "metric"),
+        "fold": _text(_value_or_default(values, "fold", 0), "fold"),
+        "seed": _text(_value_or_default(values, "seed", default_seed), "seed"),
         "value": _text(values.get("value"), "value"),
     }
 
 
 def _ablation_row(row: RowInput, *, default_metric: str, default_seed: int | str) -> dict[str, str]:
     values = _row_dict(row)
-    variant = values.get("variant", values.get("method"))
+    variant = _first_present(values, "variant", "method", "name")
     return {
         "method": _text(variant, "variant"),
-        "dataset": _text(values.get("dataset", "Average"), "dataset"),
-        "metric": _text(values.get("metric", default_metric), "metric"),
-        "fold": _text(values.get("fold", 0), "fold"),
-        "seed": _text(values.get("seed", default_seed), "seed"),
+        "dataset": _text(_value_or_default(values, "dataset", "Average"), "dataset"),
+        "metric": _text(_value_or_default(values, "metric", default_metric), "metric"),
+        "fold": _text(_value_or_default(values, "fold", 0), "fold"),
+        "seed": _text(_value_or_default(values, "seed", default_seed), "seed"),
         "value": _text(values.get("value"), "value"),
     }
 
@@ -189,10 +230,10 @@ def _sensitivity_row(row: RowInput, *, default_metric: str, default_seed: int | 
     return {
         "parameter": _required_text(values, "parameter"),
         "parameter_value": _required_text(values, "parameter_value"),
-        "dataset": _text(values.get("dataset", "Average"), "dataset"),
-        "metric": _text(values.get("metric", default_metric), "metric"),
-        "fold": _text(values.get("fold", 0), "fold"),
-        "seed": _text(values.get("seed", default_seed), "seed"),
+        "dataset": _text(_value_or_default(values, "dataset", "Average"), "dataset"),
+        "metric": _text(_value_or_default(values, "metric", default_metric), "metric"),
+        "fold": _text(_value_or_default(values, "fold", 0), "fold"),
+        "seed": _text(_value_or_default(values, "seed", default_seed), "seed"),
         "value": _text(values.get("value"), "value"),
     }
 
@@ -201,8 +242,8 @@ def _stats_row(row: RowInput, *, default_metric: str) -> dict[str, str]:
     values = _row_dict(row)
     return {
         "comparison": _required_text(values, "comparison"),
-        "metric": _text(values.get("metric", default_metric), "metric"),
-        "test": _text(values.get("test", "Wilcoxon signed-rank"), "test"),
+        "metric": _text(_value_or_default(values, "metric", default_metric), "metric"),
+        "test": _text(_value_or_default(values, "test", "Wilcoxon signed-rank"), "test"),
         "p_value": _required_text(values, "p_value"),
     }
 
@@ -213,6 +254,48 @@ def _main_row_dataset(row: dict[str, str]) -> str:
 
 def _required_text(values: Mapping[str, object], key: str) -> str:
     return _text(values.get(key), key)
+
+
+def _first_present(values: Mapping[str, object], *keys: str) -> object:
+    for key in keys:
+        value = values.get(key)
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
+def _value_or_default(values: Mapping[str, object], key: str, default: object) -> object:
+    value = values.get(key)
+    if value is None or not str(value).strip():
+        return default
+    return value
+
+
+def _canonical_role(value: str, *, row_number: int) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "main": "main",
+        "result": "main",
+        "results": "main",
+        "performance": "main",
+        "ablation": "ablation",
+        "abl": "ablation",
+        "variant": "ablation",
+        "sensitivity": "sensitivity",
+        "hyperparameter": "sensitivity",
+        "sweep": "sensitivity",
+        "stats": "stats",
+        "stat": "stats",
+        "statistical": "stats",
+        "statistical_test": "stats",
+        "test": "stats",
+    }
+    if normalized not in aliases:
+        raise ValueError(
+            f"Unsupported TCGA artifact role `{value}` on CSV row {row_number}. "
+            "Use one of: main, ablation, sensitivity, stats."
+        )
+    return aliases[normalized]
 
 
 def _text(value: object, label: str) -> str:

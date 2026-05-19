@@ -27,6 +27,7 @@ from paper_agent.experiment_provenance import assess_experiment_provenance
 from paper_agent.experiment_quality import assess_experiment_quality, tcga_experiment_quality_kwargs
 from paper_agent.llm import ChatMessage, LLMClient, LLMError
 from paper_agent.state import DraftSections, ExperimentSummary, PaperRequest
+from paper_agent.tcga_artifacts import write_tcga_artifact_exports_from_rows
 from paper_agent.workflow import PaperWorkflow
 
 
@@ -289,6 +290,23 @@ def main() -> None:
         "--strict",
         action="store_true",
         help="Validate the generated file with provenance and artifact-consistency requirements.",
+    )
+    tcga_export = sub.add_parser(
+        "tcga-export-artifacts",
+        help="Convert a flat role-tagged training result CSV into TCGA artifact CSVs.",
+    )
+    tcga_export.add_argument("--input-csv", required=True, help="CSV with a role column: main, ablation, sensitivity, stats.")
+    tcga_export.add_argument("--output-dir", default=r"D:\code\agent\example\results\logs")
+    tcga_export.add_argument("--role-column", default="role", help="Column that identifies each row role.")
+    tcga_export.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_export.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_export.add_argument("--metric", default="C-index")
+    tcga_export.add_argument("--seed", default="2026")
+    tcga_export.add_argument("--force", action="store_true", help="Overwrite existing export files.")
+    tcga_export.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Write available roles even if ablation/sensitivity/statistical rows are missing.",
     )
     tcga_artifacts_doctor = sub.add_parser(
         "tcga-artifacts-doctor",
@@ -787,6 +805,8 @@ def main() -> None:
         _run_tcga_doctor(args)
     elif args.command == "tcga-results-from-artifacts":
         _run_tcga_results_from_artifacts(args)
+    elif args.command == "tcga-export-artifacts":
+        _run_tcga_export_artifacts(args)
     elif args.command == "tcga-artifacts-doctor":
         _run_tcga_artifacts_doctor(args)
     elif args.command == "tcga-artifact-template":
@@ -1796,6 +1816,32 @@ def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
         )
         if not _validated_results_are_strictly_acceptable(summary):
             raise SystemExit("Generated TCGA result file failed strict validation.")
+
+
+def _run_tcga_export_artifacts(args: argparse.Namespace) -> None:
+    input_csv = _resolve_required_file(args.input_csv, "Input export CSV")
+    output_dir = _resolve_project_relative_path(args.output_dir)
+    rows = _read_csv_dicts(input_csv)
+    try:
+        written = write_tcga_artifact_exports_from_rows(
+            output_dir,
+            rows,
+            role_column=args.role_column,
+            method=args.method,
+            baseline=args.baseline,
+            metric=args.metric,
+            seed=args.seed,
+            force=bool(args.force),
+            require_complete=not bool(args.allow_partial),
+        )
+    except (FileExistsError, TypeError, ValueError) as exc:
+        raise SystemExit(f"TCGA artifact export failed: {exc}") from exc
+
+    print(f"TCGA artifact exports written to {output_dir}")
+    for name in sorted(written):
+        print(f"- {name}: {written[name]}")
+    print(f"Ready command: paper-agent tcga-artifacts-doctor --artifacts-dir {output_dir} --summary {output_dir / 'artifact-doctor.json'}")
+    print(f"Next command: paper-agent tcga-results-from-artifacts --artifacts-dir {output_dir} --strict")
 
 
 def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
