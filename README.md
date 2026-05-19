@@ -302,13 +302,16 @@ diagnostics.
 
 ```powershell
 paper-agent tcga-artifacts-doctor `
-  --artifacts-dir D:\code\agent\example\results\logs
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --summary outputs\tcga-artifacts-doctor.json
 ```
 
 `tcga-artifacts-doctor` checks whether the directory contains parseable main,
 ablation, sensitivity, and statistical-test CSVs. It reports missing roles,
 unreadable CSVs, expected schemas, detected columns, row counts, and parsed
-value counts before any result file or paper draft is written.
+value counts before any result file or paper draft is written. With `--summary`,
+it writes the same role-level diagnostics, auto-detected file paths, blocking
+items, expected schemas, and the next command to run.
 
 ```powershell
 paper-agent tcga-results-from-artifacts `

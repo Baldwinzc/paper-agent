@@ -308,6 +308,7 @@ def main() -> None:
     tcga_artifacts_doctor.add_argument("--baseline", default="ProtoSurv baseline")
     tcga_artifacts_doctor.add_argument("--metric", default="C-index")
     tcga_artifacts_doctor.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    tcga_artifacts_doctor.add_argument("--summary", default="", help="Optional JSON artifact doctor summary path.")
     _add_experiment_contract_options(tcga_artifacts_doctor)
     tcga_artifact_template = sub.add_parser(
         "tcga-artifact-template",
@@ -1829,7 +1830,9 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
 
     print("TCGA artifact doctor:")
     has_input = bool(artifact_dir or any(explicit_paths.values()))
-    _print_doctor_check("Artifact directory", has_input, str(artifact_dir or "not provided"))
+    checks: list[dict[str, object]] = []
+    role_summaries: dict[str, dict[str, object]] = {}
+    checks.append(_print_doctor_check("Artifact directory", has_input, str(artifact_dir or "not provided")))
     if detected:
         _print_detected_tcga_artifacts(detected)
 
@@ -1841,7 +1844,18 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
         required = required_roles[role]
         if not path:
             detail = f"missing; expected {_tcga_expected_artifact_schema(role)}"
-            _print_doctor_check(label, not required, detail)
+            status_ok = not required
+            checks.append(_print_doctor_check(label, status_ok, detail))
+            role_summaries[role] = {
+                "role": role,
+                "label": label,
+                "required": required,
+                "status": "pass" if status_ok else "fail",
+                "path": "",
+                "detail": detail,
+                "issues": [detail] if required else [],
+                "datasets": [],
+            }
             if required:
                 blocking.append(f"Missing required {label}: {_tcga_expected_artifact_schema(role)}")
             continue
@@ -1851,13 +1865,38 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
             args=args,
             datasets=datasets,
         )
-        _print_doctor_check(label, diagnostic["ok"], str(diagnostic["detail"]))
+        status_ok = bool(diagnostic["ok"])
+        checks.append(_print_doctor_check(label, status_ok, str(diagnostic["detail"])))
         for issue in diagnostic["issues"]:
             print(f"  - {issue}")
+        role_summaries[role] = {
+            "role": role,
+            "label": label,
+            "required": required,
+            "status": "pass" if status_ok else "fail",
+            "path": str(path),
+            "detail": str(diagnostic["detail"]),
+            "issues": list(diagnostic["issues"]),
+            "datasets": list(diagnostic["datasets"]),
+        }
         if role == "main" and diagnostic["datasets"]:
             datasets = list(diagnostic["datasets"])
         if not diagnostic["ok"]:
             blocking.append(f"{label} is not parseable: {path}")
+
+    summary = _tcga_artifacts_doctor_summary(
+        args,
+        example_root,
+        artifact_dir,
+        detected,
+        checks,
+        role_summaries,
+        blocking,
+        datasets,
+    )
+    if getattr(args, "summary", ""):
+        summary_path = _write_run_summary_data(summary, Path(args.summary))
+        print(f"TCGA artifact doctor summary written to {summary_path}")
 
     if blocking:
         print("Overall: FAIL")
@@ -1870,6 +1909,44 @@ def _run_tcga_artifacts_doctor(args: argparse.Namespace) -> None:
         print(f"Ready command: paper-agent tcga-results-from-artifacts --artifacts-dir {artifact_dir} --strict")
     else:
         print("Ready command: paper-agent tcga-results-from-artifacts --main-csv <path> --strict")
+
+
+def _tcga_artifacts_doctor_summary(
+    args: argparse.Namespace,
+    example_root: Path,
+    artifact_dir: Path | None,
+    detected: dict[str, Path],
+    checks: list[dict[str, object]],
+    role_summaries: dict[str, dict[str, object]],
+    blocking: list[str],
+    datasets: list[str],
+) -> dict[str, object]:
+    status = "fail" if blocking else "pass"
+    next_command = (
+        _tcga_artifact_template_command(args, example_root)
+        if blocking
+        else _tcga_results_from_artifacts_command(args, example_root)
+    )
+    next_action = (
+        "Export or fill the required TCGA CSV artifacts, then rerun tcga-artifacts-doctor."
+        if blocking
+        else "Generate the paper-facing TCGA result Markdown from the validated CSV artifacts."
+    )
+    return {
+        "status": status,
+        "example_root": str(example_root),
+        "artifact_dir": str(artifact_dir or ""),
+        "detected_artifacts": {role: str(path) for role, path in detected.items()},
+        "checks": checks,
+        "roles": role_summaries,
+        "blocking_items": blocking,
+        "datasets": datasets,
+        "expected_schemas": {role: _tcga_expected_artifact_schema(role) for role in ("main", "ablation", "sensitivity", "stats")},
+        "next_action": next_action,
+        "next_command": next_command,
+        "results_from_artifacts_command": _tcga_results_from_artifacts_command(args, example_root),
+        "artifact_template_command": _tcga_artifact_template_command(args, example_root),
+    }
 
 
 def _run_tcga_artifact_template(args: argparse.Namespace) -> None:

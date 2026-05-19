@@ -4510,6 +4510,7 @@ def test_cli_tcga_artifacts_doctor_passes_complete_dir(monkeypatch, tmp_path, ca
         ),
         encoding="utf-8",
     )
+    summary_path = tmp_path / "artifact-doctor-pass.json"
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -4517,6 +4518,8 @@ def test_cli_tcga_artifacts_doctor_passes_complete_dir(monkeypatch, tmp_path, ca
             "tcga-artifacts-doctor",
             "--artifacts-dir",
             str(logs_dir),
+            "--summary",
+            str(summary_path),
             "--dataset",
             "BLCA",
             "--dataset",
@@ -4527,6 +4530,7 @@ def test_cli_tcga_artifacts_doctor_passes_complete_dir(monkeypatch, tmp_path, ca
     cli_module.main()
 
     output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "TCGA artifact doctor:" in output
     assert "- Artifact directory: PASS" in output
     assert "- Main result CSV: PASS" in output
@@ -4536,6 +4540,13 @@ def test_cli_tcga_artifacts_doctor_passes_complete_dir(monkeypatch, tmp_path, ca
     assert "parsed_values=4" in output
     assert "Overall: PASS" in output
     assert "Ready command: paper-agent tcga-results-from-artifacts" in output
+    assert "TCGA artifact doctor summary written to" in output
+    assert summary["status"] == "pass"
+    assert summary["roles"]["main"]["status"] == "pass"
+    assert summary["roles"]["main"]["required"] is True
+    assert summary["roles"]["main"]["datasets"] == ["BLCA", "BRCA"]
+    assert summary["detected_artifacts"]["main"].endswith("tcga_main_results.csv")
+    assert summary["next_command"].startswith("paper-agent tcga-results-from-artifacts")
 
 
 def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, tmp_path, capsys):
@@ -4551,6 +4562,7 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
         ),
         encoding="utf-8",
     )
+    summary_path = tmp_path / "artifact-doctor-fail.json"
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -4558,6 +4570,8 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
             "tcga-artifacts-doctor",
             "--artifacts-dir",
             str(logs_dir),
+            "--summary",
+            str(summary_path),
             "--dataset",
             "BLCA",
         ],
@@ -4571,6 +4585,7 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
         raise AssertionError("Expected artifact doctor to fail when required roles are missing.")
 
     output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert "- Main result CSV: PASS" in output
     assert "- Ablation CSV: FAIL" in output
     assert "- Sensitivity CSV: FAIL" in output
@@ -4578,6 +4593,13 @@ def test_cli_tcga_artifacts_doctor_reports_missing_required_roles(monkeypatch, t
     assert "Expected schema:" in output or "expected" in output
     assert "Missing required Ablation CSV" in output
     assert "Overall: FAIL" in output
+    assert "TCGA artifact doctor summary written to" in output
+    assert summary["status"] == "fail"
+    assert summary["roles"]["ablation"]["status"] == "fail"
+    assert summary["roles"]["ablation"]["required"] is True
+    assert summary["roles"]["ablation"]["path"] == ""
+    assert summary["next_command"].startswith("paper-agent tcga-artifact-template")
+    assert summary["results_from_artifacts_command"].startswith("paper-agent tcga-results-from-artifacts")
 
 
 def test_cli_tcga_artifact_template_writes_long_contract(monkeypatch, tmp_path, capsys):

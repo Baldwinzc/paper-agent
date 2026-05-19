@@ -70,13 +70,16 @@ templates, the first command is `tcga-artifact-template`, followed by recorded
 
 ```powershell
 python -m paper_agent.cli tcga-artifacts-doctor `
-  --artifacts-dir D:\code\agent\example\results\logs
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --summary outputs\tcga-artifacts-doctor.json
 ```
 
 `tcga-artifacts-doctor` reports which files were auto-detected for the main,
 ablation, sensitivity, and statistical-test roles, then checks row counts,
 columns, parsed value counts, and expected schemas. It exits non-zero when a
 required role is missing or a CSV cannot support the paper-facing result table.
+With `--summary`, it writes machine-readable role diagnostics, expected schemas,
+blocking items, and the next command to run.
 
 ```powershell
 python -m paper_agent.cli tcga-results-from-artifacts `
