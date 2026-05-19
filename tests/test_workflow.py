@@ -4628,6 +4628,7 @@ def test_cli_tcga_artifact_template_writes_long_contract(monkeypatch, tmp_path, 
         "tcga_sensitivity.csv",
         "tcga_stats.csv",
         "EXPORT_CONTRACT.md",
+        "ARTIFACT_SCHEMA.json",
     }
     assert {path.name for path in logs_dir.iterdir()} == expected_files
     main_csv = (logs_dir / "tcga_main_results.csv").read_text(encoding="utf-8")
@@ -4637,7 +4638,16 @@ def test_cli_tcga_artifact_template_writes_long_contract(monkeypatch, tmp_path, 
     contract = (logs_dir / "EXPORT_CONTRACT.md").read_text(encoding="utf-8")
     assert "# TCGA Artifact Export Contract" in contract
     assert "paper-agent tcga-artifacts-doctor --artifacts-dir ." in contract
+    assert "ARTIFACT_SCHEMA.json" in contract
     assert "Do not use synthetic" in contract
+    manifest = json.loads((logs_dir / "ARTIFACT_SCHEMA.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["style"] == "long"
+    assert manifest["datasets"] == ["BLCA", "BRCA"]
+    assert manifest["roles"]["main"]["columns"] == ["method", "dataset", "metric", "fold", "seed", "value"]
+    assert manifest["roles"]["main"]["required"] is True
+    assert manifest["roles"]["stats"]["file"] == "tcga_stats.csv"
+    assert any("tcga-results-from-artifacts" in command for command in manifest["validation_commands"])
 
 
 def test_cli_tcga_artifact_template_refuses_overwrite_without_force(monkeypatch, tmp_path):
@@ -6306,12 +6316,14 @@ def test_cli_tcga_pipeline_writes_artifact_template_and_stops(monkeypatch, tmp_p
     assert "TCGA pipeline: result artifacts are missing or incomplete; writing artifact templates" in output
     assert "Pipeline summary written to" in output
     assert (logs_dir / "EXPORT_CONTRACT.md").is_file()
+    assert (logs_dir / "ARTIFACT_SCHEMA.json").is_file()
     main_csv = (logs_dir / "tcga_main_results.csv").read_text(encoding="utf-8")
     assert "ProtoSurv baseline,BLCA,C-index,0,2026,TODO" in main_csv
     assert "Hyper-ProtoSurv ours,BRCA,C-index,0,2026,TODO" in main_csv
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "artifact_template_written"
     assert summary["outputs"]["artifact_contract_path"] == str(logs_dir / "EXPORT_CONTRACT.md")
+    assert summary["outputs"]["artifact_schema_path"] == str(logs_dir / "ARTIFACT_SCHEMA.json")
     assert "paper-agent tcga-pipeline" in summary["next_command"]
     assert any("tcga_stats.csv" in item for item in summary["missing_inputs"])
 

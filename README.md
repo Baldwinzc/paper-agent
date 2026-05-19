@@ -278,9 +278,11 @@ paper-agent tcga-artifact-template `
 ```
 
 This writes `tcga_main_results.csv`, `tcga_ablation.csv`,
-`tcga_sensitivity.csv`, `tcga_stats.csv`, and `EXPORT_CONTRACT.md`. Replace every
-`TODO` with real trained-model outputs before running doctor, preflight, or draft
-commands.
+`tcga_sensitivity.csv`, `tcga_stats.csv`, `EXPORT_CONTRACT.md`, and
+`ARTIFACT_SCHEMA.json`. The JSON manifest is for training-code exporters: it
+records role names, required columns, expected method/baseline/metric labels,
+datasets, and validation commands. Replace every `TODO` with real trained-model
+outputs before running doctor, preflight, or draft commands.
 
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
@@ -414,10 +416,11 @@ result file, runs `tcga-doctor`, and then runs `tcga-draft`. Pass
 be reused.
 If result CSV artifacts are not present yet, add `--write-artifact-template` to
 write `tcga_main_results.csv`, `tcga_ablation.csv`, `tcga_sensitivity.csv`,
-`tcga_stats.csv`, and `EXPORT_CONTRACT.md`, then stop before drafting. Fill the
-templates with real trained-model outputs and rerun the pipeline. Pipeline stops
-before or during doctor/draft also write `RUN_SUMMARY.json` under `--output-dir`
-with the current phase, blocking items, missing inputs, and next command. LLM
+`tcga_stats.csv`, `EXPORT_CONTRACT.md`, and `ARTIFACT_SCHEMA.json`, then stop
+before drafting. Fill the templates with real trained-model outputs and rerun
+the pipeline. Pipeline stops before or during doctor/draft also write
+`RUN_SUMMARY.json` under `--output-dir` with the current phase, blocking items,
+missing inputs, and next command. LLM
 failures include structured provider diagnostics such as failure kind, model,
 endpoint host, timeout, and retry settings without exposing API keys.
 

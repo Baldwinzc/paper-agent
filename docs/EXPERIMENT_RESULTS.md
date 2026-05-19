@@ -29,8 +29,11 @@ python -m paper_agent.cli tcga-artifact-template `
 ```
 
 This writes `tcga_main_results.csv`, `tcga_ablation.csv`,
-`tcga_sensitivity.csv`, `tcga_stats.csv`, and `EXPORT_CONTRACT.md`. Replace every
-`TODO` with real trained-model outputs. These files are templates, not evidence.
+`tcga_sensitivity.csv`, `tcga_stats.csv`, `EXPORT_CONTRACT.md`, and
+`ARTIFACT_SCHEMA.json`. The JSON manifest records role names, required columns,
+expected labels, datasets, and validation commands for training-code exporters.
+Replace every `TODO` with real trained-model outputs. These files are templates,
+not evidence.
 
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
@@ -159,13 +162,14 @@ The pipeline writes `results\tcga_results.md`, runs strict result validation,
 runs `tcga-doctor`, and then calls `tcga-draft` with the generated result file.
 Use `--skip-result-generation` only when the result Markdown already exists.
 If the result CSV artifacts do not exist yet, add `--write-artifact-template`.
-The pipeline writes the CSV templates and `EXPORT_CONTRACT.md`, then stops
-before doctor checks or drafting. Replace every `TODO` with real trained-model
-outputs and rerun the pipeline. Pipeline stops before or during doctor/draft also
-write `RUN_SUMMARY.json` under `--output-dir` with the current phase, blocking
-items, missing inputs, and next command. LLM failures include structured
-provider diagnostics such as failure kind, model, endpoint host, timeout, and
-retry settings without exposing API keys.
+The pipeline writes the CSV templates, `EXPORT_CONTRACT.md`, and
+`ARTIFACT_SCHEMA.json`, then stops before doctor checks or drafting. Replace
+every `TODO` with real trained-model outputs and rerun the pipeline. Pipeline
+stops before or during doctor/draft also write `RUN_SUMMARY.json` under
+`--output-dir` with the current phase, blocking items, missing inputs, and next
+command. LLM failures include structured provider diagnostics such as failure
+kind, model, endpoint host, timeout, and retry settings without exposing API
+keys.
 
 For result-file quality checks, declare the expected experiment target:
 

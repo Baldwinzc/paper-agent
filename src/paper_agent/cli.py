@@ -1968,6 +1968,21 @@ def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
         metric=args.metric,
     )
     files["EXPORT_CONTRACT.md"] = contract
+    files["ARTIFACT_SCHEMA.json"] = (
+        json.dumps(
+            _tcga_artifact_schema_manifest(
+                style=args.style,
+                datasets=datasets,
+                method=args.method,
+                baseline=args.baseline,
+                metric=args.metric,
+                seed=args.seed,
+            ),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
 
     conflicts = [name for name in files if (output_dir / name).exists()]
     if conflicts and not args.force:
@@ -2731,11 +2746,12 @@ def _tcga_artifact_export_contract(
             "- `tcga_ablation.csv`: full method and removed-component variants on the average metric.",
             "- `tcga_sensitivity.csv`: hyperparameter sweep rows on the average metric.",
             "- `tcga_stats.csv`: statistical comparison rows with numeric `p_value`.",
+            "- `ARTIFACT_SCHEMA.json`: machine-readable schema manifest for training-code exporters.",
             "",
             "## Validation Flow",
             "",
             "```powershell",
-            "paper-agent tcga-artifacts-doctor --artifacts-dir .",
+            "paper-agent tcga-artifacts-doctor --artifacts-dir . --summary artifact-doctor.json",
             "paper-agent tcga-results-from-artifacts --artifacts-dir . --strict",
             "paper-agent tcga-preflight --artifacts-dir . --submission-grade",
             "```",
@@ -2744,6 +2760,90 @@ def _tcga_artifact_export_contract(
             "",
         ]
     )
+
+
+def _tcga_artifact_schema_manifest(
+    *,
+    style: str,
+    datasets: list[str],
+    method: str,
+    baseline: str,
+    metric: str,
+    seed: str,
+) -> dict[str, object]:
+    if style == "wide":
+        main_columns = ["method", *[f"{dataset} {metric}" for dataset in datasets]]
+        ablation_columns = ["variant", f"Average {metric}"]
+        sensitivity_columns = ["lambda_rec", f"Average {metric}"]
+    else:
+        main_columns = ["method", "dataset", "metric", "fold", "seed", "value"]
+        ablation_columns = ["method", "dataset", "metric", "fold", "seed", "value"]
+        sensitivity_columns = ["parameter", "parameter_value", "dataset", "metric", "fold", "seed", "value"]
+    roles = {
+        "main": {
+            "file": "tcga_main_results.csv",
+            "required": True,
+            "columns": main_columns,
+            "accepted_schema": _tcga_expected_artifact_schema("main"),
+            "requirements": [
+                f"include one row or value for baseline label `{baseline}`",
+                f"include one row or value for proposed method label `{method}`",
+                f"cover every dataset: {', '.join(datasets)}",
+                f"use metric `{metric}`",
+            ],
+        },
+        "ablation": {
+            "file": "tcga_ablation.csv",
+            "required": True,
+            "columns": ablation_columns,
+            "accepted_schema": _tcga_expected_artifact_schema("ablation"),
+            "requirements": [
+                f"include full method label `{method}`",
+                "include at least one removed-component variant such as `w/o reconstruction loss`",
+                f"use average `{metric}` values",
+            ],
+        },
+        "sensitivity": {
+            "file": "tcga_sensitivity.csv",
+            "required": True,
+            "columns": sensitivity_columns,
+            "accepted_schema": _tcga_expected_artifact_schema("sensitivity"),
+            "requirements": [
+                "include parameter names and tested values",
+                f"use average `{metric}` values",
+            ],
+        },
+        "stats": {
+            "file": "tcga_stats.csv",
+            "required": True,
+            "columns": ["comparison", "metric", "test", "p_value"],
+            "accepted_schema": _tcga_expected_artifact_schema("stats"),
+            "requirements": [
+                f"compare `{method}` against `{baseline}`",
+                "use numeric p_value values",
+            ],
+        },
+    }
+    return {
+        "schema_version": 1,
+        "style": style,
+        "method": method,
+        "baseline": baseline,
+        "metric": metric,
+        "seed": seed,
+        "datasets": datasets,
+        "roles": roles,
+        "validation_commands": [
+            "paper-agent tcga-artifacts-doctor --artifacts-dir . --summary artifact-doctor.json",
+            "paper-agent tcga-results-from-artifacts --artifacts-dir . --strict",
+            "paper-agent tcga-preflight --artifacts-dir . --submission-grade",
+        ],
+        "notes": [
+            "Replace every TODO with real trained-model outputs before drafting.",
+            "Do not use synthetic, mock, or cohort-metadata-only values for submission claims.",
+            "Keep method, baseline, metric, and dataset labels stable so validation can match paper tables to CSV rows.",
+        ],
+    }
 
 
 def _csv_text(rows: list[list[str]]) -> str:
@@ -3130,6 +3230,7 @@ def _run_tcga_pipeline(args: argparse.Namespace) -> None:
                     outputs={
                         "artifact_template_dir": str(template_dir),
                         "artifact_contract_path": str(template_dir / "EXPORT_CONTRACT.md"),
+                        "artifact_schema_path": str(template_dir / "ARTIFACT_SCHEMA.json"),
                     },
                 )
                 print(f"Pipeline summary written to {summary_path}")
