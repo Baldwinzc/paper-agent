@@ -1539,6 +1539,14 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
     if args.submission_grade and not latex_status["available"]:
         blocking.append(f"LaTeX compiler missing. Install hint: {latex_status['install_hint']}")
 
+    next_actions = _tcga_doctor_next_actions(
+        args,
+        example_root,
+        experiment_path,
+        result_summary,
+        llm_live_preflight,
+        latex_status,
+    )
     summary = {
         "status": "fail" if blocking else "pass",
         "submission_grade": bool(args.submission_grade),
@@ -1550,7 +1558,11 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
         "llm": _llm_static_summary(llm_config),
         "llm_live_preflight": llm_live_preflight,
         "latex": latex_status,
+        "next_actions": next_actions,
     }
+    if next_actions:
+        summary["next_action"] = next_actions[0]["next_action"]
+        summary["next_command"] = next_actions[0]["next_command"]
     if getattr(args, "summary", ""):
         summary_path = _write_run_summary_data(summary, Path(args.summary))
         print(f"TCGA doctor summary written to {summary_path}")
@@ -1560,12 +1572,130 @@ def _run_tcga_doctor(args: argparse.Namespace) -> None:
         print("Blocking items:")
         for item in blocking:
             print(f"- {item}")
+        if next_actions:
+            print("Next actions:")
+            for action in next_actions:
+                print(f"- {action['phase']}: {action['next_action']}")
+                print(f"  Command: {action['next_command']}")
         raise SystemExit("TCGA doctor failed: fix blocking items before running tcga-draft.")
     print("Overall: PASS")
     if args.submission_grade:
         print("Ready command: paper-agent tcga-draft --submission-grade")
     else:
         print("Ready command: paper-agent tcga-draft")
+
+
+def _tcga_doctor_next_actions(
+    args: argparse.Namespace,
+    example_root: Path,
+    experiment_path: Path,
+    result_summary: dict | None,
+    llm_live_preflight: dict[str, object],
+    latex_status: dict[str, object],
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    if not experiment_path.is_file():
+        actions.append(
+            {
+                "phase": "missing_result_file",
+                "next_action": "Create a TCGA result file template, fill every TODO with real trained-model outputs, then validate it.",
+                "next_command": _tcga_doctor_write_template_command(args, example_root),
+            }
+        )
+    elif result_summary is None and _file_contains_todo(experiment_path):
+        actions.append(_tcga_doctor_result_repair_action(args, example_root, experiment_path, None, has_todos=True))
+    elif result_summary is not None and not _validated_results_are_strictly_acceptable(result_summary):
+        actions.append(
+            _tcga_doctor_result_repair_action(
+                args,
+                example_root,
+                experiment_path,
+                result_summary,
+                has_todos=_file_contains_todo(experiment_path),
+            )
+        )
+
+    if llm_live_preflight.get("status") == "fail":
+        diagnostics = llm_live_preflight.get("diagnostics", {})
+        diagnosis = (
+            diagnostics.get("diagnosis")
+            if isinstance(diagnostics, dict)
+            else "Fix LLM configuration or provider availability."
+        )
+        actions.append(
+            {
+                "phase": "llm_live_preflight",
+                "next_action": f"{diagnosis} Then rerun tcga-doctor with --live-llm.",
+                "next_command": "paper-agent llm-doctor --summary outputs\\llm-doctor.json",
+                "diagnostics": diagnostics if isinstance(diagnostics, dict) else {},
+            }
+        )
+
+    if bool(getattr(args, "submission_grade", False)) and not bool(latex_status.get("available")):
+        actions.append(
+            {
+                "phase": "latex_compiler",
+                "next_action": "Install a local LaTeX compiler before submission-grade drafting.",
+                "next_command": str(latex_status.get("install_hint") or "conda install -n agent -c conda-forge tectonic"),
+            }
+        )
+    return actions
+
+
+def _tcga_doctor_result_repair_action(
+    args: argparse.Namespace,
+    example_root: Path,
+    experiment_path: Path,
+    result_summary: dict | None,
+    *,
+    has_todos: bool,
+) -> dict[str, object]:
+    next_action = (
+        "Replace every TODO placeholder with real trained-model outputs or regenerate the result file from completed CSV artifacts, then validate strictly."
+        if has_todos
+        else "Repair the result file until contract, quality, provenance, and artifact-consistency checks are strict-acceptable."
+    )
+    action: dict[str, object] = {
+        "phase": "result_validation",
+        "next_action": next_action,
+        "next_command": _validate_results_command(args, example_root),
+        "artifact_template_command": _tcga_artifact_template_command(args, example_root),
+        "experiment_results": str(experiment_path),
+        "has_todo_placeholders": has_todos,
+    }
+    if result_summary:
+        action["diagnostics"] = _tcga_result_validation_diagnostics(result_summary)
+    return action
+
+
+def _tcga_result_validation_diagnostics(result_summary: dict) -> dict[str, object]:
+    contract = result_summary.get("experiment_contract", {})
+    quality = result_summary.get("experiment_quality", {})
+    provenance = result_summary.get("experiment_provenance", {})
+    consistency = result_summary.get("experiment_artifact_consistency", {})
+    return {
+        "contract_status": contract.get("status", "unknown"),
+        "contract_errors": contract.get("errors", []),
+        "quality_status": quality.get("status", "unknown"),
+        "quality_errors": quality.get("errors", []),
+        "provenance_status": provenance.get("status", "unknown"),
+        "provenance_errors": provenance.get("errors", []),
+        "artifact_consistency_status": consistency.get("status", "unknown"),
+        "artifact_consistency_errors": consistency.get("errors", []),
+    }
+
+
+def _file_contains_todo(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    return bool(re.search(r"\bTODO\b", path.read_text(encoding="utf-8", errors="ignore"), flags=re.IGNORECASE))
+
+
+def _tcga_doctor_write_template_command(args: argparse.Namespace, example_root: Path) -> str:
+    parts = ["paper-agent", "tcga-doctor", "--example-root", str(example_root), "--write-template"]
+    if getattr(args, "experiment_results", ""):
+        parts.extend(["--experiment-results", args.experiment_results])
+    return " ".join(_powershell_arg(part) for part in parts)
 
 
 def _run_tcga_results_from_artifacts(args: argparse.Namespace) -> None:
@@ -3073,10 +3203,16 @@ def _validate_results_command(args: argparse.Namespace, example_root: Path) -> s
     ]
     for dataset in getattr(args, "dataset", []) or []:
         parts.extend(["--expected-dataset", str(dataset)])
-    if getattr(args, "method", ""):
-        parts.extend(["--expected-method", str(args.method)])
-    if getattr(args, "baseline", ""):
-        parts.extend(["--expected-baseline", str(args.baseline)])
+    for dataset in getattr(args, "expected_dataset", []) or []:
+        parts.extend(["--expected-dataset", str(dataset)])
+    for metric in getattr(args, "expected_metric", []) or []:
+        parts.extend(["--expected-metric", str(metric)])
+    method = getattr(args, "method", "") or getattr(args, "expected_method", "")
+    baseline = getattr(args, "baseline", "") or getattr(args, "expected_baseline", "")
+    if method:
+        parts.extend(["--expected-method", str(method)])
+    if baseline:
+        parts.extend(["--expected-baseline", str(baseline)])
     return " ".join(_powershell_arg(part) for part in parts)
 
 

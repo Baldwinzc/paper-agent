@@ -62,7 +62,9 @@ python -m paper_agent.cli tcga-doctor `
 
 If the live provider call fails, `llm_live_preflight.diagnostics.failure_kind`
 classifies common configuration, authentication, quota, timeout, transport, and
-model lookup failures without writing the API key.
+model lookup failures without writing the API key. Failed doctor summaries also
+write `next_actions`, so a TODO template, invalid result contract, quota failure,
+or missing LaTeX compiler has a concrete command to run next.
 
 ```powershell
 python -m paper_agent.cli tcga-artifacts-doctor `

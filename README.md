@@ -352,7 +352,9 @@ replaced with trained-model outputs. Add `--submission-grade` to require
 provenance/artifact consistency and `--live-llm` to call the configured model.
 With `--summary`, the doctor writes every check, blocking item, static LLM
 configuration, live provider elapsed time/token usage, and sanitized LLM failure
-diagnostics when the provider call fails.
+diagnostics when the provider call fails. Failed summaries also include
+`next_actions` with concrete repair commands for TODO result templates, provider
+quota/configuration failures, and missing LaTeX tooling.
 
 ```powershell
 paper-agent tcga-draft `

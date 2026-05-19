@@ -6840,6 +6840,49 @@ def test_cli_tcga_doctor_writes_missing_result_template(monkeypatch, tmp_path, c
     assert "TODO" in result_path.read_text(encoding="utf-8")
 
 
+def test_cli_tcga_doctor_summary_records_next_actions_for_todo_template(monkeypatch, tmp_path, capsys):
+    example_root = tmp_path / "example"
+    baseline_dir = example_root / "baseline"
+    code_dir = example_root / "code" / "hyper-protosurv"
+    results_dir = example_root / "results"
+    baseline_dir.mkdir(parents=True)
+    code_dir.mkdir(parents=True)
+    results_dir.mkdir(parents=True)
+    (baseline_dir / "baseline.pdf").write_bytes(b"%PDF-1.4\n")
+    (results_dir / "tcga_results.md").write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "tcga-doctor-template-summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-doctor",
+            "--example-root",
+            str(example_root),
+            "--summary",
+            str(summary_path),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "TCGA doctor failed" in str(exc)
+    else:
+        raise AssertionError("Expected tcga-doctor to fail on TODO template.")
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "Next actions:" in output
+    assert summary["next_action"].startswith("Replace every TODO")
+    assert summary["next_command"].startswith("paper-agent validate-results")
+    assert summary["next_actions"][0]["phase"] == "result_validation"
+    assert summary["next_actions"][0]["has_todo_placeholders"] is True
+    assert "tcga-artifact-template" in summary["next_actions"][0]["artifact_template_command"]
+
+
 def test_cli_tcga_doctor_passes_complete_local_inputs(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PAPER_AGENT_DISABLE_LLM", "0")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -7037,6 +7080,7 @@ def test_cli_tcga_doctor_summary_records_live_llm_failure(monkeypatch, tmp_path,
     assert summary["llm_live_preflight"]["status"] == "fail"
     assert summary["llm_live_preflight"]["diagnostics"]["failure_kind"] == "quota"
     assert summary["llm_live_preflight"]["diagnostics"]["provider"] == "deepseek"
+    assert any(action["phase"] == "llm_live_preflight" for action in summary["next_actions"])
     assert "test-key" not in json.dumps(summary)
 
 
