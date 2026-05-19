@@ -284,6 +284,23 @@ records role names, required columns, expected method/baseline/metric labels,
 datasets, and validation commands. Replace every `TODO` with real trained-model
 outputs before running doctor, preflight, or draft commands.
 
+Training code can also write compatible artifacts directly:
+
+```python
+from paper_agent.tcga_artifacts import TCGAMainResult, write_tcga_artifact_exports
+
+write_tcga_artifact_exports(
+    r"D:\code\agent\example\results\logs",
+    main_results=[
+        TCGAMainResult("ProtoSurv baseline", "BLCA", 0.646),
+        TCGAMainResult("Hyper-ProtoSurv ours", "BLCA", 0.671),
+    ],
+    ablation_results=[...],
+    sensitivity_results=[...],
+    statistical_tests=[...],
+)
+```
+
 If you already have local result CSV artifacts, generate the paper-facing result
 file and provenance hashes directly:
 

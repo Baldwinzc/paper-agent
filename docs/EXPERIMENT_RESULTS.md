@@ -35,6 +35,23 @@ expected labels, datasets, and validation commands for training-code exporters.
 Replace every `TODO` with real trained-model outputs. These files are templates,
 not evidence.
 
+Training code can write compatible artifacts without hand-editing CSV files:
+
+```python
+from paper_agent.tcga_artifacts import TCGAMainResult, write_tcga_artifact_exports
+
+write_tcga_artifact_exports(
+    "results/logs",
+    main_results=[
+        TCGAMainResult("ProtoSurv baseline", "BLCA", 0.646),
+        TCGAMainResult("Hyper-ProtoSurv ours", "BLCA", 0.671),
+    ],
+    ablation_results=[...],
+    sensitivity_results=[...],
+    statistical_tests=[...],
+)
+```
+
 If the experiment pipeline already exports CSV artifacts, generate the Markdown
 result file instead of copying values by hand:
 
