@@ -140,6 +140,9 @@ When its strict result preflight blocks generation, it still writes a blocked
 without parsing console text. The blocked summary includes a `next_actions`
 repair chain for validation, artifact-template creation, result generation from
 completed CSV artifacts, and smoke rerun.
+When an LLM-required smoke blocks during provider preflight, it writes the same
+blocked summary plus a compact blocked acceptance report with sanitized provider
+diagnostics and repair commands.
 With `--write-artifact-template`, the blocked smoke can also write the TODO CSV
 artifact templates immediately while still refusing to draft from incomplete
 results. With `--generate-results-from-artifacts`, a later smoke run can turn

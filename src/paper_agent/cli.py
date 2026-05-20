@@ -5089,12 +5089,49 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "0"
         runtime_llm_config = load_llm_config()
         if not runtime_llm_config.configured:
+            summary_path = _write_paper_e2e_smoke_llm_failure_summary(
+                args,
+                baseline_pdf=baseline_pdf,
+                code_path=code_path,
+                experiment_path=experiment_path,
+                result_preflight=result_preflight,
+                llm_config=runtime_llm_config,
+                raw_error=(
+                    "paper-e2e-smoke requires a configured LLM. Set DEEPSEEK_API_KEY or "
+                    "OPENAI_API_KEY and TEXT_MODEL, or run without --require-llm for a deterministic smoke."
+                ),
+            )
+            print(f"Run summary written to {summary_path}")
+            print(
+                "Acceptance report written to "
+                f"{Path(args.output_dir) / 'ACCEPTANCE_REPORT.md'}"
+            )
             raise SystemExit(
-                "paper-e2e-smoke requires a configured LLM. Set DEEPSEEK_API_KEY or "
-                "OPENAI_API_KEY and TEXT_MODEL, or run without --require-llm for a deterministic smoke."
+                "paper-e2e-smoke failed: configured LLM is required. "
+                f"Summary: {summary_path}"
             )
         llm_client = LLMClient(runtime_llm_config)
-        _llm_preflight_check(llm_client, runtime_llm_config, context="paper-e2e-smoke")
+        try:
+            _llm_preflight_check(llm_client, runtime_llm_config, context="paper-e2e-smoke")
+        except SystemExit as exc:
+            summary_path = _write_paper_e2e_smoke_llm_failure_summary(
+                args,
+                baseline_pdf=baseline_pdf,
+                code_path=code_path,
+                experiment_path=experiment_path,
+                result_preflight=result_preflight,
+                llm_config=runtime_llm_config,
+                raw_error=str(exc),
+            )
+            print(f"Run summary written to {summary_path}")
+            print(
+                "Acceptance report written to "
+                f"{Path(args.output_dir) / 'ACCEPTANCE_REPORT.md'}"
+            )
+            raise SystemExit(
+                "paper-e2e-smoke failed: LLM preflight failed. "
+                f"Summary: {summary_path}"
+            ) from exc
         llm_mode = "required"
     else:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
@@ -5288,11 +5325,138 @@ def _write_paper_e2e_smoke_failure_summary(
             zip_path=zip_path,
             result_preflight=result_preflight,
             llm_mode="not_started",
-            generated_results_from_artifacts=bool(getattr(args, "generate_results_from_artifacts", False)),
+            generated_results_from_artifacts=bool(
+                getattr(args, "generate_results_from_artifacts", False)
+            ),
             status="blocked",
         ),
     }
     return _write_run_summary_data(summary, summary_path)
+
+
+def _write_paper_e2e_smoke_llm_failure_summary(
+    args: argparse.Namespace,
+    *,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    result_preflight: dict[str, object],
+    llm_config: LLMConfig,
+    raw_error: str,
+) -> Path:
+    output_dir = Path(args.output_dir)
+    summary_path = output_dir / "RUN_SUMMARY.json"
+    acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    zip_path = Path(args.zip) if args.zip else None
+    diagnostics = _llm_failure_diagnostics(llm_config, raw_error)
+    diagnosis = str(diagnostics.get("diagnosis", "LLM preflight failed."))
+    next_action = "Fix LLM configuration or provider quota before rerunning LLM-required paper smoke."
+    summary = {
+        "status": "blocked",
+        "pipeline_phase": "paper_e2e_smoke_llm_preflight",
+        "project_name": args.project_name or _default_project_name(output_dir),
+        "target_venue": args.target_venue,
+        "blocking_items": [f"llm: {diagnosis}"],
+        "missing_inputs": [] if llm_config.configured else ["configured LLM API key/model"],
+        "next_action": next_action,
+        "next_command": "paper-agent llm-doctor --summary outputs/llm-doctor.json",
+        "next_actions": [
+            {
+                "category": "llm",
+                "action": next_action,
+                "command": "paper-agent llm-doctor --summary outputs/llm-doctor.json",
+            },
+            {
+                "category": "paper_e2e_smoke",
+                "action": "Rerun the explicit input-to-paper smoke after LLM repair.",
+                "command": _paper_e2e_smoke_rerun_command(args),
+            },
+        ],
+        "outputs": {
+            "summary": str(summary_path),
+            "acceptance_report": str(acceptance_report_path),
+            "markdown": str(output_dir / "draft.md"),
+            "zip": str(zip_path or ""),
+        },
+        "llm_diagnostics": diagnostics,
+        "experiment_evidence": result_preflight.get("experiment_evidence", {}),
+        "experiment_contract": result_preflight.get("experiment_contract", {}),
+        "experiment_quality": result_preflight.get("experiment_quality", {}),
+        "experiment_provenance": result_preflight.get("experiment_provenance", {}),
+        "experiment_artifact_consistency": result_preflight.get(
+            "experiment_artifact_consistency",
+            {},
+        ),
+        "smoke_contract": _paper_e2e_smoke_contract(
+            args,
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            markdown_path=output_dir / "draft.md",
+            summary_path=summary_path,
+            acceptance_report_path=acceptance_report_path,
+            zip_path=zip_path,
+            result_preflight=result_preflight,
+            llm_mode="failed_preflight",
+            generated_results_from_artifacts=bool(getattr(args, "generate_results_from_artifacts", False)),
+            status="blocked",
+        ),
+    }
+    _write_paper_e2e_blocked_acceptance_report(summary, acceptance_report_path)
+    return _write_run_summary_data(summary, summary_path)
+
+
+def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], report_path: Path) -> Path:
+    diagnostics = summary.get("llm_diagnostics", {})
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    smoke_contract = summary.get("smoke_contract", {})
+    checks = smoke_contract.get("checks", {}) if isinstance(smoke_contract, dict) else {}
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list):
+        next_actions = []
+    lines = [
+        "# Paper Agent Blocked Acceptance Report",
+        "",
+        f"- Status: {summary.get('status', 'blocked')}",
+        f"- Pipeline phase: {summary.get('pipeline_phase', '')}",
+        f"- Project: {summary.get('project_name', '')}",
+        f"- Target venue: {summary.get('target_venue', '')}",
+        "",
+        "## Input Contract",
+        "",
+        f"- Baseline PDF exists: {checks.get('baseline_pdf_exists', False)}",
+        f"- Code path exists: {checks.get('code_path_exists', False)}",
+        f"- Experiment results exists: {checks.get('experiment_results_exists', False)}",
+        f"- Strict results accepted: {checks.get('strict_results_accepted', False)}",
+        f"- LLM mode: {checks.get('llm_mode', '')}",
+        "",
+        "## LLM Diagnostics",
+        "",
+        f"- Provider: {diagnostics.get('provider', '')}",
+        f"- Model: {diagnostics.get('model', '')}",
+        f"- Endpoint host: {diagnostics.get('endpoint_host', '')}",
+        f"- Failure kind: {diagnostics.get('failure_kind', '')}",
+        f"- Diagnosis: {diagnostics.get('diagnosis', '')}",
+        f"- Raw provider error: {diagnostics.get('raw_error', '')}",
+        "",
+        "## Next Actions",
+        "",
+        "| Category | Action | Command |",
+        "|---|---|---|",
+    ]
+    for action in next_actions:
+        if not isinstance(action, dict):
+            continue
+        lines.append(
+            "| "
+            f"{_table_safe(str(action.get('category', '')))} | "
+            f"{_table_safe(str(action.get('action', '')))} | "
+            f"`{_table_safe(str(action.get('command', '')))}` |"
+        )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
 
 
 def _paper_e2e_maybe_write_artifact_template(

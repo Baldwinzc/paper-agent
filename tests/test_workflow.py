@@ -7901,6 +7901,96 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
     assert any("contract:" in item for item in summary["blocking_items"])
 
 
+def test_cli_paper_e2e_smoke_writes_summary_on_llm_preflight_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    logs_dir = tmp_path / "logs"
+    experiment_path = tmp_path / "results" / "tcga_results.md"
+    output_dir = tmp_path / "out"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    _write_complete_tcga_artifacts(logs_dir)
+    llm_config = LLMConfig(
+        api_key="secret-test-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+    )
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not start after LLM preflight failure.")
+
+    def fail_preflight(client, config, *, context):
+        raise SystemExit(
+            f"{context} LLM preflight failed for deepseek/deepseek-v4-pro: "
+            "quota blocked for secret-test-key"
+        )
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "load_llm_config", lambda: llm_config)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", fail_preflight)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--generate-results-from-artifacts",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--require-llm",
+            "--min-llm-sections",
+            "4",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "paper-e2e-smoke failed: LLM preflight failed" in str(exc)
+        assert "RUN_SUMMARY.json" in str(exc)
+    else:
+        raise AssertionError("Expected paper-e2e-smoke to fail during LLM preflight.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    serialized = json.dumps(summary)
+    assert "Run summary written to" in output
+    assert "Acceptance report written to" in output
+    assert not (output_dir / "draft.md").exists()
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "paper_e2e_smoke_llm_preflight"
+    assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is True
+    assert summary["smoke_contract"]["checks"]["llm_mode"] == "failed_preflight"
+    assert summary["smoke_contract"]["checks"]["generated_results_from_artifacts"] is True
+    assert summary["llm_diagnostics"]["failure_kind"] == "quota"
+    assert summary["llm_diagnostics"]["provider"] == "deepseek"
+    assert "secret-test-key" not in serialized
+    assert "[redacted-api-key]" in summary["llm_diagnostics"]["raw_error"]
+    assert [action["category"] for action in summary["next_actions"]] == ["llm", "paper_e2e_smoke"]
+    assert "paper-agent llm-doctor" in summary["next_actions"][0]["command"]
+    assert "paper-e2e-smoke --baseline-pdf" in summary["next_actions"][1]["command"]
+    assert "# Paper Agent Blocked Acceptance Report" in report
+    assert "Failure kind: quota" in report
+    assert "secret-test-key" not in report
+
+
 def test_cli_paper_e2e_smoke_can_write_artifact_templates_on_strict_failure(
     monkeypatch,
     tmp_path,
