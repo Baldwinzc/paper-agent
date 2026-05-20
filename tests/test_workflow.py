@@ -8524,6 +8524,7 @@ def test_cli_paper_e2e_smoke_can_write_artifact_templates_on_strict_failure(
 
     output = capsys.readouterr().out
     summary = json.loads((tmp_path / "out" / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((tmp_path / "out" / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
     assert "Artifact templates written to" in output
     assert (template_dir / "tcga_main_results.csv").is_file()
     assert (template_dir / "tcga_ablation.csv").is_file()
@@ -8537,6 +8538,13 @@ def test_cli_paper_e2e_smoke_can_write_artifact_templates_on_strict_failure(
     assert summary["artifact_template"]["contains_todo"] is True
     assert str(template_dir) in summary["next_actions"][1]["command"]
     assert "--write-artifact-template" in summary["next_actions"][3]["command"]
+    labels = {item["label"]: item for item in manifest["artifacts"]}
+    assert labels["artifact_template_tcga_main_results"]["exists"] is True
+    assert labels["artifact_template_tcga_ablation"]["exists"] is True
+    assert labels["artifact_template_tcga_sensitivity"]["exists"] is True
+    assert labels["artifact_template_tcga_stats"]["exists"] is True
+    assert labels["artifact_template_export_contract"]["exists"] is True
+    assert labels["artifact_template_artifact_schema"]["exists"] is True
 
 
 def test_llm_self_review_records_bad_json_error(monkeypatch):

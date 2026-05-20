@@ -5409,6 +5409,7 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         artifact_specs.append(
             ("generated_experiment_results", "file", inputs.get("experiment_results_path", ""))
         )
+    artifact_specs.extend(_paper_e2e_artifact_template_manifest_specs(summary))
 
     return {
         "schema_version": "paper-e2e-artifact-manifest/v1",
@@ -5480,6 +5481,24 @@ def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -
     elif kind == "directory":
         entry["file_count"] = sum(1 for item in path.rglob("*") if item.is_file()) if path.is_dir() else 0
     return entry
+
+
+def _paper_e2e_artifact_template_manifest_specs(summary: dict) -> list[tuple[str, str, str]]:
+    artifact_template = summary.get("artifact_template", {})
+    if not isinstance(artifact_template, dict) or artifact_template.get("status") != "written":
+        return []
+    files = artifact_template.get("files", [])
+    if not isinstance(files, list):
+        return []
+    specs = []
+    for file_path in files:
+        path_value = str(file_path or "")
+        if not path_value:
+            continue
+        stem = Path(path_value).stem.lower()
+        label = "artifact_template_" + re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+        specs.append((label, "file", path_value))
+    return specs
 
 
 def _paper_e2e_blocked_inputs(
