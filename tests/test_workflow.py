@@ -8280,6 +8280,13 @@ def test_cli_paper_e2e_acceptance_writes_showcase_on_strict_block(
     assert "# Paper Agent Blocked Acceptance Report" in acceptance_report
     assert "- Overall status: FAIL" in showcase_report
     assert "| Experiment result contract | FAIL | invalid;" in showcase_report
+    assert "## Repair Plan" in showcase_report
+    assert "### Blocking Items" in showcase_report
+    assert "### Immediate Next Step" in showcase_report
+    assert "paper-agent validate-results" in showcase_report
+    assert "tcga-artifact-template --output-dir" in showcase_report
+    assert "tcga-results-from-artifacts --artifacts-dir" in showcase_report
+    assert "paper-e2e-smoke --baseline-pdf" in showcase_report
     assert "| markdown_draft | no |" in showcase_report
 
 

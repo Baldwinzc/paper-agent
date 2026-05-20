@@ -5695,6 +5695,7 @@ def _build_paper_e2e_showcase_report(
     ]
     acceptance_lines = _paper_e2e_acceptance_snapshot(acceptance_text)
     lines.extend(acceptance_lines or ["- Acceptance report not available."])
+    lines.extend(_paper_e2e_showcase_repair_plan(summary))
     lines.extend(
         [
             "",
@@ -5707,6 +5708,69 @@ def _build_paper_e2e_showcase_report(
     for item in _paper_e2e_manifest_artifacts(manifest):
         lines.append(_paper_e2e_showcase_artifact_row(item))
     return "\n".join(lines) + "\n"
+
+
+def _paper_e2e_showcase_repair_plan(summary: dict) -> list[str]:
+    blocking_items = summary.get("blocking_items", [])
+    if not isinstance(blocking_items, list):
+        blocking_items = []
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list):
+        next_actions = []
+    artifact_template = summary.get("artifact_template", {})
+    if not isinstance(artifact_template, dict):
+        artifact_template = {}
+    is_blocked = str(summary.get("status", "") or "") == "blocked"
+    if not is_blocked and not blocking_items and not next_actions:
+        return []
+
+    lines = [
+        "",
+        "## Repair Plan",
+        "",
+    ]
+    if blocking_items:
+        lines.extend(["### Blocking Items", ""])
+        for item in blocking_items[:10]:
+            lines.append(f"- {_table_safe(str(item))}")
+    next_action = str(summary.get("next_action", "") or "")
+    next_command = str(summary.get("next_command", "") or "")
+    if next_action or next_command:
+        lines.extend(["", "### Immediate Next Step", ""])
+        if next_action:
+            lines.append(f"- Action: {_table_safe(next_action)}")
+        if next_command:
+            lines.append(f"- Command: `{_table_safe(next_command)}`")
+    if artifact_template:
+        lines.extend(["", "### Result Artifact Template", ""])
+        lines.append(f"- Status: {_table_safe(str(artifact_template.get('status', 'unknown')))}")
+        if artifact_template.get("output_dir"):
+            lines.append(f"- Output dir: `{_table_safe(str(artifact_template.get('output_dir', '')))}`")
+        if artifact_template.get("contains_todo") is not None:
+            lines.append(f"- Contains TODO: {bool(artifact_template.get('contains_todo'))}")
+        if artifact_template.get("command"):
+            lines.append(f"- Template command: `{_table_safe(str(artifact_template.get('command', '')))}`")
+    if next_actions:
+        lines.extend(
+            [
+                "",
+                "### Command Chain",
+                "",
+                "| Step | Category | Action | Command |",
+                "|---:|---|---|---|",
+            ]
+        )
+        for index, action in enumerate(next_actions[:10], start=1):
+            if not isinstance(action, dict):
+                continue
+            lines.append(
+                "| "
+                f"{index} | "
+                f"{_table_safe(str(action.get('category', '')))} | "
+                f"{_table_safe(str(action.get('action', '')))} | "
+                f"`{_table_safe(str(action.get('command', '')))}` |"
+            )
+    return lines
 
 
 def _paper_e2e_acceptance_snapshot(text: str) -> list[str]:
