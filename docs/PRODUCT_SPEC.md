@@ -163,7 +163,8 @@ paper E2E acceptance command is rerun.
 The higher-level `research-paper-guide` command links result completion and
 paper acceptance: starting from code, baseline PDF, target venue, and either a
 strict result file or TCGA result artifacts, it produces the result guide summary,
-paper acceptance artifacts, showcase report, and a top-level guide summary.
+paper acceptance artifacts, showcase report, and top-level
+`RESEARCH_GUIDE_SUMMARY.json` and `RESEARCH_GUIDE_REPORT.md` files.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

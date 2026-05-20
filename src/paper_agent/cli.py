@@ -5930,7 +5930,7 @@ def _run_research_paper_guide(args: argparse.Namespace) -> None:
                 result_guide_summary_path=result_guide_summary_path,
                 blocking_items=[str(exc)],
             )
-            _write_run_summary_data(summary, summary_path)
+            _write_research_paper_guide_outputs(summary, summary_path)
             print(f"Research paper guide summary written to {summary_path}")
             raise SystemExit(
                 f"research-paper-guide blocked during result completion. Summary: {summary_path}"
@@ -5948,7 +5948,7 @@ def _run_research_paper_guide(args: argparse.Namespace) -> None:
             result_guide_summary_path=result_guide_summary_path,
             blocking_items=[f"Experiment results file not found: {experiment_path}"],
         )
-        _write_run_summary_data(summary, summary_path)
+        _write_research_paper_guide_outputs(summary, summary_path)
         print(f"Research paper guide summary written to {summary_path}")
         raise SystemExit(f"research-paper-guide blocked: experiment results not found. Summary: {summary_path}")
 
@@ -5976,7 +5976,7 @@ def _run_research_paper_guide(args: argparse.Namespace) -> None:
             result_guide_summary_path=result_guide_summary_path,
             blocking_items=[str(exc)],
         )
-        _write_run_summary_data(summary, summary_path)
+        _write_research_paper_guide_outputs(summary, summary_path)
         print(f"Research paper guide summary written to {summary_path}")
         raise SystemExit(f"research-paper-guide blocked during paper acceptance. Summary: {summary_path}") from exc
 
@@ -5991,7 +5991,7 @@ def _run_research_paper_guide(args: argparse.Namespace) -> None:
         result_guide_summary_path=result_guide_summary_path,
         blocking_items=[],
     )
-    _write_run_summary_data(summary, summary_path)
+    _write_research_paper_guide_outputs(summary, summary_path)
     print(f"Research paper guide summary written to {summary_path}")
     print("research-paper-guide completed.")
 
@@ -6112,6 +6112,8 @@ def _research_paper_guide_summary(
             "artifacts_dir": str(args.artifacts_dir or ""),
         },
         "outputs": {
+            "research_guide_summary": "",
+            "research_guide_report": str(output_dir / "RESEARCH_GUIDE_REPORT.md"),
             "result_guide_summary": str(result_guide_summary_path),
             "paper_output_dir": str(paper_output_dir),
             "paper_run_summary": str(paper_output_dir / "RUN_SUMMARY.json"),
@@ -6143,6 +6145,111 @@ def _research_paper_guide_next_command(args: argparse.Namespace, experiment_path
     if args.artifacts_dir:
         parts.extend(["--artifacts-dir", args.artifacts_dir])
     return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path: Path) -> Path:
+    outputs = summary.setdefault("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+        summary["outputs"] = outputs
+    outputs["research_guide_summary"] = str(summary_path)
+    report_path = Path(str(outputs.get("research_guide_report") or summary_path.with_name("RESEARCH_GUIDE_REPORT.md")))
+    outputs["research_guide_report"] = str(report_path)
+    written_summary = _write_run_summary_data(summary, summary_path)
+    _write_research_paper_guide_report(summary, report_path)
+    print(f"Research paper guide report written to {report_path}")
+    return written_summary
+
+
+def _write_research_paper_guide_report(summary: dict[str, object], report_path: Path) -> Path:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_build_research_paper_guide_report(summary), encoding="utf-8")
+    return report_path
+
+
+def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
+    paper_manifest = _read_optional_json_object(str(outputs.get("paper_artifact_manifest", "")))
+    paper_experiment = paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
+    paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
+    lines = [
+        "# Research Paper Guide Report",
+        "",
+        f"- Status: {summary.get('status', 'unknown')}",
+        f"- Phase: {summary.get('pipeline_phase', '')}",
+        f"- Project: {summary.get('project_name', '')}",
+        f"- Target venue: {summary.get('target_venue', '')}",
+        "",
+        "## Result Evidence",
+        "",
+        f"- Result guide status: {result_summary.get('status', 'not found')}",
+        f"- Result guide phase: {result_summary.get('pipeline_phase', '')}",
+        f"- Experiment results: {summary.get('inputs', {}).get('experiment_results', '') if isinstance(summary.get('inputs', {}), dict) else ''}",
+        f"- Contract: {result_summary.get('experiment_contract_status', 'not recorded')}",
+        f"- Provenance: {result_summary.get('experiment_provenance_status', 'not recorded')}",
+        f"- Artifact consistency: {result_summary.get('experiment_artifact_consistency_status', 'not recorded')}",
+        "",
+        "## Paper Acceptance",
+        "",
+        f"- Manifest status: {paper_manifest.get('status', 'not found')}",
+        f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
+        f"- Experiment contract: {paper_experiment.get('contract_status', 'not recorded')}",
+        f"- LLM mode: {paper_llm.get('mode', 'not recorded')}",
+        f"- LLM preflight: {paper_llm.get('preflight_status', 'not recorded')}",
+    ]
+    blocking_items = summary.get("blocking_items", [])
+    if isinstance(blocking_items, list) and blocking_items:
+        lines.extend(["", "## Blocking Items", ""])
+        for item in blocking_items[:10]:
+            lines.append(f"- {_table_safe(str(item))}")
+    if summary.get("next_command"):
+        lines.extend(["", "## Next Command", "", f"`{_table_safe(str(summary.get('next_command', '')))}`"])
+    lines.extend(
+        [
+            "",
+            "## Output Artifacts",
+            "",
+            "| Artifact | Exists | Path |",
+            "|---|---:|---|",
+        ]
+    )
+    for label, path_value in _research_paper_guide_report_artifacts(outputs):
+        lines.append(_research_paper_guide_report_artifact_row(label, path_value))
+    return "\n".join(lines) + "\n"
+
+
+def _read_optional_json_object(path_value: str) -> dict[str, object]:
+    if not path_value:
+        return {}
+    path = Path(path_value)
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _research_paper_guide_report_artifacts(outputs: dict[str, object]) -> list[tuple[str, str]]:
+    labels = [
+        ("research_guide_summary", "Research guide summary"),
+        ("result_guide_summary", "Result guide summary"),
+        ("paper_run_summary", "Paper run summary"),
+        ("paper_acceptance_report", "Paper acceptance report"),
+        ("paper_artifact_manifest", "Paper artifact manifest"),
+        ("showcase_report", "Showcase report"),
+        ("overleaf_zip", "Overleaf zip"),
+    ]
+    return [(label, str(outputs.get(key, "") or "")) for key, label in labels if str(outputs.get(key, "") or "")]
+
+
+def _research_paper_guide_report_artifact_row(label: str, path_value: str) -> str:
+    path = Path(path_value)
+    return f"| {_table_safe(label)} | {'yes' if path.exists() else 'no'} | `{_table_safe(path_value)}` |"
 
 
 def _run_paper_e2e_acceptance(args: argparse.Namespace) -> None:

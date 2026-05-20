@@ -8427,12 +8427,18 @@ def test_cli_research_paper_guide_writes_result_templates_when_artifacts_missing
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
     result_summary = json.loads((output_dir / "RESULT_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RESEARCH_GUIDE_REPORT.md").read_text(encoding="utf-8")
     assert "TCGA result CSV templates written" in output
     assert (logs_dir / "tcga_main_results.csv").is_file()
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "result_guide_blocked"
+    assert summary["outputs"]["research_guide_report"].endswith("RESEARCH_GUIDE_REPORT.md")
     assert summary["outputs"]["result_guide_summary"].endswith("RESULT_GUIDE_SUMMARY.json")
     assert result_summary["pipeline_phase"] == "artifact_template_written"
+    assert "# Research Paper Guide Report" in report
+    assert "- Status: blocked" in report
+    assert "- Result guide status: blocked" in report
+    assert "| Paper artifact manifest | no |" in report
     assert not (output_dir / "paper" / "draft.md").exists()
 
 
@@ -8503,16 +8509,23 @@ def test_cli_research_paper_guide_generates_results_and_runs_paper_acceptance(
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
     result_summary = json.loads((output_dir / "RESULT_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RESEARCH_GUIDE_REPORT.md").read_text(encoding="utf-8")
     assert "research-paper-guide completed." in output
     assert "TCGA results guide completed." in output
     assert "paper-e2e-acceptance passed." in output
     assert summary["status"] == "pass"
     assert summary["pipeline_phase"] == "paper_e2e_acceptance_passed"
+    assert summary["outputs"]["research_guide_report"].endswith("RESEARCH_GUIDE_REPORT.md")
     assert result_summary["status"] == "pass"
     assert result_summary["experiment_contract_status"] == "complete"
     assert (output_dir / "tcga_results.md").is_file()
     assert (output_dir / "paper" / "draft.md").is_file()
     assert (output_dir / "SHOWCASE_REPORT.md").is_file()
+    assert "# Research Paper Guide Report" in report
+    assert "- Status: pass" in report
+    assert "- Result guide status: pass" in report
+    assert "- Manifest status: pass" in report
+    assert "| Paper artifact manifest | yes |" in report
     assert captured["request"].experiment_results.startswith("# Real Experiment Results")
 
 

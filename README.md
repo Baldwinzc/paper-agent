@@ -240,7 +240,10 @@ paper-agent research-paper-guide `
 `research-paper-guide` first runs `tcga-results-guide` when the paper-facing
 result file is missing or still a TODO template, then runs
 `paper-e2e-acceptance`. If result CSVs are missing or incomplete, it writes
-templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` before stopping.
+templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` plus
+`RESEARCH_GUIDE_REPORT.md` before stopping. On success, the report summarizes
+the result-guide contract/provenance/consistency status, paper acceptance
+manifest status, showcase report, and Overleaf zip path.
 
 `paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
 `SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always
