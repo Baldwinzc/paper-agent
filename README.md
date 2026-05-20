@@ -223,6 +223,25 @@ python -m paper_agent.cli paper-e2e-acceptance `
   --min-llm-sections 4
 ```
 
+When starting from result CSV artifacts instead of a finished `tcga_results.md`,
+use the high-level guide:
+
+```powershell
+paper-agent research-paper-guide `
+  --baseline-pdf D:\code\agent\example\baseline `
+  --code-path D:\code\agent\example\code\hyper-protosurv `
+  --target-venue TPAMI `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output-dir outputs\research-paper-guide `
+  --require-llm `
+  --min-llm-sections 4
+```
+
+`research-paper-guide` first runs `tcga-results-guide` when the paper-facing
+result file is missing or still a TODO template, then runs
+`paper-e2e-acceptance`. If result CSVs are missing or incomplete, it writes
+templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` before stopping.
+
 `paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
 `SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always
 writes `draft.md`, `RUN_SUMMARY.json`,

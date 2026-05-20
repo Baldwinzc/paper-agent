@@ -228,9 +228,48 @@ def _add_paper_e2e_smoke_options(
     _add_experiment_artifact_consistency_options(parser)
 
 
+def _add_research_paper_guide_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--baseline-pdf", required=True, help="Baseline PDF path or directory containing a PDF.")
+    parser.add_argument("--code-path", required=True, help="Project code directory.")
+    parser.add_argument("--target-venue", required=True, help="Target journal or conference.")
+    parser.add_argument("--experiment-results", default="", help="Existing result Markdown file.")
+    parser.add_argument("--artifacts-dir", default="", help="TCGA result CSV artifact directory.")
+    parser.add_argument("--example-root", default="", help="Optional project example root for TCGA result artifacts.")
+    parser.add_argument("--output-dir", default="outputs/research-paper-guide")
+    parser.add_argument("--summary", default="", help="Top-level guide summary JSON.")
+    parser.add_argument("--zip", default="outputs/research-paper-guide-overleaf.zip")
+    parser.add_argument("--project-name", default="")
+    parser.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
+    parser.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    parser.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    network = parser.add_mutually_exclusive_group()
+    network.add_argument("--online", action="store_true", help="Allow template/reference/related-work network calls.")
+    network.add_argument("--offline", action="store_true", help="Disable template/reference/related-work network calls.")
+    parser.add_argument("--require-llm", action="store_true", help="Require live LLM section generation.")
+    parser.add_argument("--min-llm-sections", type=int, default=0)
+    parser.add_argument("--include-llm-self-review", action="store_true")
+    parser.add_argument("--compile-latex", action="store_true")
+    parser.add_argument("--strict-results", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--method", default="Hyper-ProtoSurv ours")
+    parser.add_argument("--baseline", default="ProtoSurv baseline")
+    parser.add_argument("--metric", default="C-index")
+    parser.add_argument("--seed", default="2026")
+    parser.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    parser.add_argument("--artifact-template-style", choices=("long", "wide"), default="long")
+    parser.add_argument("--force-template", action="store_true")
+    _add_experiment_contract_options(parser)
+    _add_experiment_provenance_options(parser)
+    _add_experiment_artifact_consistency_options(parser)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="paper-agent")
     sub = parser.add_subparsers(dest="command", required=True)
+    research_paper_guide = sub.add_parser(
+        "research-paper-guide",
+        help="Run result completion and paper E2E acceptance from code, baseline, venue, and results/artifacts.",
+    )
+    _add_research_paper_guide_options(research_paper_guide)
     demo = sub.add_parser("demo", help="Run a deterministic demo draft.")
     demo.add_argument("--output", default="outputs/demo", help="Output directory for markdown.")
     demo.add_argument("--zip", default="", help="Optional path for an Overleaf-ready LaTeX zip.")
@@ -928,7 +967,9 @@ def main() -> None:
     _add_experiment_artifact_consistency_options(validate_results)
     args = parser.parse_args()
 
-    if args.command == "validate-results":
+    if args.command == "research-paper-guide":
+        _run_research_paper_guide(args)
+    elif args.command == "validate-results":
         summary = _validate_results_file(
             Path(args.experiment_results),
             summary_path=Path(args.summary) if args.summary else None,
@@ -5849,6 +5890,259 @@ def _paper_e2e_blocked_outputs(
         "zip": str(zip_path or ""),
         "latex_zip_path": str(zip_path or ""),
     }
+
+
+def _run_research_paper_guide(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = _resolve_project_relative_path(args.summary) if args.summary else output_dir / "RESEARCH_GUIDE_SUMMARY.json"
+    baseline_pdf = _resolve_baseline_pdf(args.baseline_pdf)
+    code_path = _resolve_project_relative_path(args.code_path)
+    if not code_path.is_dir():
+        raise SystemExit(f"Project code directory not found: {code_path}")
+
+    example_root = _research_paper_guide_example_root(args, code_path)
+    experiment_path = (
+        _resolve_project_relative_path(args.experiment_results)
+        if args.experiment_results
+        else output_dir / "tcga_results.md"
+    )
+    result_guide_summary_path = output_dir / "RESULT_GUIDE_SUMMARY.json"
+
+    if _research_paper_guide_should_run_result_guide(args, experiment_path):
+        result_guide_args = _research_paper_result_guide_args(
+            args,
+            example_root=example_root,
+            experiment_path=experiment_path,
+            summary_path=result_guide_summary_path,
+        )
+        try:
+            _run_tcga_results_guide(result_guide_args)
+        except SystemExit as exc:
+            summary = _research_paper_guide_summary(
+                args,
+                status="blocked",
+                phase="result_guide_blocked",
+                baseline_pdf=baseline_pdf,
+                code_path=code_path,
+                experiment_path=experiment_path,
+                output_dir=output_dir,
+                result_guide_summary_path=result_guide_summary_path,
+                blocking_items=[str(exc)],
+            )
+            _write_run_summary_data(summary, summary_path)
+            print(f"Research paper guide summary written to {summary_path}")
+            raise SystemExit(
+                f"research-paper-guide blocked during result completion. Summary: {summary_path}"
+            ) from exc
+
+    if not experiment_path.is_file():
+        summary = _research_paper_guide_summary(
+            args,
+            status="blocked",
+            phase="experiment_results_missing",
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            output_dir=output_dir,
+            result_guide_summary_path=result_guide_summary_path,
+            blocking_items=[f"Experiment results file not found: {experiment_path}"],
+        )
+        _write_run_summary_data(summary, summary_path)
+        print(f"Research paper guide summary written to {summary_path}")
+        raise SystemExit(f"research-paper-guide blocked: experiment results not found. Summary: {summary_path}")
+
+    paper_output_dir = output_dir / "paper"
+    paper_showcase_path = output_dir / "SHOWCASE_REPORT.md"
+    acceptance_args = _research_paper_acceptance_args(
+        args,
+        baseline_pdf=baseline_pdf,
+        code_path=code_path,
+        experiment_path=experiment_path,
+        output_dir=paper_output_dir,
+        showcase_path=paper_showcase_path,
+    )
+    try:
+        _run_paper_e2e_acceptance(acceptance_args)
+    except SystemExit as exc:
+        summary = _research_paper_guide_summary(
+            args,
+            status="blocked",
+            phase="paper_e2e_acceptance_blocked",
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            output_dir=output_dir,
+            result_guide_summary_path=result_guide_summary_path,
+            blocking_items=[str(exc)],
+        )
+        _write_run_summary_data(summary, summary_path)
+        print(f"Research paper guide summary written to {summary_path}")
+        raise SystemExit(f"research-paper-guide blocked during paper acceptance. Summary: {summary_path}") from exc
+
+    summary = _research_paper_guide_summary(
+        args,
+        status="pass",
+        phase="paper_e2e_acceptance_passed",
+        baseline_pdf=baseline_pdf,
+        code_path=code_path,
+        experiment_path=experiment_path,
+        output_dir=output_dir,
+        result_guide_summary_path=result_guide_summary_path,
+        blocking_items=[],
+    )
+    _write_run_summary_data(summary, summary_path)
+    print(f"Research paper guide summary written to {summary_path}")
+    print("research-paper-guide completed.")
+
+
+def _research_paper_guide_example_root(args: argparse.Namespace, code_path: Path) -> Path:
+    if args.example_root:
+        return _resolve_project_relative_path(args.example_root)
+    if code_path.parent.name.lower() == "code":
+        return code_path.parent.parent
+    return code_path.parent
+
+
+def _research_paper_guide_should_run_result_guide(args: argparse.Namespace, experiment_path: Path) -> bool:
+    if not args.experiment_results:
+        return True
+    if not experiment_path.is_file():
+        return True
+    if args.artifacts_dir and _file_contains_todo(experiment_path):
+        return True
+    return False
+
+
+def _research_paper_result_guide_args(
+    args: argparse.Namespace,
+    *,
+    example_root: Path,
+    experiment_path: Path,
+    summary_path: Path,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        example_root=str(example_root),
+        artifacts_dir=args.artifacts_dir,
+        output=str(experiment_path),
+        summary=str(summary_path),
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        target_venue=args.target_venue,
+        seed=args.seed,
+        dataset=list(args.dataset or []),
+        style=args.artifact_template_style,
+        force_template=bool(args.force_template),
+        require_ablation=bool(args.require_ablation),
+        require_sensitivity=bool(args.require_sensitivity),
+        require_statistical_tests=bool(args.require_statistical_tests),
+    )
+
+
+def _research_paper_acceptance_args(
+    args: argparse.Namespace,
+    *,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    output_dir: Path,
+    showcase_path: Path,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        project_name=args.project_name,
+        baseline_pdf=str(baseline_pdf),
+        code_path=str(code_path),
+        experiment_results=str(experiment_path),
+        target_venue=args.target_venue,
+        keyword=list(args.keyword or []),
+        output_dir=str(output_dir),
+        zip=args.zip,
+        template_zip=args.template_zip,
+        template_dir=args.template_dir,
+        online=bool(args.online),
+        offline=bool(args.offline),
+        require_llm=bool(args.require_llm),
+        min_llm_sections=int(args.min_llm_sections or 0),
+        include_llm_self_review=bool(args.include_llm_self_review),
+        compile_latex=bool(args.compile_latex),
+        strict_results=bool(args.strict_results),
+        write_artifact_template=False,
+        artifact_template_dir="",
+        artifact_template_force=False,
+        artifact_template_style=args.artifact_template_style,
+        artifact_template_seed=args.seed,
+        artifact_template_dataset=list(args.dataset or []),
+        artifact_method=args.method,
+        artifact_baseline=args.baseline,
+        artifact_metric=args.metric,
+        generate_results_from_artifacts=False,
+        artifacts_dir=args.artifacts_dir,
+        require_ablation=bool(args.require_ablation),
+        require_sensitivity=bool(args.require_sensitivity),
+        require_statistical_tests=bool(args.require_statistical_tests),
+        require_provenance=bool(args.require_provenance),
+        require_artifact_consistency=bool(args.require_artifact_consistency),
+        showcase_report=str(showcase_path),
+    )
+
+
+def _research_paper_guide_summary(
+    args: argparse.Namespace,
+    *,
+    status: str,
+    phase: str,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    output_dir: Path,
+    result_guide_summary_path: Path,
+    blocking_items: list[str],
+) -> dict[str, object]:
+    paper_output_dir = output_dir / "paper"
+    return {
+        "status": status,
+        "pipeline_phase": phase,
+        "project_name": args.project_name or _default_project_name(output_dir),
+        "target_venue": args.target_venue,
+        "inputs": {
+            "baseline_pdf": str(baseline_pdf),
+            "code_path": str(code_path),
+            "experiment_results": str(experiment_path),
+            "artifacts_dir": str(args.artifacts_dir or ""),
+        },
+        "outputs": {
+            "result_guide_summary": str(result_guide_summary_path),
+            "paper_output_dir": str(paper_output_dir),
+            "paper_run_summary": str(paper_output_dir / "RUN_SUMMARY.json"),
+            "paper_acceptance_report": str(paper_output_dir / "ACCEPTANCE_REPORT.md"),
+            "paper_artifact_manifest": str(paper_output_dir / "ARTIFACT_MANIFEST.json"),
+            "showcase_report": str(output_dir / "SHOWCASE_REPORT.md"),
+            "overleaf_zip": str(args.zip or ""),
+        },
+        "blocking_items": blocking_items,
+        "next_command": _research_paper_guide_next_command(args, experiment_path),
+    }
+
+
+def _research_paper_guide_next_command(args: argparse.Namespace, experiment_path: Path) -> str:
+    parts = [
+        "paper-agent",
+        "research-paper-guide",
+        "--baseline-pdf",
+        args.baseline_pdf,
+        "--code-path",
+        args.code_path,
+        "--target-venue",
+        args.target_venue,
+        "--experiment-results",
+        str(experiment_path),
+        "--output-dir",
+        args.output_dir,
+    ]
+    if args.artifacts_dir:
+        parts.extend(["--artifacts-dir", args.artifacts_dir])
+    return " ".join(_powershell_arg(part) for part in parts)
 
 
 def _run_paper_e2e_acceptance(args: argparse.Namespace) -> None:

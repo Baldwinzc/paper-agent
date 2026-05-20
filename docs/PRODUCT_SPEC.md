@@ -160,6 +160,10 @@ entrypoint: it initializes missing result CSV templates, blocks while any CSV
 contains TODO placeholders, then runs artifact diagnostics, generates
 `tcga_results.md`, and strictly validates the generated result file before the
 paper E2E acceptance command is rerun.
+The higher-level `research-paper-guide` command links result completion and
+paper acceptance: starting from code, baseline PDF, target venue, and either a
+strict result file or TCGA result artifacts, it produces the result guide summary,
+paper acceptance artifacts, showcase report, and a top-level guide summary.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.
