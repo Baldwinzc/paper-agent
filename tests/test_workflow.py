@@ -7735,13 +7735,17 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
 
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "paper-e2e-smoke passed." in output
+    assert "Artifact manifest written to" in output
     assert captured["llm_client"] is None
     assert captured["request"].baseline_pdf_path == str(baseline_pdf)
     assert captured["request"].code_path == str(code_dir)
     assert captured["request"].target_venue == "TPAMI"
     assert (output_dir / "draft.md").is_file()
     assert (output_dir / "ACCEPTANCE_REPORT.md").is_file()
+    assert (output_dir / "ARTIFACT_MANIFEST.json").is_file()
     assert zip_path.exists()
     assert summary["smoke_contract"]["schema_version"] == "paper-e2e-smoke/v1"
     assert summary["smoke_contract"]["required_inputs"]["baseline_pdf"] == str(baseline_pdf)
@@ -7749,7 +7753,24 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert summary["smoke_contract"]["required_inputs"]["experiment_results"] == str(experiment_path)
     assert summary["smoke_contract"]["required_inputs"]["target_venue"] == "TPAMI"
     assert summary["smoke_contract"]["checks"]["llm_mode"] == "disabled"
+    assert summary["smoke_contract"]["outputs"]["artifact_manifest"].endswith("ARTIFACT_MANIFEST.json")
+    assert summary["outputs"]["artifact_manifest_path"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
+    assert "- Artifact manifest:" in acceptance_report
+    assert manifest["schema_version"] == "paper-e2e-artifact-manifest/v1"
+    assert manifest["project_name"] == cli_module._default_project_name(output_dir)
+    assert manifest["smoke_contract_status"] == "pass"
+    assert manifest["llm"]["mode"] == "disabled"
+    labels = {item["label"]: item for item in manifest["artifacts"]}
+    assert labels["markdown_draft"]["exists"] is True
+    assert labels["markdown_draft"]["sha256"] == hashlib.sha256(
+        (output_dir / "draft.md").read_bytes()
+    ).hexdigest()
+    assert labels["run_summary"]["exists"] is True
+    assert labels["acceptance_report"]["exists"] is True
+    assert labels["overleaf_zip"]["exists"] is True
+    assert labels["main_tex"]["exists"] is True
+    assert labels["latex_project"]["kind"] == "directory"
 
 
 def test_cli_paper_e2e_smoke_records_successful_llm_preflight(
@@ -7946,6 +7967,7 @@ def test_cli_paper_e2e_smoke_generates_results_from_artifacts_before_strict_vali
 
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
     result_text = experiment_path.read_text(encoding="utf-8")
     assert "TCGA result file written to" in output
     assert "paper-e2e-smoke passed." in output
@@ -7956,6 +7978,9 @@ def test_cli_paper_e2e_smoke_generates_results_from_artifacts_before_strict_vali
     assert summary["smoke_contract"]["checks"]["artifacts_dir"] == str(logs_dir)
     assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is True
     assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
+    labels = {item["label"]: item for item in manifest["artifacts"]}
+    assert labels["generated_experiment_results"]["path"] == str(experiment_path)
+    assert labels["generated_experiment_results"]["exists"] is True
 
 
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):

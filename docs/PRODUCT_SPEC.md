@@ -134,7 +134,9 @@ sizes, but not API keys, prompts, or generated section content.
 The generic `paper-e2e-smoke` command fixes the user-level acceptance contract:
 baseline PDF, code path, target venue, and experiment-result file must produce a
 draft, run summary, acceptance report, optional Overleaf zip, and a
-machine-readable `smoke_contract`.
+machine-readable `smoke_contract`. Successful runs also write an
+`ARTIFACT_MANIFEST.json` with output paths, existence checks, sizes, and hashes
+for demo handoff and regression evidence.
 For LLM-required runs, successful provider preflight diagnostics are recorded in
 the run summary and acceptance report before section drafting evidence.
 When its strict result preflight blocks generation, it still writes a blocked

@@ -5193,7 +5193,9 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
 
     summary = _build_run_summary(state, markdown_path)
     acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    manifest_path = output_dir / "ARTIFACT_MANIFEST.json"
     summary["outputs"]["acceptance_report_path"] = str(acceptance_report_path)
+    summary["outputs"]["artifact_manifest_path"] = str(manifest_path)
     summary["smoke_contract"] = _paper_e2e_smoke_contract(
         args,
         baseline_pdf=baseline_pdf,
@@ -5203,6 +5205,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         summary_path=output_dir / "RUN_SUMMARY.json",
         acceptance_report_path=acceptance_report_path,
         zip_path=zip_path,
+        manifest_path=manifest_path,
         result_preflight=result_preflight,
         llm_mode=llm_mode,
         llm_preflight_status=str(llm_preflight_summary.get("status", "not_recorded")),
@@ -5216,8 +5219,10 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         min_llm_sections=args.min_llm_sections if args.require_llm else 0,
         require_llm_self_review=args.include_llm_self_review,
     )
+    manifest_path = _write_paper_e2e_artifact_manifest(summary, manifest_path)
     print(f"Run summary written to {summary_path}")
     print(f"Acceptance report written to {acceptance_report_path}")
+    print(f"Artifact manifest written to {manifest_path}")
 
     successes = artifacts.get("section_writer_llm_successes", [])
     print(f"Input baseline PDF: {baseline_pdf}")
@@ -5251,6 +5256,7 @@ def _paper_e2e_smoke_contract(
     llm_preflight_status: str = "not_recorded",
     generated_results_from_artifacts: bool = False,
     status: str = "pass",
+    manifest_path: Path | None = None,
 ) -> dict[str, object]:
     return {
         "schema_version": "paper-e2e-smoke/v1",
@@ -5266,6 +5272,7 @@ def _paper_e2e_smoke_contract(
             "summary": str(summary_path),
             "acceptance_report": str(acceptance_report_path),
             "zip": str(zip_path or ""),
+            "artifact_manifest": str(manifest_path or ""),
         },
         "checks": {
             "baseline_pdf_exists": baseline_pdf.is_file(),
@@ -5282,6 +5289,107 @@ def _paper_e2e_smoke_contract(
             "min_llm_sections": int(args.min_llm_sections if args.require_llm else 0),
         },
     }
+
+
+def _write_paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> Path:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = _paper_e2e_artifact_manifest(summary, manifest_path)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str, object]:
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    smoke_contract = summary.get("smoke_contract", {})
+    smoke_outputs = smoke_contract.get("outputs", {}) if isinstance(smoke_contract, dict) else {}
+    smoke_checks = smoke_contract.get("checks", {}) if isinstance(smoke_contract, dict) else {}
+    if not isinstance(smoke_outputs, dict):
+        smoke_outputs = {}
+    if not isinstance(smoke_checks, dict):
+        smoke_checks = {}
+
+    artifact_specs = [
+        ("markdown_draft", "file", outputs.get("markdown", "")),
+        ("run_summary", "file", smoke_outputs.get("summary", "")),
+        ("acceptance_report", "file", outputs.get("acceptance_report_path", "")),
+        ("latex_project", "directory", outputs.get("latex_project_dir", "")),
+        ("main_tex", "file", outputs.get("latex_output_path", "")),
+        ("overleaf_zip", "file", outputs.get("latex_zip_path", "")),
+        ("draft_report", "file", outputs.get("draft_report_path", "")),
+        ("submission_checklist", "file", outputs.get("submission_checklist_path", "")),
+        ("figure_table_plan", "file", outputs.get("presentation_plan_path", "")),
+    ]
+    if smoke_checks.get("generated_results_from_artifacts"):
+        artifact_specs.append(
+            ("generated_experiment_results", "file", inputs.get("experiment_results_path", ""))
+        )
+
+    return {
+        "schema_version": "paper-e2e-artifact-manifest/v1",
+        "status": summary.get("status", "pass"),
+        "project_name": summary.get("project_name", ""),
+        "target_venue": summary.get("target_venue", ""),
+        "manifest_path": str(manifest_path),
+        "smoke_contract_status": smoke_contract.get("status", "")
+        if isinstance(smoke_contract, dict)
+        else "",
+        "llm": {
+            "mode": inputs.get("llm_mode", ""),
+            "provider": inputs.get("llm_provider", ""),
+            "model": inputs.get("llm_model", ""),
+            "endpoint_host": inputs.get("llm_endpoint_host", ""),
+            "preflight_status": summary.get("llm_preflight_status", "not_recorded"),
+            "preflight_total_tokens": summary.get("llm_preflight_total_tokens", 0),
+            "section_call_count": summary.get("section_writer_llm_call_count", 0),
+            "section_call_successes": summary.get("section_writer_llm_call_successes", 0),
+            "section_total_tokens": summary.get("section_writer_llm_total_tokens", 0),
+            "self_review_mode": summary.get("llm_self_review_mode", "not run"),
+        },
+        "experiment": {
+            "source": inputs.get("experiment_results_source", ""),
+            "path": inputs.get("experiment_results_path", ""),
+            "evidence_kind": inputs.get("experiment_evidence_kind", ""),
+            "result_tables": summary.get("experiment_result_tables", 0),
+            "contract_status": summary.get("experiment_contract_status", ""),
+            "quality_status": summary.get("experiment_quality_status", ""),
+            "provenance_status": summary.get("experiment_provenance_status", ""),
+            "artifact_consistency_status": summary.get(
+                "experiment_artifact_consistency_status",
+                "",
+            ),
+        },
+        "artifacts": [
+            _paper_e2e_artifact_manifest_entry(label, kind, str(path_value))
+            for label, kind, path_value in artifact_specs
+            if str(path_value or "")
+        ],
+    }
+
+
+def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -> dict[str, object]:
+    path = Path(path_value)
+    exists = path.exists()
+    entry: dict[str, object] = {
+        "label": label,
+        "kind": kind,
+        "path": path_value,
+        "exists": exists,
+    }
+    if kind == "file":
+        is_file = path.is_file()
+        entry["size_bytes"] = path.stat().st_size if is_file else 0
+        entry["sha256"] = _sha256_file(path) if is_file else ""
+    elif kind == "directory":
+        entry["file_count"] = sum(1 for item in path.rglob("*") if item.is_file()) if path.is_dir() else 0
+    return entry
 
 
 def _write_paper_e2e_smoke_failure_summary(
@@ -6443,6 +6551,7 @@ def _build_acceptance_report(
             f"- Draft report: {outputs.get('draft_report_path', '')}",
             f"- Submission checklist: {outputs.get('submission_checklist_path', '')}",
             f"- Figure/table plan: {outputs.get('presentation_plan_path', '')}",
+            f"- Artifact manifest: {outputs.get('artifact_manifest_path', '')}",
         ]
     )
     if failed:

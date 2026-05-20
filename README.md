@@ -223,15 +223,19 @@ python -m paper_agent.cli paper-e2e-smoke `
   --min-llm-sections 4
 ```
 
-`paper-e2e-smoke` always writes `draft.md`, `RUN_SUMMARY.json`, and
-`ACCEPTANCE_REPORT.md`; when `--zip` is set it also writes an Overleaf-ready
-package. It is deterministic by default so it can run without provider quota;
-add `--require-llm` to make the smoke fail unless the configured model responds
-and writes the requested minimum number of sections. Its summary includes a
+`paper-e2e-smoke` always writes `draft.md`, `RUN_SUMMARY.json`,
+`ACCEPTANCE_REPORT.md`, and `ARTIFACT_MANIFEST.json`; when `--zip` is set it
+also writes an Overleaf-ready package. It is deterministic by default so it can
+run without provider quota; add `--require-llm` to make the smoke fail unless
+the configured model responds and writes the requested minimum number of
+sections. Its summary includes a
 `smoke_contract` recording the exact baseline PDF, code path, target venue,
 experiment-result file, output paths, strict-result status, LLM mode, and live
 LLM preflight status. Successful LLM-required runs also record preflight elapsed
 time and token usage when the provider returns usage metadata.
+The artifact manifest lists the generated Markdown, LaTeX, report, zip, and
+summary files with existence checks, sizes, and file hashes for reproducible
+demo handoff.
 If strict result validation fails before drafting, the command still writes
 `RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
 `next_actions` repair chain: inspect with `validate-results --strict`, create
