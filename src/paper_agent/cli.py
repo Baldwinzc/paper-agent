@@ -5128,6 +5128,8 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
             reason="experiment result validation failed in strict mode",
         )
         print(f"Run summary written to {summary_path}")
+        print(f"Acceptance report written to {output_dir / 'ACCEPTANCE_REPORT.md'}")
+        print(f"Artifact manifest written to {output_dir / 'ARTIFACT_MANIFEST.json'}")
         raise SystemExit(
             "paper-e2e-smoke failed: experiment result validation failed in strict mode. "
             f"Summary: {summary_path}"
@@ -5158,6 +5160,10 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
                 "Acceptance report written to "
                 f"{Path(args.output_dir) / 'ACCEPTANCE_REPORT.md'}"
             )
+            print(
+                "Artifact manifest written to "
+                f"{Path(args.output_dir) / 'ARTIFACT_MANIFEST.json'}"
+            )
             raise SystemExit(
                 "paper-e2e-smoke failed: configured LLM is required. "
                 f"Summary: {summary_path}"
@@ -5183,6 +5189,10 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
             print(
                 "Acceptance report written to "
                 f"{Path(args.output_dir) / 'ACCEPTANCE_REPORT.md'}"
+            )
+            print(
+                "Artifact manifest written to "
+                f"{Path(args.output_dir) / 'ARTIFACT_MANIFEST.json'}"
             )
             raise SystemExit(
                 "paper-e2e-smoke failed: LLM preflight failed. "
@@ -5366,14 +5376,31 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         smoke_outputs = {}
     if not isinstance(smoke_checks, dict):
         smoke_checks = {}
+    experiment_evidence = _summary_experiment_evidence(summary)
+    experiment_contract = _summary_experiment_contract(summary)
+    experiment_quality = _summary_experiment_quality(summary)
+    experiment_provenance = _summary_experiment_provenance(summary)
+    experiment_artifact_consistency = _summary_experiment_artifact_consistency(summary)
+    experiment_contract_checks = experiment_contract.get("checks", {})
+    if not isinstance(experiment_contract_checks, dict):
+        experiment_contract_checks = {}
+    markdown_output = outputs.get("markdown", smoke_outputs.get("markdown", ""))
+    acceptance_output = outputs.get(
+        "acceptance_report_path",
+        outputs.get("acceptance_report", smoke_outputs.get("acceptance_report", "")),
+    )
+    zip_output = outputs.get(
+        "latex_zip_path",
+        outputs.get("zip", smoke_outputs.get("zip", "")),
+    )
 
     artifact_specs = [
-        ("markdown_draft", "file", outputs.get("markdown", "")),
+        ("markdown_draft", "file", markdown_output),
         ("run_summary", "file", smoke_outputs.get("summary", "")),
-        ("acceptance_report", "file", outputs.get("acceptance_report_path", "")),
+        ("acceptance_report", "file", acceptance_output),
         ("latex_project", "directory", outputs.get("latex_project_dir", "")),
         ("main_tex", "file", outputs.get("latex_output_path", "")),
-        ("overleaf_zip", "file", outputs.get("latex_zip_path", "")),
+        ("overleaf_zip", "file", zip_output),
         ("draft_report", "file", outputs.get("draft_report_path", "")),
         ("submission_checklist", "file", outputs.get("submission_checklist_path", "")),
         ("figure_table_plan", "file", outputs.get("presentation_plan_path", "")),
@@ -5393,7 +5420,7 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         if isinstance(smoke_contract, dict)
         else "",
         "llm": {
-            "mode": inputs.get("llm_mode", ""),
+            "mode": inputs.get("llm_mode", smoke_checks.get("llm_mode", "")),
             "provider": inputs.get("llm_provider", ""),
             "model": inputs.get("llm_model", ""),
             "endpoint_host": inputs.get("llm_endpoint_host", ""),
@@ -5407,14 +5434,26 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         "experiment": {
             "source": inputs.get("experiment_results_source", ""),
             "path": inputs.get("experiment_results_path", ""),
-            "evidence_kind": inputs.get("experiment_evidence_kind", ""),
-            "result_tables": summary.get("experiment_result_tables", 0),
-            "contract_status": summary.get("experiment_contract_status", ""),
-            "quality_status": summary.get("experiment_quality_status", ""),
-            "provenance_status": summary.get("experiment_provenance_status", ""),
+            "evidence_kind": inputs.get("experiment_evidence_kind", experiment_evidence.get("kind", "")),
+            "result_tables": summary.get(
+                "experiment_result_tables",
+                experiment_contract_checks.get("result_tables", 0),
+            ),
+            "contract_status": summary.get(
+                "experiment_contract_status",
+                experiment_contract.get("status", ""),
+            ),
+            "quality_status": summary.get(
+                "experiment_quality_status",
+                experiment_quality.get("status", ""),
+            ),
+            "provenance_status": summary.get(
+                "experiment_provenance_status",
+                experiment_provenance.get("status", ""),
+            ),
             "artifact_consistency_status": summary.get(
                 "experiment_artifact_consistency_status",
-                "",
+                experiment_artifact_consistency.get("status", ""),
             ),
         },
         "artifacts": [
@@ -5443,8 +5482,78 @@ def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -
     return entry
 
 
+def _paper_e2e_blocked_inputs(
+    *,
+    baseline_pdf: Path,
+    code_path: Path,
+    experiment_path: Path,
+    target_venue: str,
+    result_preflight: dict[str, object],
+    llm_mode: str,
+    llm_config: LLMConfig | None = None,
+) -> dict[str, object]:
+    experiment_evidence = result_preflight.get("experiment_evidence", {})
+    if not isinstance(experiment_evidence, dict):
+        experiment_evidence = {}
+    llm_metadata = _llm_runtime_metadata(llm_config) if llm_config else {}
+    return {
+        "baseline_pdf_path": str(baseline_pdf),
+        "code_path": str(code_path),
+        "target_venue": target_venue,
+        "experiment_results_provided": experiment_path.is_file(),
+        "experiment_results_source": "file",
+        "experiment_results_path": str(experiment_path),
+        "experiment_evidence_kind": experiment_evidence.get("kind", "unknown"),
+        "experiment_evidence_note": experiment_evidence.get("note", ""),
+        "llm_mode": llm_mode,
+        "llm_provider": llm_metadata.get("runtime_llm_provider", ""),
+        "llm_model": llm_metadata.get("runtime_llm_model", ""),
+        "llm_endpoint_host": llm_metadata.get("runtime_llm_endpoint_host", ""),
+        "llm_configured": bool(llm_config.configured) if llm_config else False,
+        "llm_timeout_seconds": llm_config.timeout_seconds if llm_config else 0,
+        "llm_max_retries": llm_config.max_retries if llm_config else 0,
+    }
+
+
+def _paper_e2e_blocked_outputs(
+    *,
+    output_dir: Path,
+    summary_path: Path,
+    acceptance_report_path: Path,
+    manifest_path: Path,
+    zip_path: Path | None,
+) -> dict[str, str]:
+    return {
+        "summary": str(summary_path),
+        "markdown": str(output_dir / "draft.md"),
+        "acceptance_report": str(acceptance_report_path),
+        "acceptance_report_path": str(acceptance_report_path),
+        "artifact_manifest_path": str(manifest_path),
+        "zip": str(zip_path or ""),
+        "latex_zip_path": str(zip_path or ""),
+    }
+
+
 def _run_paper_e2e_acceptance(args: argparse.Namespace) -> None:
-    _run_paper_e2e_smoke(args)
+    try:
+        _run_paper_e2e_smoke(args)
+    except SystemExit:
+        manifest_path = Path(args.output_dir) / "ARTIFACT_MANIFEST.json"
+        if manifest_path.is_file():
+            showcase_path = (
+                _resolve_project_relative_path(args.showcase_report)
+                if args.showcase_report
+                else Path(args.output_dir) / "SHOWCASE_REPORT.md"
+            )
+            _run_paper_e2e_report(
+                argparse.Namespace(
+                    manifest=str(manifest_path),
+                    summary="",
+                    acceptance_report="",
+                    output=str(showcase_path),
+                )
+            )
+        raise
     output_dir = Path(args.output_dir)
     manifest_path = output_dir / "ARTIFACT_MANIFEST.json"
     if not manifest_path.is_file():
@@ -5654,6 +5763,7 @@ def _write_paper_e2e_smoke_failure_summary(
     output_dir = Path(args.output_dir)
     summary_path = output_dir / "RUN_SUMMARY.json"
     acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    manifest_path = output_dir / "ARTIFACT_MANIFEST.json"
     zip_path = Path(args.zip) if args.zip else None
     blocking_items = _paper_e2e_result_preflight_issues(result_preflight)
     if not blocking_items:
@@ -5668,6 +5778,21 @@ def _write_paper_e2e_smoke_failure_summary(
         "target_venue": args.target_venue,
         "blocking_items": blocking_items,
         "missing_inputs": [],
+        "inputs": _paper_e2e_blocked_inputs(
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            target_venue=args.target_venue,
+            result_preflight=result_preflight,
+            llm_mode="not_started",
+        ),
+        "outputs": _paper_e2e_blocked_outputs(
+            output_dir=output_dir,
+            summary_path=summary_path,
+            acceptance_report_path=acceptance_report_path,
+            manifest_path=manifest_path,
+            zip_path=zip_path,
+        ),
         "next_action": (
             "Repair the experiment result file until strict checks pass, or rerun with "
             "--no-strict-results for a toolchain-only smoke."
@@ -5698,9 +5823,13 @@ def _write_paper_e2e_smoke_failure_summary(
                 getattr(args, "generate_results_from_artifacts", False)
             ),
             status="blocked",
+            manifest_path=manifest_path,
         ),
     }
-    return _write_run_summary_data(summary, summary_path)
+    written_summary_path = _write_run_summary_data(summary, summary_path)
+    _write_paper_e2e_blocked_acceptance_report(summary, acceptance_report_path)
+    _write_paper_e2e_artifact_manifest(summary, manifest_path)
+    return written_summary_path
 
 
 def _write_paper_e2e_smoke_llm_failure_summary(
@@ -5716,6 +5845,7 @@ def _write_paper_e2e_smoke_llm_failure_summary(
     output_dir = Path(args.output_dir)
     summary_path = output_dir / "RUN_SUMMARY.json"
     acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
+    manifest_path = output_dir / "ARTIFACT_MANIFEST.json"
     zip_path = Path(args.zip) if args.zip else None
     diagnostics = _llm_failure_diagnostics(llm_config, raw_error)
     diagnosis = str(diagnostics.get("diagnosis", "LLM preflight failed."))
@@ -5727,6 +5857,15 @@ def _write_paper_e2e_smoke_llm_failure_summary(
         "target_venue": args.target_venue,
         "blocking_items": [f"llm: {diagnosis}"],
         "missing_inputs": [] if llm_config.configured else ["configured LLM API key/model"],
+        "inputs": _paper_e2e_blocked_inputs(
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            target_venue=args.target_venue,
+            result_preflight=result_preflight,
+            llm_mode="failed_preflight",
+            llm_config=llm_config,
+        ),
         "next_action": next_action,
         "next_command": "paper-agent llm-doctor --summary outputs/llm-doctor.json",
         "next_actions": [
@@ -5741,12 +5880,13 @@ def _write_paper_e2e_smoke_llm_failure_summary(
                 "command": _paper_e2e_smoke_rerun_command(args),
             },
         ],
-        "outputs": {
-            "summary": str(summary_path),
-            "acceptance_report": str(acceptance_report_path),
-            "markdown": str(output_dir / "draft.md"),
-            "zip": str(zip_path or ""),
-        },
+        "outputs": _paper_e2e_blocked_outputs(
+            output_dir=output_dir,
+            summary_path=summary_path,
+            acceptance_report_path=acceptance_report_path,
+            manifest_path=manifest_path,
+            zip_path=zip_path,
+        ),
         "llm_diagnostics": diagnostics,
         "experiment_evidence": result_preflight.get("experiment_evidence", {}),
         "experiment_contract": result_preflight.get("experiment_contract", {}),
@@ -5772,10 +5912,13 @@ def _write_paper_e2e_smoke_llm_failure_summary(
                 getattr(args, "generate_results_from_artifacts", False)
             ),
             status="blocked",
+            manifest_path=manifest_path,
         ),
     }
+    written_summary_path = _write_run_summary_data(summary, summary_path)
     _write_paper_e2e_blocked_acceptance_report(summary, acceptance_report_path)
-    return _write_run_summary_data(summary, summary_path)
+    _write_paper_e2e_artifact_manifest(summary, manifest_path)
+    return written_summary_path
 
 
 def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], report_path: Path) -> Path:
@@ -5784,6 +5927,7 @@ def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], repor
         diagnostics = {}
     smoke_contract = summary.get("smoke_contract", {})
     checks = smoke_contract.get("checks", {}) if isinstance(smoke_contract, dict) else {}
+    contract_item = _experiment_contract_acceptance_item(_summary_experiment_contract(summary))
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list):
         next_actions = []
@@ -5795,29 +5939,45 @@ def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], repor
         f"- Project: {summary.get('project_name', '')}",
         f"- Target venue: {summary.get('target_venue', '')}",
         "",
-        "## Input Contract",
+        "## Acceptance Snapshot",
         "",
-        f"- Baseline PDF exists: {checks.get('baseline_pdf_exists', False)}",
-        f"- Code path exists: {checks.get('code_path_exists', False)}",
-        f"- Experiment results exists: {checks.get('experiment_results_exists', False)}",
-        f"- Strict results accepted: {checks.get('strict_results_accepted', False)}",
-        f"- LLM mode: {checks.get('llm_mode', '')}",
-        f"- LLM preflight status: {checks.get('llm_preflight_status', '')}",
-        "",
-        "## LLM Diagnostics",
-        "",
-        f"- Provider: {diagnostics.get('provider', '')}",
-        f"- Model: {diagnostics.get('model', '')}",
-        f"- Endpoint host: {diagnostics.get('endpoint_host', '')}",
-        f"- Failure kind: {diagnostics.get('failure_kind', '')}",
-        f"- Diagnosis: {diagnostics.get('diagnosis', '')}",
-        f"- Raw provider error: {diagnostics.get('raw_error', '')}",
-        "",
-        "## Next Actions",
-        "",
-        "| Category | Action | Command |",
-        "|---|---|---|",
+        "- Overall status: FAIL",
+        "- Pipeline status: FAIL",
+        "- Submission evidence status: FAIL",
+        f"| {contract_item['name']} | {contract_item['status']} | {contract_item['detail']} |",
     ]
+    if checks.get("llm_preflight_status") == "fail":
+        lines.append(
+            "| LLM preflight | FAIL | "
+            f"{_table_safe(str(diagnostics.get('diagnosis', 'provider preflight failed')))} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Input Contract",
+            "",
+            f"- Baseline PDF exists: {checks.get('baseline_pdf_exists', False)}",
+            f"- Code path exists: {checks.get('code_path_exists', False)}",
+            f"- Experiment results exists: {checks.get('experiment_results_exists', False)}",
+            f"- Strict results accepted: {checks.get('strict_results_accepted', False)}",
+            f"- LLM mode: {checks.get('llm_mode', '')}",
+            f"- LLM preflight status: {checks.get('llm_preflight_status', '')}",
+            "",
+            "## LLM Diagnostics",
+            "",
+            f"- Provider: {diagnostics.get('provider', '')}",
+            f"- Model: {diagnostics.get('model', '')}",
+            f"- Endpoint host: {diagnostics.get('endpoint_host', '')}",
+            f"- Failure kind: {diagnostics.get('failure_kind', '')}",
+            f"- Diagnosis: {diagnostics.get('diagnosis', '')}",
+            f"- Raw provider error: {diagnostics.get('raw_error', '')}",
+            "",
+            "## Next Actions",
+            "",
+            "| Category | Action | Command |",
+            "|---|---|---|",
+        ]
+    )
     for action in next_actions:
         if not isinstance(action, dict):
             continue

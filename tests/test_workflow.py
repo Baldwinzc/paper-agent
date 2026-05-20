@@ -8211,6 +8211,78 @@ def test_cli_paper_e2e_acceptance_runs_smoke_and_showcase_report(
     assert "| overleaf_zip | yes |" in showcase_report
 
 
+def test_cli_paper_e2e_acceptance_writes_showcase_on_strict_block(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "tcga_results_template.md"
+    output_dir = tmp_path / "blocked-acceptance"
+    showcase_path = tmp_path / "blocked-showcase.md"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            raise AssertionError("Workflow should not start after strict result preflight failure.")
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-acceptance",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--showcase-report",
+            str(showcase_path),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "paper-e2e-smoke failed: experiment result validation failed in strict mode" in str(exc)
+    else:
+        raise AssertionError("Expected paper-e2e-acceptance to keep the strict block non-zero.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    showcase_report = showcase_path.read_text(encoding="utf-8")
+    assert "Paper E2E showcase report written to" in output
+    assert summary["status"] == "blocked"
+    assert manifest["status"] == "blocked"
+    assert manifest["smoke_contract_status"] == "blocked"
+    assert manifest["experiment"]["contract_status"] == "invalid"
+    assert manifest["llm"]["mode"] == "not_started"
+    labels = {item["label"]: item for item in manifest["artifacts"]}
+    assert labels["markdown_draft"]["exists"] is False
+    assert labels["run_summary"]["exists"] is True
+    assert labels["acceptance_report"]["exists"] is True
+    assert "# Paper Agent Blocked Acceptance Report" in acceptance_report
+    assert "- Overall status: FAIL" in showcase_report
+    assert "| Experiment result contract | FAIL | invalid;" in showcase_report
+    assert "| markdown_draft | no |" in showcase_report
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"
@@ -8255,16 +8327,29 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
     output = capsys.readouterr().out
     summary_path = tmp_path / "out" / "RUN_SUMMARY.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    manifest = json.loads((tmp_path / "out" / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    report = (tmp_path / "out" / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     assert "Experiment result contract: invalid" in output
     assert "Run summary written to" in output
+    assert "Acceptance report written to" in output
+    assert "Artifact manifest written to" in output
     assert not (tmp_path / "out" / "draft.md").exists()
+    assert (tmp_path / "out" / "ACCEPTANCE_REPORT.md").is_file()
+    assert (tmp_path / "out" / "ARTIFACT_MANIFEST.json").is_file()
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "paper_e2e_smoke_preflight"
+    assert summary["outputs"]["artifact_manifest_path"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["smoke_contract"]["schema_version"] == "paper-e2e-smoke/v1"
     assert summary["smoke_contract"]["status"] == "blocked"
+    assert summary["smoke_contract"]["outputs"]["artifact_manifest"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["smoke_contract"]["checks"]["strict_results"] is True
     assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is False
     assert summary["smoke_contract"]["checks"]["llm_mode"] == "not_started"
+    assert manifest["status"] == "blocked"
+    assert manifest["smoke_contract_status"] == "blocked"
+    assert manifest["experiment"]["contract_status"] == "invalid"
+    assert "# Paper Agent Blocked Acceptance Report" in report
+    assert "| Experiment result contract | FAIL | invalid;" in report
     assert summary["next_command"].startswith("paper-agent validate-results")
     assert [action["category"] for action in summary["next_actions"]] == [
         "validate_results",
@@ -8346,16 +8431,25 @@ def test_cli_paper_e2e_smoke_writes_summary_on_llm_preflight_failure(
 
     output = capsys.readouterr().out
     summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
     report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
     serialized = json.dumps(summary)
     assert "Run summary written to" in output
     assert "Acceptance report written to" in output
+    assert "Artifact manifest written to" in output
     assert not (output_dir / "draft.md").exists()
+    assert (output_dir / "ARTIFACT_MANIFEST.json").is_file()
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "paper_e2e_smoke_llm_preflight"
+    assert summary["outputs"]["artifact_manifest_path"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is True
     assert summary["smoke_contract"]["checks"]["llm_mode"] == "failed_preflight"
     assert summary["smoke_contract"]["checks"]["generated_results_from_artifacts"] is True
+    assert manifest["status"] == "blocked"
+    assert manifest["llm"]["mode"] == "failed_preflight"
+    assert manifest["llm"]["provider"] == "deepseek"
+    assert manifest["llm"]["model"] == "deepseek-v4-pro"
+    assert manifest["experiment"]["contract_status"] == "complete"
     assert summary["llm_diagnostics"]["failure_kind"] == "quota"
     assert summary["llm_diagnostics"]["provider"] == "deepseek"
     assert "secret-test-key" not in serialized

@@ -247,14 +247,15 @@ python -m paper_agent.cli paper-e2e-report `
 ```
 
 If strict result validation fails before drafting, the command still writes
-`RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
-`next_actions` repair chain: inspect with `validate-results --strict`, create
-CSV export templates with `tcga-artifact-template`, generate
-`tcga_results.md` with `tcga-results-from-artifacts --strict`, then rerun the
-same smoke command.
+`RUN_SUMMARY.json`, `ACCEPTANCE_REPORT.md`, `ARTIFACT_MANIFEST.json`, and, when
+using `paper-e2e-acceptance`, `SHOWCASE_REPORT.md` with `status=blocked`, the
+result-contract errors, and a `next_actions` repair chain: inspect with
+`validate-results --strict`, create CSV export templates with
+`tcga-artifact-template`, generate `tcga_results.md` with
+`tcga-results-from-artifacts --strict`, then rerun the same smoke command.
 If `--require-llm` reaches the provider but preflight fails, the command also
-writes a blocked `RUN_SUMMARY.json` and `ACCEPTANCE_REPORT.md` with sanitized
-provider diagnostics and LLM repair commands, without recording API keys.
+writes the same blocked artifact set with sanitized provider diagnostics and LLM
+repair commands, without recording API keys.
 Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
 templates immediately; use `--artifact-template-dir` to choose the output
 directory and fill the generated files with real trained-model outputs.
