@@ -7752,6 +7752,130 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
 
 
+def test_cli_paper_e2e_smoke_records_successful_llm_preflight(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "results.md"
+    latex_dir = tmp_path / "latex"
+    output_dir = tmp_path / "paper-smoke"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| ProtoSurv baseline | 0.646 |\n"
+        "| Hyper-ProtoSurv ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    llm_config = LLMConfig(
+        api_key="secret-test-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+    )
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "llm",
+                    "section_writer_llm_attempted_sections": ["abstract", "method"],
+                    "section_writer_llm_successes": ["abstract", "method"],
+                    "section_writer_llm_call_trace": [
+                        {
+                            "section": "abstract",
+                            "phase": "draft",
+                            "status": "success",
+                            "model": "deepseek-v4-pro",
+                            "usage": {"total_tokens": 21},
+                        },
+                        {
+                            "section": "method",
+                            "phase": "draft",
+                            "status": "success",
+                            "model": "deepseek-v4-pro",
+                            "usage": {"total_tokens": 34},
+                        },
+                    ],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    def pass_preflight(client, config, *, context):
+        return {
+            "elapsed_seconds": 0.25,
+            "response_model": "deepseek-v4-pro",
+            "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+        }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "load_llm_config", lambda: llm_config)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", pass_preflight)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--no-strict-results",
+            "--require-llm",
+            "--min-llm-sections",
+            "2",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    serialized = json.dumps(summary)
+    assert "paper-e2e-smoke passed." in output
+    assert captured["llm_client"].available is True
+    assert summary["inputs"]["llm_mode"] == "required"
+    assert summary["llm_preflight_status"] == "pass"
+    assert summary["llm_preflight"]["elapsed_seconds"] == 0.25
+    assert summary["llm_preflight_total_tokens"] == 12
+    assert summary["section_writer_llm_total_tokens"] == 55
+    assert summary["smoke_contract"]["checks"]["llm_preflight_status"] == "pass"
+    assert "- LLM preflight: pass; elapsed=0.25; total_tokens=12" in report
+    assert "| LLM preflight | PASS | status=pass; elapsed=0.25; total_tokens=12 |" in report
+    assert "| LLM call trace | PASS | 2/2 calls succeeded; total_tokens=55; required >= 2 |" in report
+    assert "secret-test-key" not in serialized
+    assert "secret-test-key" not in report
+
+
 def test_cli_paper_e2e_smoke_generates_results_from_artifacts_before_strict_validation(
     monkeypatch,
     tmp_path,

@@ -229,7 +229,9 @@ package. It is deterministic by default so it can run without provider quota;
 add `--require-llm` to make the smoke fail unless the configured model responds
 and writes the requested minimum number of sections. Its summary includes a
 `smoke_contract` recording the exact baseline PDF, code path, target venue,
-experiment-result file, output paths, strict-result status, and LLM mode.
+experiment-result file, output paths, strict-result status, LLM mode, and live
+LLM preflight status. Successful LLM-required runs also record preflight elapsed
+time and token usage when the provider returns usage metadata.
 If strict result validation fails before drafting, the command still writes
 `RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
 `next_actions` repair chain: inspect with `validate-results --strict`, create

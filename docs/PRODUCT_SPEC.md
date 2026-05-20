@@ -135,6 +135,8 @@ The generic `paper-e2e-smoke` command fixes the user-level acceptance contract:
 baseline PDF, code path, target venue, and experiment-result file must produce a
 draft, run summary, acceptance report, optional Overleaf zip, and a
 machine-readable `smoke_contract`.
+For LLM-required runs, successful provider preflight diagnostics are recorded in
+the run summary and acceptance report before section drafting evidence.
 When its strict result preflight blocks generation, it still writes a blocked
 `RUN_SUMMARY.json` so automation can report contract errors and the next command
 without parsing console text. The blocked summary includes a `next_actions`

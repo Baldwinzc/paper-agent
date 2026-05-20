@@ -5085,6 +5085,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
     runtime_llm_config = load_llm_config()
     llm_client = None
     llm_mode = "disabled"
+    llm_preflight_summary: dict[str, object] = {}
     if args.require_llm:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "0"
         runtime_llm_config = load_llm_config()
@@ -5112,7 +5113,11 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
             )
         llm_client = LLMClient(runtime_llm_config)
         try:
-            _llm_preflight_check(llm_client, runtime_llm_config, context="paper-e2e-smoke")
+            llm_preflight_result = _llm_preflight_check(
+                llm_client,
+                runtime_llm_config,
+                context="paper-e2e-smoke",
+            )
         except SystemExit as exc:
             summary_path = _write_paper_e2e_smoke_llm_failure_summary(
                 args,
@@ -5132,6 +5137,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
                 "paper-e2e-smoke failed: LLM preflight failed. "
                 f"Summary: {summary_path}"
             ) from exc
+        llm_preflight_summary = {"status": "pass", **llm_preflight_result}
         llm_mode = "required"
     else:
         os.environ["PAPER_AGENT_DISABLE_LLM"] = "1"
@@ -5167,6 +5173,8 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         "experiment_results": str(experiment_path),
         "target_venue": args.target_venue,
     }
+    if llm_preflight_summary:
+        artifacts["paper_e2e_llm_preflight"] = llm_preflight_summary
     if generated_result_summary:
         artifacts["paper_e2e_generated_results_from_artifacts"] = generated_result_summary
     _record_result_preflight(state, result_preflight)
@@ -5197,6 +5205,7 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         zip_path=zip_path,
         result_preflight=result_preflight,
         llm_mode=llm_mode,
+        llm_preflight_status=str(llm_preflight_summary.get("status", "not_recorded")),
         generated_results_from_artifacts=bool(args.generate_results_from_artifacts),
         status="pass",
     )
@@ -5239,6 +5248,7 @@ def _paper_e2e_smoke_contract(
     zip_path: Path | None,
     result_preflight: dict[str, object],
     llm_mode: str,
+    llm_preflight_status: str = "not_recorded",
     generated_results_from_artifacts: bool = False,
     status: str = "pass",
 ) -> dict[str, object]:
@@ -5268,6 +5278,7 @@ def _paper_e2e_smoke_contract(
             if generated_results_from_artifacts
             else "",
             "llm_mode": llm_mode,
+            "llm_preflight_status": llm_preflight_status,
             "min_llm_sections": int(args.min_llm_sections if args.require_llm else 0),
         },
     }
@@ -5398,7 +5409,10 @@ def _write_paper_e2e_smoke_llm_failure_summary(
             zip_path=zip_path,
             result_preflight=result_preflight,
             llm_mode="failed_preflight",
-            generated_results_from_artifacts=bool(getattr(args, "generate_results_from_artifacts", False)),
+            llm_preflight_status="fail",
+            generated_results_from_artifacts=bool(
+                getattr(args, "generate_results_from_artifacts", False)
+            ),
             status="blocked",
         ),
     }
@@ -5430,6 +5444,7 @@ def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], repor
         f"- Experiment results exists: {checks.get('experiment_results_exists', False)}",
         f"- Strict results accepted: {checks.get('strict_results_accepted', False)}",
         f"- LLM mode: {checks.get('llm_mode', '')}",
+        f"- LLM preflight status: {checks.get('llm_preflight_status', '')}",
         "",
         "## LLM Diagnostics",
         "",
@@ -6376,6 +6391,11 @@ def _build_acceptance_report(
         ),
         f"- LLM endpoint host: {inputs.get('llm_endpoint_host', '') or 'not recorded'}",
         (
+            f"- LLM preflight: {summary.get('llm_preflight_status', 'not_recorded')}; "
+            f"elapsed={summary.get('llm_preflight_elapsed_seconds', 0)}; "
+            f"total_tokens={summary.get('llm_preflight_total_tokens', 0)}"
+        ),
+        (
             f"- LLM section call trace: {summary.get('section_writer_llm_call_successes', 0)}/"
             f"{summary.get('section_writer_llm_call_count', 0)} successful; "
             f"total_tokens={summary.get('section_writer_llm_total_tokens', 0)}"
@@ -6470,6 +6490,9 @@ def _acceptance_checks(
     llm_call_count = int(summary.get("section_writer_llm_call_count", 0) or 0)
     llm_call_successes = int(summary.get("section_writer_llm_call_successes", 0) or 0)
     llm_total_tokens = int(summary.get("section_writer_llm_total_tokens", 0) or 0)
+    llm_preflight_status = str(summary.get("llm_preflight_status", "not_recorded"))
+    llm_preflight_elapsed = summary.get("llm_preflight_elapsed_seconds", 0)
+    llm_preflight_tokens = int(summary.get("llm_preflight_total_tokens", 0) or 0)
     compile_status = summary.get("submission_compile_status", "not_run")
     compile_tool = summary.get("submission_compile_tool", "")
     compile_mode = summary.get("submission_compile_mode", "")
@@ -6516,6 +6539,21 @@ def _acceptance_checks(
         *_experiment_provenance_acceptance_items(experiment_provenance),
         *_experiment_artifact_consistency_acceptance_items(artifact_consistency),
         *([artifact_flow_item] if artifact_flow_item else []),
+        *(
+            [
+                _acceptance_item(
+                    "LLM preflight",
+                    llm_preflight_status == "pass",
+                    (
+                        f"status={llm_preflight_status}; "
+                        f"elapsed={llm_preflight_elapsed}; "
+                        f"total_tokens={llm_preflight_tokens}"
+                    ),
+                )
+            ]
+            if llm_preflight_status != "not_recorded"
+            else []
+        ),
         _acceptance_item(
             "LLM section drafting",
             len(successes) >= min_llm_sections,
@@ -6917,6 +6955,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     if not isinstance(artifact_consistency, dict) or not artifact_consistency:
         artifact_consistency = _summary_experiment_artifact_consistency({})
     llm_call_trace = _section_writer_llm_call_trace(artifacts)
+    llm_preflight = _summary_llm_preflight(artifacts)
     experiment_results_present = bool(experiment_results.strip())
     experiment_results_source = artifacts.get(
         "experiment_results_source", "provided" if experiment_results_present else "none"
@@ -7040,6 +7079,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "section_writer_llm_call_count": len(llm_call_trace),
         "section_writer_llm_call_successes": _section_writer_llm_successful_call_count(llm_call_trace),
         "section_writer_llm_total_tokens": _section_writer_llm_total_tokens(llm_call_trace),
+        "llm_preflight": llm_preflight,
+        "llm_preflight_status": str(llm_preflight.get("status", "not_recorded")),
+        "llm_preflight_elapsed_seconds": llm_preflight.get("elapsed_seconds", 0),
+        "llm_preflight_total_tokens": _llm_preflight_total_tokens(llm_preflight),
         "outputs": {
             "markdown": str(markdown_path) if markdown_path else "",
             "latex_project_dir": str(state.get("latex_project_dir", "")),
@@ -7050,6 +7093,21 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
             "presentation_plan_path": artifacts.get("presentation_plan_path", ""),
         },
     }
+
+
+def _summary_llm_preflight(artifacts: dict) -> dict[str, object]:
+    value = artifacts.get("paper_e2e_llm_preflight", artifacts.get("llm_preflight", {}))
+    return value if isinstance(value, dict) else {}
+
+
+def _llm_preflight_total_tokens(preflight: dict[str, object]) -> int:
+    usage = preflight.get("usage", {})
+    if not isinstance(usage, dict):
+        return 0
+    try:
+        return int(usage.get("total_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _section_writer_llm_call_trace(artifacts: dict) -> list[dict[str, object]]:
