@@ -233,6 +233,15 @@ def _add_research_paper_guide_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--code-path", required=True, help="Project code directory.")
     parser.add_argument("--target-venue", required=True, help="Target journal or conference.")
     parser.add_argument("--experiment-results", default="", help="Existing result Markdown file.")
+    parser.add_argument(
+        "--results-mode",
+        choices=("auto", "use-existing", "generate-from-artifacts"),
+        default="auto",
+        help=(
+            "Experiment result handling: auto generates missing/template results from artifacts, "
+            "use-existing requires --experiment-results, generate-from-artifacts always runs the TCGA result guide."
+        ),
+    )
     parser.add_argument("--artifacts-dir", default="", help="TCGA result CSV artifact directory.")
     parser.add_argument("--example-root", default="", help="Optional project example root for TCGA result artifacts.")
     parser.add_argument("--output-dir", default="outputs/research-paper-guide")
@@ -5909,6 +5918,23 @@ def _run_research_paper_guide(args: argparse.Namespace) -> None:
     )
     result_guide_summary_path = output_dir / "RESULT_GUIDE_SUMMARY.json"
 
+    result_mode_blocks = _research_paper_guide_result_mode_blocking_items(args, experiment_path)
+    if result_mode_blocks:
+        summary = _research_paper_guide_summary(
+            args,
+            status="blocked",
+            phase="result_mode_blocked",
+            baseline_pdf=baseline_pdf,
+            code_path=code_path,
+            experiment_path=experiment_path,
+            output_dir=output_dir,
+            result_guide_summary_path=result_guide_summary_path,
+            blocking_items=result_mode_blocks,
+        )
+        _write_research_paper_guide_outputs(summary, summary_path)
+        print(f"Research paper guide summary written to {summary_path}")
+        raise SystemExit(f"research-paper-guide blocked by result mode. Summary: {summary_path}")
+
     if _research_paper_guide_should_run_result_guide(args, experiment_path):
         result_guide_args = _research_paper_result_guide_args(
             args,
@@ -6005,6 +6031,11 @@ def _research_paper_guide_example_root(args: argparse.Namespace, code_path: Path
 
 
 def _research_paper_guide_should_run_result_guide(args: argparse.Namespace, experiment_path: Path) -> bool:
+    results_mode = getattr(args, "results_mode", "auto")
+    if results_mode == "use-existing":
+        return False
+    if results_mode == "generate-from-artifacts":
+        return True
     if not args.experiment_results:
         return True
     if not experiment_path.is_file():
@@ -6012,6 +6043,17 @@ def _research_paper_guide_should_run_result_guide(args: argparse.Namespace, expe
     if args.artifacts_dir and _file_contains_todo(experiment_path):
         return True
     return False
+
+
+def _research_paper_guide_result_mode_blocking_items(args: argparse.Namespace, experiment_path: Path) -> list[str]:
+    results_mode = getattr(args, "results_mode", "auto")
+    if results_mode != "use-existing":
+        return []
+    if not args.experiment_results:
+        return ["--results-mode use-existing requires --experiment-results."]
+    if not experiment_path.is_file():
+        return [f"--results-mode use-existing result file not found: {experiment_path}"]
+    return []
 
 
 def _research_paper_result_guide_args(
@@ -6110,6 +6152,7 @@ def _research_paper_guide_summary(
             "code_path": str(code_path),
             "experiment_results": str(experiment_path),
             "artifacts_dir": str(args.artifacts_dir or ""),
+            "results_mode": str(getattr(args, "results_mode", "auto")),
         },
         "outputs": {
             "research_guide_summary": "",
@@ -6144,6 +6187,9 @@ def _research_paper_guide_next_command(args: argparse.Namespace, experiment_path
     ]
     if args.artifacts_dir:
         parts.extend(["--artifacts-dir", args.artifacts_dir])
+    results_mode = getattr(args, "results_mode", "auto")
+    if results_mode != "auto":
+        parts.extend(["--results-mode", results_mode])
     return " ".join(_powershell_arg(part) for part in parts)
 
 

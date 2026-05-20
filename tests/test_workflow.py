@@ -8529,6 +8529,130 @@ def test_cli_research_paper_guide_generates_results_and_runs_paper_acceptance(
     assert captured["request"].experiment_results.startswith("# Real Experiment Results")
 
 
+def test_cli_research_paper_guide_use_existing_skips_result_guide(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code" / "hyper-protosurv"
+    result_path = tmp_path / "provided_results.md"
+    latex_dir = tmp_path / "latex"
+    output_dir = tmp_path / "research-guide"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir(parents=True)
+    latex_dir.mkdir()
+    result_path.write_text("# Existing Results\n\nTODO: user-provided draft.", encoding="utf-8")
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "research-paper-guide",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--target-venue",
+            "TPAMI",
+            "--experiment-results",
+            str(result_path),
+            "--results-mode",
+            "use-existing",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--no-strict-results",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RESEARCH_GUIDE_REPORT.md").read_text(encoding="utf-8")
+    assert "research-paper-guide completed." in output
+    assert "TCGA results guide completed." not in output
+    assert summary["status"] == "pass"
+    assert summary["inputs"]["results_mode"] == "use-existing"
+    assert "--results-mode use-existing" in summary["next_command"]
+    assert not (output_dir / "RESULT_GUIDE_SUMMARY.json").exists()
+    assert "- Result guide status: not found" in report
+    assert captured["request"].experiment_results == result_path.read_text(encoding="utf-8")
+
+
+def test_cli_research_paper_guide_use_existing_requires_experiment_results(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code" / "hyper-protosurv"
+    output_dir = tmp_path / "research-guide"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "research-paper-guide",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--target-venue",
+            "TPAMI",
+            "--results-mode",
+            "use-existing",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "research-paper-guide blocked by result mode" in str(exc)
+    else:
+        raise AssertionError("Expected use-existing mode to require --experiment-results.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    assert "Research paper guide summary written" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "result_mode_blocked"
+    assert summary["inputs"]["results_mode"] == "use-existing"
+    assert summary["blocking_items"] == ["--results-mode use-existing requires --experiment-results."]
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"
