@@ -244,6 +244,11 @@ templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` plus
 `RESEARCH_GUIDE_REPORT.md` before stopping. On success, the report summarizes
 the result-guide contract/provenance/consistency status, paper acceptance
 manifest status, showcase report, and Overleaf zip path.
+Use `--results-mode auto` for this default behavior. Use
+`--results-mode use-existing --experiment-results path\to\tcga_results.md` to
+skip the TCGA result guide and draft only from a supplied result file. Use
+`--results-mode generate-from-artifacts` to force regeneration from
+`--artifacts-dir`, even when an experiment-result path already exists.
 
 `paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
 `SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always
