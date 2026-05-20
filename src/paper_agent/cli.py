@@ -120,6 +120,114 @@ def _add_experiment_artifact_consistency_options(parser: argparse.ArgumentParser
     )
 
 
+def _add_paper_e2e_smoke_options(
+    parser: argparse.ArgumentParser,
+    *,
+    output_dir_default: str = "outputs/paper-e2e-smoke",
+    zip_default: str = "outputs/paper-e2e-smoke-overleaf.zip",
+) -> None:
+    parser.add_argument("--project-name", default="")
+    parser.add_argument(
+        "--baseline-pdf",
+        required=True,
+        help="Baseline PDF path or directory containing a PDF.",
+    )
+    parser.add_argument("--code-path", required=True, help="Project code directory.")
+    parser.add_argument(
+        "--experiment-results",
+        required=True,
+        help="Markdown/CSV/text experiment results file.",
+    )
+    parser.add_argument("--target-venue", required=True, help="Target journal or conference.")
+    parser.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
+    parser.add_argument("--output-dir", default=output_dir_default)
+    parser.add_argument("--zip", default=zip_default)
+    parser.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
+    parser.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
+    network = parser.add_mutually_exclusive_group()
+    network.add_argument(
+        "--online",
+        action="store_true",
+        help="Allow template/reference/related-work network calls.",
+    )
+    network.add_argument(
+        "--offline",
+        action="store_true",
+        help="Disable template/reference/related-work network calls.",
+    )
+    parser.add_argument(
+        "--require-llm",
+        action="store_true",
+        help="Require configured live LLM preflight and section generation.",
+    )
+    parser.add_argument(
+        "--min-llm-sections",
+        type=int,
+        default=0,
+        help="Fail unless at least this many sections are written by the LLM.",
+    )
+    parser.add_argument(
+        "--include-llm-self-review",
+        action="store_true",
+        help="Require the final LLM self-review pass. Usually pair with --require-llm.",
+    )
+    parser.add_argument(
+        "--compile-latex",
+        action="store_true",
+        help="Run the local LaTeX compiler during submission validation.",
+    )
+    parser.add_argument(
+        "--strict-results",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Validate the experiment result file strictly before generation.",
+    )
+    parser.add_argument(
+        "--write-artifact-template",
+        action="store_true",
+        help="When strict result preflight blocks, write TCGA result CSV templates.",
+    )
+    parser.add_argument(
+        "--artifact-template-dir",
+        default="",
+        help="Directory for generated result CSV templates. Defaults to experiment-results parent/logs.",
+    )
+    parser.add_argument(
+        "--artifact-template-force",
+        action="store_true",
+        help="Overwrite existing generated artifact-template files.",
+    )
+    parser.add_argument(
+        "--artifact-template-style",
+        choices=("long", "wide"),
+        default="long",
+        help="CSV schema style for --write-artifact-template.",
+    )
+    parser.add_argument("--artifact-template-seed", default="2026")
+    parser.add_argument(
+        "--artifact-template-dataset",
+        action="append",
+        default=[],
+        help="Dataset/cohort name for artifact templates; can be repeated.",
+    )
+    parser.add_argument("--artifact-method", default="Hyper-ProtoSurv ours")
+    parser.add_argument("--artifact-baseline", default="ProtoSurv baseline")
+    parser.add_argument("--artifact-metric", default="C-index")
+    parser.add_argument(
+        "--generate-results-from-artifacts",
+        action="store_true",
+        help="Generate experiment-results Markdown from completed TCGA result CSV artifacts before validation.",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Completed result CSV artifact directory for --generate-results-from-artifacts.",
+    )
+    _add_experiment_contract_options(parser)
+    _add_experiment_provenance_options(parser)
+    _add_experiment_artifact_consistency_options(parser)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="paper-agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -713,106 +821,21 @@ def main() -> None:
         "paper-e2e-smoke",
         help="Run explicit code+baseline+venue+results input-to-paper smoke test.",
     )
-    paper_smoke.add_argument("--project-name", default="")
-    paper_smoke.add_argument(
-        "--baseline-pdf",
-        required=True,
-        help="Baseline PDF path or directory containing a PDF.",
+    _add_paper_e2e_smoke_options(paper_smoke)
+    paper_acceptance = sub.add_parser(
+        "paper-e2e-acceptance",
+        help="Run paper-e2e-smoke and write the showcase report in one command.",
     )
-    paper_smoke.add_argument("--code-path", required=True, help="Project code directory.")
-    paper_smoke.add_argument(
-        "--experiment-results",
-        required=True,
-        help="Markdown/CSV/text experiment results file.",
+    _add_paper_e2e_smoke_options(
+        paper_acceptance,
+        output_dir_default="outputs/paper-e2e-acceptance",
+        zip_default="outputs/paper-e2e-acceptance-overleaf.zip",
     )
-    paper_smoke.add_argument("--target-venue", required=True, help="Target journal or conference.")
-    paper_smoke.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
-    paper_smoke.add_argument("--output-dir", default="outputs/paper-e2e-smoke")
-    paper_smoke.add_argument("--zip", default="outputs/paper-e2e-smoke-overleaf.zip")
-    paper_smoke.add_argument("--template-zip", default="", help="Optional user-provided LaTeX template zip.")
-    paper_smoke.add_argument("--template-dir", default="", help="Optional user-provided LaTeX template directory.")
-    paper_smoke_network = paper_smoke.add_mutually_exclusive_group()
-    paper_smoke_network.add_argument(
-        "--online",
-        action="store_true",
-        help="Allow template/reference/related-work network calls.",
-    )
-    paper_smoke_network.add_argument(
-        "--offline",
-        action="store_true",
-        help="Disable template/reference/related-work network calls.",
-    )
-    paper_smoke.add_argument(
-        "--require-llm",
-        action="store_true",
-        help="Require configured live LLM preflight and section generation.",
-    )
-    paper_smoke.add_argument(
-        "--min-llm-sections",
-        type=int,
-        default=0,
-        help="Fail unless at least this many sections are written by the LLM.",
-    )
-    paper_smoke.add_argument(
-        "--include-llm-self-review",
-        action="store_true",
-        help="Require the final LLM self-review pass. Usually pair with --require-llm.",
-    )
-    paper_smoke.add_argument(
-        "--compile-latex",
-        action="store_true",
-        help="Run the local LaTeX compiler during submission validation.",
-    )
-    paper_smoke.add_argument(
-        "--strict-results",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Validate the experiment result file strictly before generation.",
-    )
-    paper_smoke.add_argument(
-        "--write-artifact-template",
-        action="store_true",
-        help="When strict result preflight blocks, write TCGA result CSV templates.",
-    )
-    paper_smoke.add_argument(
-        "--artifact-template-dir",
+    paper_acceptance.add_argument(
+        "--showcase-report",
         default="",
-        help="Directory for generated result CSV templates. Defaults to experiment-results parent/logs.",
+        help="Output Markdown report path. Defaults to SHOWCASE_REPORT.md beside --output-dir.",
     )
-    paper_smoke.add_argument(
-        "--artifact-template-force",
-        action="store_true",
-        help="Overwrite existing generated artifact-template files.",
-    )
-    paper_smoke.add_argument(
-        "--artifact-template-style",
-        choices=("long", "wide"),
-        default="long",
-        help="CSV schema style for --write-artifact-template.",
-    )
-    paper_smoke.add_argument("--artifact-template-seed", default="2026")
-    paper_smoke.add_argument(
-        "--artifact-template-dataset",
-        action="append",
-        default=[],
-        help="Dataset/cohort name for artifact templates; can be repeated.",
-    )
-    paper_smoke.add_argument("--artifact-method", default="Hyper-ProtoSurv ours")
-    paper_smoke.add_argument("--artifact-baseline", default="ProtoSurv baseline")
-    paper_smoke.add_argument("--artifact-metric", default="C-index")
-    paper_smoke.add_argument(
-        "--generate-results-from-artifacts",
-        action="store_true",
-        help="Generate experiment-results Markdown from completed TCGA result CSV artifacts before validation.",
-    )
-    paper_smoke.add_argument(
-        "--artifacts-dir",
-        default="",
-        help="Completed result CSV artifact directory for --generate-results-from-artifacts.",
-    )
-    _add_experiment_contract_options(paper_smoke)
-    _add_experiment_provenance_options(paper_smoke)
-    _add_experiment_artifact_consistency_options(paper_smoke)
     paper_e2e_report = sub.add_parser(
         "paper-e2e-report",
         help="Summarize a paper-e2e ARTIFACT_MANIFEST.json into one showcase Markdown report.",
@@ -1075,6 +1098,8 @@ def main() -> None:
         _run_llm_draft_smoke(args)
     elif args.command == "paper-e2e-smoke":
         _run_paper_e2e_smoke(args)
+    elif args.command == "paper-e2e-acceptance":
+        _run_paper_e2e_acceptance(args)
     elif args.command == "paper-e2e-report":
         _run_paper_e2e_report(args)
 
@@ -5416,6 +5441,32 @@ def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -
     elif kind == "directory":
         entry["file_count"] = sum(1 for item in path.rglob("*") if item.is_file()) if path.is_dir() else 0
     return entry
+
+
+def _run_paper_e2e_acceptance(args: argparse.Namespace) -> None:
+    _run_paper_e2e_smoke(args)
+    output_dir = Path(args.output_dir)
+    manifest_path = output_dir / "ARTIFACT_MANIFEST.json"
+    if not manifest_path.is_file():
+        raise SystemExit(
+            "paper-e2e-acceptance failed: smoke run did not write "
+            f"ARTIFACT_MANIFEST.json at {manifest_path}."
+        )
+    showcase_path = (
+        _resolve_project_relative_path(args.showcase_report)
+        if args.showcase_report
+        else output_dir / "SHOWCASE_REPORT.md"
+    )
+    _run_paper_e2e_report(
+        argparse.Namespace(
+            manifest=str(manifest_path),
+            summary="",
+            acceptance_report="",
+            output=str(showcase_path),
+        )
+    )
+    print(f"Paper E2E acceptance artifacts: {output_dir}")
+    print("paper-e2e-acceptance passed.")
 
 
 def _run_paper_e2e_report(args: argparse.Namespace) -> None:

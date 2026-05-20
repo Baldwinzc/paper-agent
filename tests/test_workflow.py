@@ -8104,6 +8104,113 @@ def test_cli_paper_e2e_report_writes_showcase_markdown(monkeypatch, tmp_path, ca
     assert hashlib.sha256(draft_path.read_bytes()).hexdigest()[:12] in report
 
 
+def test_cli_paper_e2e_acceptance_runs_smoke_and_showcase_report(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "results.md"
+    latex_dir = tmp_path / "latex"
+    output_dir = tmp_path / "paper-acceptance"
+    showcase_path = tmp_path / "paper-acceptance-showcase.md"
+    zip_path = tmp_path / "paper-acceptance.zip"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| ProtoSurv baseline | 0.646 |\n"
+        "| Hyper-ProtoSurv ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            captured["llm_client"] = llm_client
+
+        def run(self, request):
+            captured["request"] = request
+            return {
+                "request": request,
+                "final_markdown": "# Draft",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    def fake_write_latex_zip_and_refresh(state, zip_path_arg):
+        zip_path_arg.parent.mkdir(parents=True, exist_ok=True)
+        with ZipFile(zip_path_arg, "w") as archive:
+            archive.writestr("main.tex", "\\documentclass{article}")
+        state["latex_zip_path"] = zip_path_arg
+        return zip_path_arg
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(cli_module, "_write_latex_zip_and_refresh", fake_write_latex_zip_and_refresh)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-acceptance",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            str(zip_path),
+            "--showcase-report",
+            str(showcase_path),
+            "--no-strict-results",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    showcase_report = showcase_path.read_text(encoding="utf-8")
+    assert "paper-e2e-smoke passed." in output
+    assert "Paper E2E showcase report written to" in output
+    assert "paper-e2e-acceptance passed." in output
+    assert captured["llm_client"] is None
+    assert captured["request"].baseline_pdf_path == str(baseline_pdf)
+    assert captured["request"].code_path == str(code_dir)
+    assert captured["request"].target_venue == "TPAMI"
+    assert (output_dir / "draft.md").is_file()
+    assert (output_dir / "ACCEPTANCE_REPORT.md").is_file()
+    assert (output_dir / "ARTIFACT_MANIFEST.json").is_file()
+    assert showcase_path.is_file()
+    assert zip_path.is_file()
+    assert summary["smoke_contract"]["schema_version"] == "paper-e2e-smoke/v1"
+    assert manifest["smoke_contract_status"] == "pass"
+    assert "# Paper E2E Showcase Report" in showcase_report
+    assert "- Project: paper-acceptance" in showcase_report
+    assert "| markdown_draft | yes |" in showcase_report
+    assert "| overleaf_zip | yes |" in showcase_report
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"

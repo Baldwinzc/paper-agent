@@ -209,21 +209,23 @@ TCGA-style data for this smoke path only; replace it with real experiment tables
 for any research draft.
 
 For the explicit acceptance contract used during development, run the generic
-input-to-paper smoke with the same four inputs a user supplies:
+input-to-paper acceptance command with the same four inputs a user supplies:
 
 ```powershell
-python -m paper_agent.cli paper-e2e-smoke `
+python -m paper_agent.cli paper-e2e-acceptance `
   --baseline-pdf D:\code\agent\example\baseline `
   --code-path D:\code\agent\example\code\hyper-protosurv `
   --experiment-results D:\code\agent\example\results\tcga_results.md `
   --target-venue TPAMI `
-  --output-dir outputs\paper-e2e-smoke `
-  --zip outputs\paper-e2e-smoke-overleaf.zip `
+  --output-dir outputs\paper-e2e-acceptance `
+  --zip outputs\paper-e2e-acceptance-overleaf.zip `
   --require-llm `
   --min-llm-sections 4
 ```
 
-`paper-e2e-smoke` always writes `draft.md`, `RUN_SUMMARY.json`,
+`paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
+`SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always
+writes `draft.md`, `RUN_SUMMARY.json`,
 `ACCEPTANCE_REPORT.md`, and `ARTIFACT_MANIFEST.json`; when `--zip` is set it
 also writes an Overleaf-ready package. It is deterministic by default so it can
 run without provider quota; add `--require-llm` to make the smoke fail unless
@@ -236,7 +238,7 @@ time and token usage when the provider returns usage metadata.
 The artifact manifest lists the generated Markdown, LaTeX, report, zip, and
 summary files with existence checks, sizes, and file hashes for reproducible
 demo handoff.
-To turn that manifest into a one-page demonstration report, run:
+To turn an existing smoke manifest into a one-page demonstration report, run:
 
 ```powershell
 python -m paper_agent.cli paper-e2e-report `
