@@ -344,6 +344,23 @@ records role names, required columns, expected method/baseline/metric labels,
 datasets, and validation commands. Replace every `TODO` with real trained-model
 outputs before running doctor, preflight, or draft commands.
 
+For a single repair entrypoint, use the guide command:
+
+```powershell
+paper-agent tcga-results-guide `
+  --example-root D:\code\agent\example `
+  --artifacts-dir D:\code\agent\example\results\logs `
+  --output D:\code\agent\example\results\tcga_results.md `
+  --target-venue TPAMI `
+  --summary outputs\tcga-results-guide.json
+```
+
+`tcga-results-guide` writes the CSV templates when artifacts are missing, stops
+with a JSON summary while any CSV still contains `TODO`, and otherwise runs
+`tcga-artifacts-doctor`, generates `tcga_results.md`, and validates it strictly.
+Its pass summary includes the next `validate-results` command and the
+`paper-e2e-acceptance` command to continue into paper generation.
+
 Training code can also write compatible artifacts directly:
 
 ```python

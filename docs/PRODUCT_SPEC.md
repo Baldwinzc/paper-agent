@@ -155,6 +155,11 @@ With `--write-artifact-template`, the blocked smoke can also write the TODO CSV
 artifact templates immediately while still refusing to draft from incomplete
 results. With `--generate-results-from-artifacts`, a later smoke run can turn
 completed CSV artifacts into strict result Markdown before drafting.
+The `tcga-results-guide` command provides the same repair path as a single
+entrypoint: it initializes missing result CSV templates, blocks while any CSV
+contains TODO placeholders, then runs artifact diagnostics, generates
+`tcga_results.md`, and strictly validates the generated result file before the
+paper E2E acceptance command is rerun.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

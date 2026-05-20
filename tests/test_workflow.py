@@ -4780,6 +4780,100 @@ def _write_complete_tcga_artifacts(logs_dir: Path) -> None:
     )
 
 
+def test_cli_tcga_results_guide_writes_templates_when_artifacts_missing(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    example_root = tmp_path / "example"
+    logs_dir = example_root / "results" / "logs"
+    result_path = example_root / "results" / "tcga_results.md"
+    summary_path = tmp_path / "guide-summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-guide",
+            "--example-root",
+            str(example_root),
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output",
+            str(result_path),
+            "--summary",
+            str(summary_path),
+            "--dataset",
+            "BLCA",
+            "--dataset",
+            "BRCA",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "fill generated CSV templates" in str(exc)
+    else:
+        raise AssertionError("Expected guide to stop after writing TODO artifact templates.")
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert "TCGA result CSV templates written" in output
+    assert (logs_dir / "tcga_main_results.csv").is_file()
+    assert (logs_dir / "tcga_ablation.csv").is_file()
+    assert (logs_dir / "tcga_sensitivity.csv").is_file()
+    assert (logs_dir / "tcga_stats.csv").is_file()
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "artifact_template_written"
+    assert summary["experiment_results"] == str(result_path)
+    assert len(summary["artifact_csv_todo_files"]) == 4
+    assert summary["next_command"].startswith("paper-agent tcga-results-guide")
+
+
+def test_cli_tcga_results_guide_generates_strict_result_markdown(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    example_root = tmp_path / "example"
+    logs_dir = example_root / "results" / "logs"
+    result_path = example_root / "results" / "tcga_results.md"
+    summary_path = tmp_path / "guide-summary.json"
+    _write_complete_tcga_artifacts(logs_dir)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "tcga-results-guide",
+            "--example-root",
+            str(example_root),
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output",
+            str(result_path),
+            "--summary",
+            str(summary_path),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    result_text = result_path.read_text(encoding="utf-8")
+    assert "TCGA results guide completed." in output
+    assert "TCGA result file written to" in output
+    assert (tmp_path / "ARTIFACT_DOCTOR_SUMMARY.json").is_file()
+    assert summary["status"] == "pass"
+    assert summary["pipeline_phase"] == "result_markdown_generated"
+    assert summary["experiment_contract_status"] == "complete"
+    assert summary["experiment_provenance_status"] == "complete"
+    assert summary["experiment_artifact_consistency_status"] == "complete"
+    assert "## Main Results" in result_text
+    assert "Hyper-ProtoSurv ours" in result_text
+    assert summary["paper_e2e_acceptance_command"].startswith("paper-agent paper-e2e-acceptance")
+
+
 def test_cli_tcga_readiness_schema_writes_schema_and_example(monkeypatch, tmp_path, capsys):
     schema_path = tmp_path / "tcga-readiness-schema.json"
     monkeypatch.setattr(

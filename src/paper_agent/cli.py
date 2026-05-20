@@ -532,6 +532,44 @@ def main() -> None:
         help="CSV schema style to generate. Long keeps fold/seed columns; wide is compact for paper tables.",
     )
     tcga_artifact_template.add_argument("--force", action="store_true", help="Overwrite existing template files.")
+    tcga_results_guide = sub.add_parser(
+        "tcga-results-guide",
+        help="Guide TCGA result completion: template CSVs, TODO checks, result Markdown generation, strict validation.",
+    )
+    tcga_results_guide.add_argument("--example-root", default=r"D:\code\agent\example")
+    tcga_results_guide.add_argument(
+        "--artifacts-dir",
+        default="",
+        help="Directory containing TCGA result CSV artifacts. Defaults to example-root/results/logs.",
+    )
+    tcga_results_guide.add_argument(
+        "--output",
+        default="",
+        help="Output TCGA result Markdown. Defaults to example-root/results/tcga_results.md.",
+    )
+    tcga_results_guide.add_argument(
+        "--summary",
+        default="",
+        help="Guide summary JSON. Defaults to artifacts-dir/RESULT_GUIDE_SUMMARY.json.",
+    )
+    tcga_results_guide.add_argument("--method", default="Hyper-ProtoSurv ours")
+    tcga_results_guide.add_argument("--baseline", default="ProtoSurv baseline")
+    tcga_results_guide.add_argument("--metric", default="C-index")
+    tcga_results_guide.add_argument("--target-venue", default="TPAMI")
+    tcga_results_guide.add_argument("--seed", default="2026")
+    tcga_results_guide.add_argument("--dataset", action="append", default=[], help="Dataset/cohort name; can be repeated.")
+    tcga_results_guide.add_argument(
+        "--style",
+        choices=("long", "wide"),
+        default="long",
+        help="CSV schema style to generate when templates are missing.",
+    )
+    tcga_results_guide.add_argument(
+        "--force-template",
+        action="store_true",
+        help="Overwrite artifact templates before stopping for user-filled values.",
+    )
+    _add_experiment_contract_options(tcga_results_guide)
     tcga_preflight = sub.add_parser(
         "tcga-preflight",
         help="Run one read-only preflight report for TCGA paper generation readiness.",
@@ -1063,6 +1101,8 @@ def main() -> None:
         _run_tcga_artifacts_doctor(args)
     elif args.command == "tcga-artifact-template":
         _run_tcga_artifact_template(args)
+    elif args.command == "tcga-results-guide":
+        _run_tcga_results_guide(args)
     elif args.command == "tcga-preflight":
         _run_tcga_preflight(args)
     elif args.command == "tcga-draft":
@@ -2487,6 +2527,264 @@ def _run_tcga_artifact_template(args: argparse.Namespace) -> None:
         print(f"- Wrote {path}")
     print(f"TCGA artifact export templates written to {output_dir}")
     print("Replace every TODO with real trained-model outputs before running tcga-artifacts-doctor.")
+
+
+def _run_tcga_results_guide(args: argparse.Namespace) -> None:
+    example_root = Path(args.example_root)
+    artifact_dir = _tcga_artifact_template_output_dir(args, example_root)
+    output_path = _resolve_project_relative_path(args.output) if args.output else example_root / "results" / "tcga_results.md"
+    summary_path = _resolve_project_relative_path(args.summary) if args.summary else artifact_dir / "RESULT_GUIDE_SUMMARY.json"
+    datasets = list(args.dataset or _tcga_default_datasets())
+
+    print("TCGA results guide:")
+    print(f"- Artifact dir: {artifact_dir}")
+    print(f"- Result Markdown: {output_path}")
+    if args.force_template or not artifact_dir.exists() or not any(artifact_dir.rglob("*.csv")):
+        written = _tcga_results_guide_write_templates(args, artifact_dir, datasets)
+        summary = _tcga_results_guide_blocked_summary(
+            args,
+            example_root=example_root,
+            artifact_dir=artifact_dir,
+            output_path=output_path,
+            phase="artifact_template_written",
+            blocking_items=["Fill every TODO in the generated TCGA result CSV templates."],
+            template_files=written,
+        )
+        _write_run_summary_data(summary, summary_path)
+        print(f"TCGA result CSV templates written to {artifact_dir}")
+        print(f"Result guide summary written to {summary_path}")
+        print(f"Next command: {summary['next_command']}")
+        raise SystemExit("TCGA results guide stopped: fill generated CSV templates before strict result generation.")
+
+    todo_files = _tcga_artifact_todo_files(artifact_dir)
+    if todo_files:
+        summary = _tcga_results_guide_blocked_summary(
+            args,
+            example_root=example_root,
+            artifact_dir=artifact_dir,
+            output_path=output_path,
+            phase="artifact_templates_contain_todo",
+            blocking_items=[f"TODO remains in artifact CSV: {path}" for path in todo_files],
+            template_files=sorted(artifact_dir.rglob("*.*")),
+        )
+        _write_run_summary_data(summary, summary_path)
+        print("TCGA result CSV templates still contain TODO values:")
+        for path in todo_files:
+            print(f"- {path}")
+        print(f"Result guide summary written to {summary_path}")
+        print(f"Next command: {summary['next_command']}")
+        raise SystemExit("TCGA results guide stopped: replace TODO values before strict result generation.")
+
+    doctor_summary_path = summary_path.with_name("ARTIFACT_DOCTOR_SUMMARY.json")
+    doctor_args = argparse.Namespace(
+        example_root=str(example_root),
+        artifacts_dir=str(artifact_dir),
+        main_csv="",
+        ablation_csv="",
+        sensitivity_csv="",
+        stats_csv="",
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        dataset=list(args.dataset or []),
+        summary=str(doctor_summary_path),
+        require_ablation=bool(args.require_ablation),
+        require_sensitivity=bool(args.require_sensitivity),
+        require_statistical_tests=bool(args.require_statistical_tests),
+    )
+    try:
+        _run_tcga_artifacts_doctor(doctor_args)
+    except SystemExit as exc:
+        summary = _tcga_results_guide_blocked_summary(
+            args,
+            example_root=example_root,
+            artifact_dir=artifact_dir,
+            output_path=output_path,
+            phase="artifact_doctor_failed",
+            blocking_items=[str(exc)],
+            template_files=sorted(artifact_dir.rglob("*.*")),
+            doctor_summary_path=doctor_summary_path,
+        )
+        _write_run_summary_data(summary, summary_path)
+        print(f"Result guide summary written to {summary_path}")
+        raise
+
+    result_args = argparse.Namespace(
+        example_root=str(example_root),
+        artifacts_dir=str(artifact_dir),
+        main_csv="",
+        ablation_csv="",
+        sensitivity_csv="",
+        stats_csv="",
+        output=str(output_path),
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        dataset=list(args.dataset or []),
+        strict=True,
+        require_ablation=bool(args.require_ablation),
+        require_sensitivity=bool(args.require_sensitivity),
+        require_statistical_tests=bool(args.require_statistical_tests),
+    )
+    result_summary = _run_tcga_results_from_artifacts(result_args) or {}
+    summary = _tcga_results_guide_success_summary(
+        args,
+        example_root=example_root,
+        artifact_dir=artifact_dir,
+        output_path=output_path,
+        summary_path=summary_path,
+        doctor_summary_path=doctor_summary_path,
+        result_summary=result_summary,
+    )
+    _write_run_summary_data(summary, summary_path)
+    print(f"Result guide summary written to {summary_path}")
+    print("TCGA results guide completed.")
+
+
+def _tcga_results_guide_write_templates(
+    args: argparse.Namespace,
+    artifact_dir: Path,
+    datasets: list[str],
+) -> list[Path]:
+    files = _tcga_artifact_template_bundle(
+        style=args.style,
+        datasets=datasets,
+        method=args.method,
+        baseline=args.baseline,
+        metric=args.metric,
+        seed=args.seed,
+    )
+    return _write_tcga_artifact_template_bundle(
+        artifact_dir,
+        files,
+        force=bool(args.force_template),
+    )
+
+
+def _tcga_artifact_todo_files(artifact_dir: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(artifact_dir.rglob("*.csv"))
+        if _file_contains_todo(path)
+    ]
+
+
+def _tcga_results_guide_blocked_summary(
+    args: argparse.Namespace,
+    *,
+    example_root: Path,
+    artifact_dir: Path,
+    output_path: Path,
+    phase: str,
+    blocking_items: list[str],
+    template_files: list[Path],
+    doctor_summary_path: Path | None = None,
+) -> dict[str, object]:
+    next_command = _tcga_results_guide_command(args, example_root, artifact_dir, output_path)
+    return {
+        "status": "blocked",
+        "pipeline_phase": phase,
+        "example_root": str(example_root),
+        "artifact_dir": str(artifact_dir),
+        "experiment_results": str(output_path),
+        "artifact_files": [str(path) for path in template_files],
+        "artifact_csv_todo_files": [str(path) for path in _tcga_artifact_todo_files(artifact_dir)] if artifact_dir.exists() else [],
+        "artifact_doctor_summary_path": str(doctor_summary_path or ""),
+        "blocking_items": blocking_items,
+        "next_action": "Fill or repair TCGA result CSV artifacts, then rerun the guide.",
+        "next_command": next_command,
+        "next_actions": [
+            {
+                "category": "result_artifacts",
+                "action": "Fill every TODO value with real trained-model outputs.",
+                "command": next_command,
+            }
+        ],
+    }
+
+
+def _tcga_results_guide_success_summary(
+    args: argparse.Namespace,
+    *,
+    example_root: Path,
+    artifact_dir: Path,
+    output_path: Path,
+    summary_path: Path,
+    doctor_summary_path: Path,
+    result_summary: dict,
+) -> dict[str, object]:
+    contract = result_summary.get("experiment_contract", {})
+    quality = result_summary.get("experiment_quality", {})
+    provenance = result_summary.get("experiment_provenance", {})
+    consistency = result_summary.get("experiment_artifact_consistency", {})
+    return {
+        "status": "pass",
+        "pipeline_phase": "result_markdown_generated",
+        "example_root": str(example_root),
+        "artifact_dir": str(artifact_dir),
+        "experiment_results": str(output_path),
+        "artifact_doctor_summary_path": str(doctor_summary_path),
+        "result_validation": result_summary,
+        "experiment_contract_status": contract.get("status", "unknown") if isinstance(contract, dict) else "unknown",
+        "experiment_quality_status": quality.get("status", "unknown") if isinstance(quality, dict) else "unknown",
+        "experiment_provenance_status": provenance.get("status", "unknown") if isinstance(provenance, dict) else "unknown",
+        "experiment_artifact_consistency_status": consistency.get("status", "unknown") if isinstance(consistency, dict) else "unknown",
+        "next_command": f"paper-agent validate-results --experiment-results {_powershell_arg(output_path)} --strict",
+        "paper_e2e_acceptance_command": _tcga_results_guide_acceptance_command(args, example_root, output_path),
+        "summary_path": str(summary_path),
+    }
+
+
+def _tcga_results_guide_command(
+    args: argparse.Namespace,
+    example_root: Path,
+    artifact_dir: Path,
+    output_path: Path,
+) -> str:
+    parts = [
+        "paper-agent",
+        "tcga-results-guide",
+        "--example-root",
+        str(example_root),
+        "--artifacts-dir",
+        str(artifact_dir),
+        "--output",
+        str(output_path),
+        "--method",
+        args.method,
+        "--baseline",
+        args.baseline,
+        "--metric",
+        args.metric,
+    ]
+    for dataset in args.dataset or []:
+        parts.extend(["--dataset", str(dataset)])
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _tcga_results_guide_acceptance_command(
+    args: argparse.Namespace,
+    example_root: Path,
+    output_path: Path,
+) -> str:
+    return " ".join(
+        _powershell_arg(part)
+        for part in [
+            "paper-agent",
+            "paper-e2e-acceptance",
+            "--baseline-pdf",
+            str(example_root / "baseline"),
+            "--code-path",
+            str(example_root / "code" / "hyper-protosurv"),
+            "--experiment-results",
+            str(output_path),
+            "--target-venue",
+            args.target_venue,
+            "--require-llm",
+            "--min-llm-sections",
+            "4",
+        ]
+    )
 
 
 def _write_tcga_artifact_template_bundle(
