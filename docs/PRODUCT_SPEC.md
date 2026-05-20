@@ -169,6 +169,9 @@ Its `--results-mode` option makes result handling explicit: `auto` preserves the
 default missing/template-result repair flow, `use-existing` requires
 `--experiment-results` and never invokes the TCGA result guide, and
 `generate-from-artifacts` always reruns artifact-based result generation.
+When a child stage blocks, the top-level research-guide artifacts must surface
+the inherited `next_actions` repair chain from the blocked result guide or paper
+acceptance summary so external automation does not need to inspect nested files.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

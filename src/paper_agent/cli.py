@@ -6202,6 +6202,7 @@ def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path
     report_path = Path(str(outputs.get("research_guide_report") or summary_path.with_name("RESEARCH_GUIDE_REPORT.md")))
     outputs["research_guide_report"] = str(report_path)
     summary["quality_evidence"] = _research_paper_guide_quality_evidence(outputs)
+    summary["next_actions"] = _research_paper_guide_next_actions(summary)
     written_summary = _write_run_summary_data(summary, summary_path)
     _write_research_paper_guide_report(summary, report_path)
     print(f"Research paper guide report written to {report_path}")
@@ -6223,6 +6224,9 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     quality = summary.get("quality_evidence", {})
     if not isinstance(quality, dict) or not quality:
         quality = _research_paper_guide_quality_evidence(outputs)
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list) or not next_actions:
+        next_actions = _research_paper_guide_next_actions(summary)
     paper_experiment = paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
     llm_attempted = quality.get("llm_section_attempted", [])
@@ -6280,7 +6284,28 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         lines.extend(["", "## Blocking Items", ""])
         for item in blocking_items[:10]:
             lines.append(f"- {_table_safe(str(item))}")
-    if summary.get("next_command"):
+    if next_actions:
+        lines.extend(
+            [
+                "",
+                "## Next Actions",
+                "",
+                "| Step | Source | Category | Action | Command |",
+                "|---:|---|---|---|---|",
+            ]
+        )
+        for index, action in enumerate(next_actions[:10], start=1):
+            if not isinstance(action, dict):
+                continue
+            lines.append(
+                "| "
+                f"{index} | "
+                f"{_table_safe(str(action.get('source', 'research_guide')))} | "
+                f"{_table_safe(str(action.get('category', '')))} | "
+                f"{_table_safe(str(action.get('action', '')))} | "
+                f"`{_table_safe(str(action.get('command', '')))}` |"
+            )
+    elif summary.get("next_command"):
         lines.extend(["", "## Next Command", "", f"`{_table_safe(str(summary.get('next_command', '')))}`"])
     lines.extend(
         [
@@ -6357,6 +6382,72 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         "latex_compile_tool": paper_summary.get("submission_compile_tool", ""),
         "latex_compile_install_hint": paper_summary.get("submission_compile_install_hint", ""),
     }
+
+
+def _research_paper_guide_next_actions(summary: dict[str, object]) -> list[dict[str, str]]:
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    actions: list[dict[str, str]] = []
+    result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
+    paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
+    actions.extend(_research_paper_guide_labeled_actions(result_summary.get("next_actions", []), source="result_guide"))
+    actions.extend(_research_paper_guide_labeled_actions(paper_summary.get("next_actions", []), source="paper_e2e"))
+    if actions:
+        return _research_paper_guide_dedup_actions(actions)
+    if str(summary.get("status", "") or "") != "blocked":
+        return []
+    next_command = str(summary.get("next_command", "") or "")
+    if not next_command:
+        return []
+    return [
+        {
+            "source": "research_guide",
+            "category": str(summary.get("pipeline_phase", "research_paper_guide") or "research_paper_guide"),
+            "action": "Resolve the blocking items, then rerun the guide.",
+            "command": next_command,
+        }
+    ]
+
+
+def _research_paper_guide_labeled_actions(value: object, *, source: str) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    actions: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "") or "")
+        action = str(item.get("action", "") or "")
+        command = str(item.get("command", "") or "")
+        if not (category or action or command):
+            continue
+        actions.append(
+            {
+                "source": source,
+                "category": category,
+                "action": action,
+                "command": command,
+            }
+        )
+    return actions
+
+
+def _research_paper_guide_dedup_actions(actions: list[dict[str, str]]) -> list[dict[str, str]]:
+    unique: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for action in actions:
+        key = (
+            str(action.get("source", "") or ""),
+            str(action.get("category", "") or ""),
+            str(action.get("action", "") or ""),
+            str(action.get("command", "") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(action)
+    return unique
 
 
 def _read_optional_json_object(path_value: str) -> dict[str, object]:

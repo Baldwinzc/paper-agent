@@ -244,6 +244,9 @@ templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` plus
 `RESEARCH_GUIDE_REPORT.md` before stopping. On success, the report summarizes
 the result-guide contract/provenance/consistency status, paper acceptance
 manifest status, showcase report, and Overleaf zip path.
+When the run blocks during result completion or paper acceptance, the top-level
+research guide summary/report also carries the child `next_actions` command
+chain so repair commands are visible without opening nested JSON files.
 Use `--results-mode auto` for this default behavior. Use
 `--results-mode use-existing --experiment-results path\to\tcga_results.md` to
 skip the TCGA result guide and draft only from a supplied result file. Use

@@ -8438,6 +8438,10 @@ def test_cli_research_paper_guide_writes_result_templates_when_artifacts_missing
     assert "# Research Paper Guide Report" in report
     assert "- Status: blocked" in report
     assert "- Result guide status: blocked" in report
+    assert summary["next_actions"][0]["source"] == "result_guide"
+    assert summary["next_actions"][0]["category"] == "result_artifacts"
+    assert "## Next Actions" in report
+    assert "Fill every TODO value with real trained-model outputs." in report
     assert "| Paper artifact manifest | no |" in report
     assert not (output_dir / "paper" / "draft.md").exists()
 
@@ -8733,6 +8737,68 @@ def test_cli_research_paper_guide_use_existing_requires_experiment_results(
     assert summary["pipeline_phase"] == "result_mode_blocked"
     assert summary["inputs"]["results_mode"] == "use-existing"
     assert summary["blocking_items"] == ["--results-mode use-existing requires --experiment-results."]
+
+
+def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code" / "hyper-protosurv"
+    experiment_path = tmp_path / "tcga_results_template.md"
+    output_dir = tmp_path / "research-guide"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir(parents=True)
+    experiment_path.write_text(
+        cli_module.experiment_results_template(datasets=["BLCA", "BRCA"]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "research-paper-guide",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--target-venue",
+            "TPAMI",
+            "--experiment-results",
+            str(experiment_path),
+            "--results-mode",
+            "use-existing",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "research-paper-guide blocked during paper acceptance" in str(exc)
+    else:
+        raise AssertionError("Expected research-paper-guide to surface blocked paper acceptance.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    paper_summary = json.loads((output_dir / "paper" / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RESEARCH_GUIDE_REPORT.md").read_text(encoding="utf-8")
+    assert "Research paper guide summary written" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "paper_e2e_acceptance_blocked"
+    assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 4
+    assert [action["category"] for action in summary["next_actions"]] == [
+        "validate_results",
+        "result_artifacts",
+        "experiment_results",
+        "paper_e2e_smoke",
+    ]
+    assert summary["next_actions"][0]["command"] == paper_summary["next_actions"][0]["command"]
+    assert "## Next Actions" in report
+    assert "paper-agent validate-results" in report
+    assert "paper-agent paper-e2e-smoke" in report
 
 
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
