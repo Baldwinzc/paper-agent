@@ -7983,6 +7983,127 @@ def test_cli_paper_e2e_smoke_generates_results_from_artifacts_before_strict_vali
     assert labels["generated_experiment_results"]["exists"] is True
 
 
+def test_cli_paper_e2e_report_writes_showcase_markdown(monkeypatch, tmp_path, capsys):
+    draft_path = tmp_path / "draft.md"
+    summary_path = tmp_path / "RUN_SUMMARY.json"
+    acceptance_path = tmp_path / "ACCEPTANCE_REPORT.md"
+    manifest_path = tmp_path / "ARTIFACT_MANIFEST.json"
+    output_path = tmp_path / "SHOWCASE_REPORT.md"
+    draft_path.write_text("# Draft", encoding="utf-8")
+    acceptance_path.write_text(
+        "\n".join(
+            [
+                "# Paper Agent Acceptance Report",
+                "- Overall status: PASS",
+                "- Pipeline status: PASS",
+                "- Submission evidence status: PASS",
+                "| LLM section drafting | PASS | 2/2 sections succeeded |",
+                "| LLM call trace | PASS | 2/2 calls succeeded; total_tokens=55 |",
+                "| Output artifacts | PASS | markdown=draft.md |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "project_name": "paper-smoke",
+                "target_venue": "TPAMI",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "paper-e2e-artifact-manifest/v1",
+                "status": "pass",
+                "project_name": "paper-smoke",
+                "target_venue": "TPAMI",
+                "smoke_contract_status": "pass",
+                "llm": {
+                    "mode": "required",
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "endpoint_host": "api.deepseek.com",
+                    "preflight_status": "pass",
+                    "preflight_total_tokens": 12,
+                    "section_call_count": 2,
+                    "section_call_successes": 2,
+                    "section_total_tokens": 55,
+                    "self_review_mode": "disabled",
+                },
+                "experiment": {
+                    "source": "file",
+                    "path": "results/tcga_results.md",
+                    "evidence_kind": "real_result_file",
+                    "result_tables": 1,
+                    "contract_status": "complete",
+                    "quality_status": "not_configured",
+                    "provenance_status": "complete",
+                    "artifact_consistency_status": "complete",
+                },
+                "artifacts": [
+                    {
+                        "label": "markdown_draft",
+                        "kind": "file",
+                        "path": str(draft_path),
+                        "exists": True,
+                        "size_bytes": draft_path.stat().st_size,
+                        "sha256": hashlib.sha256(draft_path.read_bytes()).hexdigest(),
+                    },
+                    {
+                        "label": "run_summary",
+                        "kind": "file",
+                        "path": str(summary_path),
+                        "exists": True,
+                        "size_bytes": summary_path.stat().st_size,
+                        "sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+                    },
+                    {
+                        "label": "acceptance_report",
+                        "kind": "file",
+                        "path": str(acceptance_path),
+                        "exists": True,
+                        "size_bytes": acceptance_path.stat().st_size,
+                        "sha256": hashlib.sha256(acceptance_path.read_bytes()).hexdigest(),
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-report",
+            "--manifest",
+            str(manifest_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    report = output_path.read_text(encoding="utf-8")
+    assert "Paper E2E showcase report written to" in output
+    assert "# Paper E2E Showcase Report" in report
+    assert "- Project: paper-smoke" in report
+    assert "- Provider/model: deepseek / deepseek-v4-pro" in report
+    assert "- Preflight: pass; tokens=12" in report
+    assert "- Contract: complete" in report
+    assert "- Overall status: PASS" in report
+    assert "| LLM call trace | PASS | 2/2 calls succeeded; total_tokens=55 |" in report
+    assert "| markdown_draft | yes |" in report
+    assert hashlib.sha256(draft_path.read_bytes()).hexdigest()[:12] in report
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"

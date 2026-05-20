@@ -136,7 +136,9 @@ baseline PDF, code path, target venue, and experiment-result file must produce a
 draft, run summary, acceptance report, optional Overleaf zip, and a
 machine-readable `smoke_contract`. Successful runs also write an
 `ARTIFACT_MANIFEST.json` with output paths, existence checks, sizes, and hashes
-for demo handoff and regression evidence.
+for demo handoff and regression evidence. The `paper-e2e-report` command turns
+that manifest plus the run summary and acceptance report into a compact Markdown
+showcase report.
 For LLM-required runs, successful provider preflight diagnostics are recorded in
 the run summary and acceptance report before section drafting evidence.
 When its strict result preflight blocks generation, it still writes a blocked

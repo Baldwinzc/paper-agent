@@ -813,6 +813,30 @@ def main() -> None:
     _add_experiment_contract_options(paper_smoke)
     _add_experiment_provenance_options(paper_smoke)
     _add_experiment_artifact_consistency_options(paper_smoke)
+    paper_e2e_report = sub.add_parser(
+        "paper-e2e-report",
+        help="Summarize a paper-e2e ARTIFACT_MANIFEST.json into one showcase Markdown report.",
+    )
+    paper_e2e_report.add_argument(
+        "--manifest",
+        required=True,
+        help="Path to ARTIFACT_MANIFEST.json from paper-e2e-smoke.",
+    )
+    paper_e2e_report.add_argument(
+        "--summary",
+        default="",
+        help="Optional RUN_SUMMARY.json path. Defaults to the manifest run_summary artifact.",
+    )
+    paper_e2e_report.add_argument(
+        "--acceptance-report",
+        default="",
+        help="Optional ACCEPTANCE_REPORT.md path. Defaults to the manifest acceptance_report artifact.",
+    )
+    paper_e2e_report.add_argument(
+        "--output",
+        default="",
+        help="Output Markdown path. Defaults to SHOWCASE_REPORT.md beside the manifest.",
+    )
     experiment_template = sub.add_parser(
         "experiment-template",
         help="Write a fill-in Markdown template for real experiment result files.",
@@ -1051,6 +1075,8 @@ def main() -> None:
         _run_llm_draft_smoke(args)
     elif args.command == "paper-e2e-smoke":
         _run_paper_e2e_smoke(args)
+    elif args.command == "paper-e2e-report":
+        _run_paper_e2e_report(args)
 
 
 def _resolve_baseline_pdf(path_value: str) -> Path:
@@ -5390,6 +5416,179 @@ def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -
     elif kind == "directory":
         entry["file_count"] = sum(1 for item in path.rglob("*") if item.is_file()) if path.is_dir() else 0
     return entry
+
+
+def _run_paper_e2e_report(args: argparse.Namespace) -> None:
+    manifest_path = _resolve_project_relative_path(args.manifest)
+    manifest = _read_json_object(manifest_path, "Paper E2E artifact manifest")
+    summary_path = _paper_e2e_report_path_arg_or_manifest(
+        args.summary,
+        manifest,
+        "run_summary",
+    )
+    acceptance_path = _paper_e2e_report_path_arg_or_manifest(
+        args.acceptance_report,
+        manifest,
+        "acceptance_report",
+    )
+    output_path = (
+        _resolve_project_relative_path(args.output)
+        if args.output
+        else manifest_path.with_name("SHOWCASE_REPORT.md")
+    )
+    summary = _read_json_object(summary_path, "Paper E2E run summary") if summary_path else {}
+    acceptance_text = _read_optional_text(acceptance_path) if acceptance_path else ""
+    report = _build_paper_e2e_showcase_report(
+        manifest,
+        summary,
+        acceptance_text,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        acceptance_path=acceptance_path,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report, encoding="utf-8")
+    print(f"Paper E2E showcase report written to {output_path}")
+
+
+def _paper_e2e_report_path_arg_or_manifest(
+    path_value: str,
+    manifest: dict,
+    label: str,
+) -> Path | None:
+    if path_value:
+        return _resolve_project_relative_path(path_value)
+    artifact = _paper_e2e_manifest_artifact(manifest, label)
+    path = str(artifact.get("path", "") if artifact else "")
+    return Path(path) if path else None
+
+
+def _paper_e2e_manifest_artifact(manifest: dict, label: str) -> dict[str, object]:
+    artifacts = manifest.get("artifacts", [])
+    if not isinstance(artifacts, list):
+        return {}
+    for item in artifacts:
+        if isinstance(item, dict) and item.get("label") == label:
+            return item
+    return {}
+
+
+def _read_optional_text(path: Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _build_paper_e2e_showcase_report(
+    manifest: dict,
+    summary: dict,
+    acceptance_text: str,
+    *,
+    manifest_path: Path,
+    summary_path: Path | None,
+    acceptance_path: Path | None,
+) -> str:
+    llm = manifest.get("llm", {}) if isinstance(manifest.get("llm", {}), dict) else {}
+    experiment = (
+        manifest.get("experiment", {})
+        if isinstance(manifest.get("experiment", {}), dict)
+        else {}
+    )
+    lines = [
+        "# Paper E2E Showcase Report",
+        "",
+        f"- Status: {manifest.get('status', summary.get('status', 'unknown'))}",
+        f"- Project: {manifest.get('project_name', summary.get('project_name', ''))}",
+        f"- Target venue: {manifest.get('target_venue', summary.get('target_venue', ''))}",
+        f"- Manifest: {manifest_path}",
+        f"- Run summary: {summary_path or 'not found'}",
+        f"- Acceptance report: {acceptance_path or 'not found'}",
+        "",
+        "## LLM Evidence",
+        "",
+        f"- Mode: {llm.get('mode', '')}",
+        f"- Provider/model: {llm.get('provider', '') or 'not recorded'} / {llm.get('model', '') or 'not recorded'}",
+        f"- Endpoint host: {llm.get('endpoint_host', '') or 'not recorded'}",
+        f"- Preflight: {llm.get('preflight_status', 'not_recorded')}; tokens={llm.get('preflight_total_tokens', 0)}",
+        (
+            f"- Section calls: {llm.get('section_call_successes', 0)}/"
+            f"{llm.get('section_call_count', 0)}; tokens={llm.get('section_total_tokens', 0)}"
+        ),
+        f"- Self-review mode: {llm.get('self_review_mode', 'not run')}",
+        "",
+        "## Experiment Evidence",
+        "",
+        f"- Source: {experiment.get('source', '')}",
+        f"- Path: {experiment.get('path', '')}",
+        f"- Evidence kind: {experiment.get('evidence_kind', '')}",
+        f"- Result tables: {experiment.get('result_tables', 0)}",
+        f"- Contract: {experiment.get('contract_status', '')}",
+        f"- Quality: {experiment.get('quality_status', '')}",
+        f"- Provenance: {experiment.get('provenance_status', '')}",
+        f"- Artifact consistency: {experiment.get('artifact_consistency_status', '')}",
+        "",
+        "## Acceptance Snapshot",
+        "",
+    ]
+    acceptance_lines = _paper_e2e_acceptance_snapshot(acceptance_text)
+    lines.extend(acceptance_lines or ["- Acceptance report not available."])
+    lines.extend(
+        [
+            "",
+            "## Output Artifacts",
+            "",
+            "| Label | Exists | Size / Count | SHA-256 | Path |",
+            "|---|---:|---:|---|---|",
+        ]
+    )
+    for item in _paper_e2e_manifest_artifacts(manifest):
+        lines.append(_paper_e2e_showcase_artifact_row(item))
+    return "\n".join(lines) + "\n"
+
+
+def _paper_e2e_acceptance_snapshot(text: str) -> list[str]:
+    prefixes = (
+        "- Overall status:",
+        "- Pipeline status:",
+        "- Submission evidence status:",
+        "| LLM preflight |",
+        "| LLM section drafting |",
+        "| LLM call trace |",
+        "| Experiment result contract |",
+        "| Experiment artifact consistency |",
+        "| Output artifacts |",
+    )
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if any(line.startswith(prefix) for prefix in prefixes):
+            lines.append(line)
+    return lines[:12]
+
+
+def _paper_e2e_manifest_artifacts(manifest: dict) -> list[dict[str, object]]:
+    artifacts = manifest.get("artifacts", [])
+    if not isinstance(artifacts, list):
+        return []
+    return [item for item in artifacts if isinstance(item, dict)]
+
+
+def _paper_e2e_showcase_artifact_row(item: dict[str, object]) -> str:
+    label = _table_safe(str(item.get("label", "")))
+    exists = "yes" if item.get("exists") else "no"
+    if item.get("kind") == "directory":
+        size = f"{item.get('file_count', 0)} files"
+        sha = ""
+    else:
+        size = str(item.get("size_bytes", 0))
+        sha = str(item.get("sha256", ""))
+    return (
+        f"| {label} | {exists} | {_table_safe(size)} | "
+        f"{_table_safe(sha[:12] if sha else '')} | `{_table_safe(str(item.get('path', '')))}` |"
+    )
 
 
 def _write_paper_e2e_smoke_failure_summary(

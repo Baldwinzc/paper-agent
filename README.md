@@ -236,6 +236,14 @@ time and token usage when the provider returns usage metadata.
 The artifact manifest lists the generated Markdown, LaTeX, report, zip, and
 summary files with existence checks, sizes, and file hashes for reproducible
 demo handoff.
+To turn that manifest into a one-page demonstration report, run:
+
+```powershell
+python -m paper_agent.cli paper-e2e-report `
+  --manifest outputs\paper-e2e-smoke\ARTIFACT_MANIFEST.json `
+  --output outputs\paper-e2e-smoke\SHOWCASE_REPORT.md
+```
+
 If strict result validation fails before drafting, the command still writes
 `RUN_SUMMARY.json` with `status=blocked`, the result-contract errors, and a
 `next_actions` repair chain: inspect with `validate-results --strict`, create
