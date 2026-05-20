@@ -8529,6 +8529,88 @@ def test_cli_research_paper_guide_generates_results_and_runs_paper_acceptance(
     assert captured["request"].experiment_results.startswith("# Real Experiment Results")
 
 
+def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
+    output_dir = tmp_path / "research-guide"
+    paper_dir = output_dir / "paper"
+    paper_dir.mkdir(parents=True)
+    result_summary_path = output_dir / "RESULT_GUIDE_SUMMARY.json"
+    paper_summary_path = paper_dir / "RUN_SUMMARY.json"
+    paper_manifest_path = paper_dir / "ARTIFACT_MANIFEST.json"
+    result_summary_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "pipeline_phase": "strict_result_validated",
+                "experiment_contract_status": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+    paper_summary_path.write_text(
+        json.dumps(
+            {
+                "inputs": {"llm_mode": "required", "llm_provider": "deepseek", "llm_model": "deepseek-v4-pro"},
+                "section_writer_llm_attempted_sections": ["abstract", "introduction", "method"],
+                "section_writer_llm_successes": ["abstract", "method"],
+                "section_writer_llm_call_count": 3,
+                "section_writer_llm_call_successes": 2,
+                "section_writer_llm_total_tokens": 512,
+                "llm_preflight_status": "pass",
+                "llm_self_review_mode": "llm",
+                "llm_self_review_auto_revisions": 1,
+                "submission_compile_mode": "compile",
+                "submission_compile_status": "passed",
+                "submission_compile_tool": "tectonic.exe",
+                "experiment_contract_status": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+    paper_manifest_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "smoke_contract_status": "pass",
+                "experiment": {"contract_status": "complete"},
+                "llm": {
+                    "mode": "required",
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "preflight_status": "pass",
+                    "section_call_count": 3,
+                    "section_call_successes": 2,
+                    "section_total_tokens": 512,
+                    "self_review_mode": "llm",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = {
+        "status": "pass",
+        "pipeline_phase": "paper_e2e_acceptance_passed",
+        "project_name": "quality-demo",
+        "target_venue": "TPAMI",
+        "inputs": {"experiment_results": str(output_dir / "tcga_results.md")},
+        "outputs": {
+            "result_guide_summary": str(result_summary_path),
+            "paper_run_summary": str(paper_summary_path),
+            "paper_artifact_manifest": str(paper_manifest_path),
+        },
+    }
+
+    quality = cli_module._research_paper_guide_quality_evidence(summary["outputs"])
+    report = cli_module._build_research_paper_guide_report(summary)
+
+    assert quality["llm_section_successes"] == ["abstract", "method"]
+    assert quality["llm_section_total_tokens"] == 512
+    assert quality["latex_compile_status"] == "passed"
+    assert "- LLM sections: 2/3; successes: abstract, method" in report
+    assert "- LLM calls: 2/3; tokens=512" in report
+    assert "- LLM self-review: llm; auto_revisions=1" in report
+    assert "- LaTeX compile: passed; tool=tectonic.exe; mode=compile" in report
+
+
 def test_cli_research_paper_guide_use_existing_skips_result_guide(
     monkeypatch,
     tmp_path,

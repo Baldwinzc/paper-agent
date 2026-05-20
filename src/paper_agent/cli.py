@@ -6201,6 +6201,7 @@ def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path
     outputs["research_guide_summary"] = str(summary_path)
     report_path = Path(str(outputs.get("research_guide_report") or summary_path.with_name("RESEARCH_GUIDE_REPORT.md")))
     outputs["research_guide_report"] = str(report_path)
+    summary["quality_evidence"] = _research_paper_guide_quality_evidence(outputs)
     written_summary = _write_run_summary_data(summary, summary_path)
     _write_research_paper_guide_report(summary, report_path)
     print(f"Research paper guide report written to {report_path}")
@@ -6219,8 +6220,18 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         outputs = {}
     result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
     paper_manifest = _read_optional_json_object(str(outputs.get("paper_artifact_manifest", "")))
+    quality = summary.get("quality_evidence", {})
+    if not isinstance(quality, dict) or not quality:
+        quality = _research_paper_guide_quality_evidence(outputs)
     paper_experiment = paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
+    llm_attempted = quality.get("llm_section_attempted", [])
+    llm_successes = quality.get("llm_section_successes", [])
+    if not isinstance(llm_attempted, list):
+        llm_attempted = []
+    if not isinstance(llm_successes, list):
+        llm_successes = []
+    llm_attempted_count = len(llm_attempted) if llm_attempted else quality.get("llm_section_call_count", 0)
     lines = [
         "# Research Paper Guide Report",
         "",
@@ -6240,11 +6251,29 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         "",
         "## Paper Acceptance",
         "",
-        f"- Manifest status: {paper_manifest.get('status', 'not found')}",
+        f"- Manifest status: {quality.get('manifest_status', paper_manifest.get('status', 'not found'))}",
         f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
-        f"- Experiment contract: {paper_experiment.get('contract_status', 'not recorded')}",
-        f"- LLM mode: {paper_llm.get('mode', 'not recorded')}",
-        f"- LLM preflight: {paper_llm.get('preflight_status', 'not recorded')}",
+        f"- Experiment contract: {quality.get('experiment_contract_status', paper_experiment.get('contract_status', 'not recorded'))}",
+        f"- LLM mode: {quality.get('llm_mode', paper_llm.get('mode', 'not recorded'))}",
+        f"- LLM preflight: {quality.get('llm_preflight_status', paper_llm.get('preflight_status', 'not recorded'))}",
+        (
+            f"- LLM sections: {len(llm_successes)}/{llm_attempted_count}; "
+            f"successes: {', '.join(str(item) for item in llm_successes) or 'none'}"
+        ),
+        (
+            f"- LLM calls: {quality.get('llm_section_call_successes', 0)}/"
+            f"{quality.get('llm_section_call_count', 0)}; "
+            f"tokens={quality.get('llm_section_total_tokens', 0)}"
+        ),
+        (
+            f"- LLM self-review: {quality.get('llm_self_review_mode', paper_llm.get('self_review_mode', 'not run'))}; "
+            f"auto_revisions={quality.get('llm_self_review_auto_revisions', 0)}"
+        ),
+        (
+            f"- LaTeX compile: {quality.get('latex_compile_status', 'not recorded')}; "
+            f"tool={quality.get('latex_compile_tool', '') or 'none'}; "
+            f"mode={quality.get('latex_compile_mode', 'not recorded')}"
+        ),
     ]
     blocking_items = summary.get("blocking_items", [])
     if isinstance(blocking_items, list) and blocking_items:
@@ -6265,6 +6294,69 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     for label, path_value in _research_paper_guide_report_artifacts(outputs):
         lines.append(_research_paper_guide_report_artifact_row(label, path_value))
     return "\n".join(lines) + "\n"
+
+
+def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[str, object]:
+    result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
+    paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
+    paper_manifest = _read_optional_json_object(str(outputs.get("paper_artifact_manifest", "")))
+    paper_inputs = paper_summary.get("inputs", {}) if isinstance(paper_summary.get("inputs", {}), dict) else {}
+    paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
+    paper_experiment = (
+        paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
+    )
+    attempted = paper_summary.get("section_writer_llm_attempted_sections", [])
+    successes = paper_summary.get("section_writer_llm_successes", [])
+    return {
+        "result_guide_status": result_summary.get("status", "not found"),
+        "result_guide_phase": result_summary.get("pipeline_phase", ""),
+        "result_contract_status": result_summary.get("experiment_contract_status", "not recorded"),
+        "result_provenance_status": result_summary.get("experiment_provenance_status", "not recorded"),
+        "result_artifact_consistency_status": result_summary.get(
+            "experiment_artifact_consistency_status",
+            "not recorded",
+        ),
+        "manifest_status": paper_manifest.get("status", "not found"),
+        "smoke_contract_status": paper_manifest.get("smoke_contract_status", "not recorded"),
+        "experiment_contract_status": paper_experiment.get(
+            "contract_status",
+            paper_summary.get("experiment_contract_status", "not recorded"),
+        ),
+        "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
+        "llm_provider": paper_llm.get("provider", paper_inputs.get("llm_provider", "")),
+        "llm_model": paper_llm.get("model", paper_inputs.get("llm_model", "")),
+        "llm_preflight_status": paper_llm.get(
+            "preflight_status",
+            paper_summary.get("llm_preflight_status", "not_recorded"),
+        ),
+        "llm_preflight_total_tokens": paper_llm.get(
+            "preflight_total_tokens",
+            paper_summary.get("llm_preflight_total_tokens", 0),
+        ),
+        "llm_section_attempted": attempted if isinstance(attempted, list) else [],
+        "llm_section_successes": successes if isinstance(successes, list) else [],
+        "llm_section_call_count": paper_summary.get(
+            "section_writer_llm_call_count",
+            paper_llm.get("section_call_count", 0),
+        ),
+        "llm_section_call_successes": paper_summary.get(
+            "section_writer_llm_call_successes",
+            paper_llm.get("section_call_successes", 0),
+        ),
+        "llm_section_total_tokens": paper_summary.get(
+            "section_writer_llm_total_tokens",
+            paper_llm.get("section_total_tokens", 0),
+        ),
+        "llm_self_review_mode": paper_summary.get(
+            "llm_self_review_mode",
+            paper_llm.get("self_review_mode", "not run"),
+        ),
+        "llm_self_review_auto_revisions": paper_summary.get("llm_self_review_auto_revisions", 0),
+        "latex_compile_mode": paper_summary.get("submission_compile_mode", "not_run"),
+        "latex_compile_status": paper_summary.get("submission_compile_status", "not_run"),
+        "latex_compile_tool": paper_summary.get("submission_compile_tool", ""),
+        "latex_compile_install_hint": paper_summary.get("submission_compile_install_hint", ""),
+    }
 
 
 def _read_optional_json_object(path_value: str) -> dict[str, object]:
