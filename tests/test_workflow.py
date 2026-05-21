@@ -1506,6 +1506,85 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
     assert "should be positioned" not in sections.related_work
 
 
+def test_section_writer_fallback_persists_related_work_brief_and_threads():
+    state = {
+        "request": PaperRequest(project_name="related-work-demo", target_venue="TPAMI"),
+        "sections": DraftSections(),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Need stable graph structure.",
+                technical_idea="Construct transport-aware prototypes.",
+            )
+        ],
+        "baseline": BaselineSummary(title="Baseline Survival Paper"),
+        "artifacts": {
+            "citation_keys": ["baseline"],
+            "related_work_field_query": "whole slide images survival prediction",
+            "related_work_baseline_mentioned_queries": [
+                "Mobadersany | Predicting cancer outcomes from histology"
+            ],
+            "related_work_candidates": [
+                {
+                    "key": "baselinepaper",
+                    "category": "baseline_reference",
+                    "title": "Baseline predecessor",
+                    "year": "2018",
+                    "discovery_path_label": "baseline reference list",
+                    "source_query": "baseline references of Baseline Survival Paper",
+                },
+                {
+                    "key": "citingpaper",
+                    "category": "baseline_citing",
+                    "title": "Baseline follow-up",
+                    "year": "2024",
+                    "discovery_path_label": "papers citing the baseline",
+                    "source_query": "papers citing Baseline Survival Paper",
+                },
+                {
+                    "key": "mentionedpaper",
+                    "category": "baseline_mentioned",
+                    "title": "Mentioned paper",
+                    "year": "2019",
+                    "discovery_path_label": "baseline related-work mention",
+                    "source_query": "Mobadersany | Predicting cancer outcomes from histology",
+                },
+                {
+                    "key": "influentialpaper",
+                    "category": "influential",
+                    "title": "Influential field paper",
+                    "year": "2016",
+                    "discovery_path_label": "high-citation field search",
+                    "source_query": "whole slide images survival prediction",
+                },
+                {
+                    "key": "recentpaper",
+                    "category": "recent",
+                    "title": "Recent field paper",
+                    "year": "2025",
+                    "discovery_path_label": "recent field search",
+                    "source_query": "whole slide images survival prediction",
+                },
+            ],
+        },
+    }
+
+    sections = SectionWriterAgent()._run_fallback(state)
+
+    brief = state["artifacts"]["related_work_brief"]
+    threads = {item["thread_id"]: item for item in brief["thread_plan"]}
+    assert brief["baseline_title"] == "Baseline Survival Paper"
+    assert brief["field_query"] == "whole slide images survival prediction"
+    assert brief["innovation_names"] == ["Innovation 1: Adaptive prototype geometry"]
+    assert threads["baseline_lineage"]["candidate_count"] == 3
+    assert threads["influential_context"]["candidates"][0]["discovery_path_label"] == "high-citation field search"
+    assert "Works explicitly named in the baseline's own related-work discussion include" in sections.related_work
+    assert "Later papers that cite the baseline include" in sections.related_work
+    assert "Within the broader whole slide images survival prediction literature" in sections.related_work
+    assert "Within the recent whole slide images survival prediction literature" in sections.related_work
+    assert "Innovation 1: Adaptive prototype geometry" in sections.related_work
+
+
 def test_cli_related_work_doctor_writes_summary_and_report(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"

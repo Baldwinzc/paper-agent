@@ -163,12 +163,10 @@ class SectionWriterAgent:
         )
         citation_keys = state.setdefault("artifacts", {}).get("citation_keys", [])
         citation_hint = self._citation_hint(citation_keys)
-        related_work_discovery = state.get("artifacts", {}).get("related_work_candidates", [])
+        related_work_brief = self._ensure_related_work_brief(state)
         related_work_text = self._related_work_text(
-            related_work_discovery,
+            related_work_brief,
             citation_hint,
-            baseline_title=baseline.title if baseline else "",
-            innovations=innovations,
         )
         abstract_result_summary = self._result_summary(experiments, limit=1)
         experiment_result_summary = self._result_summary(experiments, limit=2)
@@ -630,6 +628,7 @@ class SectionWriterAgent:
         artifacts = state.get("artifacts", {})
         if not isinstance(artifacts, dict):
             artifacts = {}
+        related_work_brief = self._ensure_related_work_brief(state)
 
         prompt = {
             "task": f"Draft the {section_name} section for a CS research paper.",
@@ -645,13 +644,7 @@ class SectionWriterAgent:
             "innovations": [item.model_dump() for item in innovations],
             "bibliography": [entry.model_dump() for entry in bibliography],
             "related_work_discovery": artifacts.get("related_work_candidates", []),
-            "related_work_brief": self._related_work_brief(
-                artifacts.get("related_work_candidates", []),
-                field_query=str(artifacts.get("related_work_field_query", "") or ""),
-                baseline_mentioned_queries=artifacts.get("related_work_baseline_mentioned_queries", []),
-                baseline_title=baseline.title if baseline else "",
-                innovations=innovations,
-            ),
+            "related_work_brief": related_work_brief,
             "allowed_citation_keys": [entry.key for entry in bibliography],
             "outline": outline.model_dump() if outline else {},
             "section_name": section_name,
@@ -920,13 +913,7 @@ class SectionWriterAgent:
             if not isinstance(artifacts, dict):
                 artifacts = {}
             payload["related_work_discovery"] = artifacts.get("related_work_candidates", [])
-            payload["related_work_brief"] = self._related_work_brief(
-                artifacts.get("related_work_candidates", []),
-                field_query=str(artifacts.get("related_work_field_query", "") or ""),
-                baseline_mentioned_queries=artifacts.get("related_work_baseline_mentioned_queries", []),
-                baseline_title=state.get("baseline").title if state.get("baseline") else "",
-                innovations=state.get("innovations", []),
-            )
+            payload["related_work_brief"] = self._ensure_related_work_brief(state)
         return [
             ChatMessage(
                 role="system",
@@ -1274,12 +1261,11 @@ class SectionWriterAgent:
 
     def _related_work_text(
         self,
-        candidates: list[dict[str, Any]],
+        brief: dict[str, Any],
         citation_hint: str,
-        baseline_title: str,
-        innovations,
     ) -> str:
-        if not candidates:
+        thread_plan = brief.get("thread_plan", [])
+        if not isinstance(thread_plan, list) or not thread_plan:
             return (
                 "### Baseline Family and Problem Setting\n"
                 f"The direct baseline family provides the starting context {citation_hint}. "
@@ -1291,7 +1277,23 @@ class SectionWriterAgent:
                 "avoiding unsupported novelty claims until the bibliography is manually verified."
             )
 
-        grouped: dict[str, list[dict[str, Any]]] = self._group_related_work(candidates)
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for thread in thread_plan:
+            if not isinstance(thread, dict):
+                continue
+            candidates = thread.get("candidates", [])
+            if not isinstance(candidates, list):
+                continue
+            for item in candidates:
+                if not isinstance(item, dict):
+                    continue
+                grouped.setdefault(str(item.get("category", "unknown")), []).append(item)
+
+        baseline_title = str(brief.get("baseline_title", "") or "")
+        field_query = str(brief.get("field_query", "") or "")
+        innovation_names = brief.get("innovation_names", [])
+        if not isinstance(innovation_names, list):
+            innovation_names = []
         sections = []
         if grouped.get("baseline_reference") or grouped.get("baseline_citing") or grouped.get("baseline_mentioned"):
             baseline_items = grouped.get("baseline_reference", [])[:3]
@@ -1304,7 +1306,7 @@ class SectionWriterAgent:
                 )
             if mentioned_items:
                 pieces.append(
-                    "Candidate works retrieved from names explicitly discussed by the baseline include "
+                    "Works explicitly named in the baseline's own related-work discussion include "
                     + self._candidate_sentence(mentioned_items)
                     + ", which provides local context for the baseline's stated research threads after manual verification."
                 )
@@ -1323,9 +1325,15 @@ class SectionWriterAgent:
             sections.append("### Baseline Lineage\n" + " ".join(pieces))
 
         if grouped.get("influential"):
+            field_context = (
+                f"Within the broader {field_query} literature, "
+                if field_query
+                else "Within the broader field literature, "
+            )
             sections.append(
                 "### Influential Field Context\n"
-                "High-impact work in the broader field includes "
+                + field_context
+                + "high-impact work includes "
                 + self._candidate_sentence(grouped["influential"][:3])
                 + ". These papers provide the main methodological context for positioning the "
                 "proposed approach against established whole-slide survival prediction and "
@@ -1333,9 +1341,15 @@ class SectionWriterAgent:
             )
 
         if grouped.get("recent"):
+            field_context = (
+                f"Within the recent {field_query} literature, "
+                if field_query
+                else "Within recent literature, "
+            )
             sections.append(
                 "### Recent Developments\n"
-                "Recent work includes "
+                + field_context
+                + "recent work includes "
                 + self._candidate_sentence(grouped["recent"][:3])
                 + ". This thread is useful for contrasting the proposed method with newer "
                 "foundation-model, "
@@ -1343,8 +1357,8 @@ class SectionWriterAgent:
             )
 
         innovation_names = (
-            ", ".join(item.name for item in innovations[:3])
-            if innovations
+            ", ".join(str(item) for item in innovation_names[:3] if str(item))
+            if innovation_names
             else "the proposed contributions"
         )
         sections.append(
@@ -1355,6 +1369,25 @@ class SectionWriterAgent:
             "verified bibliography metadata before submission."
         )
         return "\n\n".join(sections)
+
+    def _ensure_related_work_brief(self, state: PaperState) -> dict[str, Any]:
+        artifacts = state.setdefault("artifacts", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            state["artifacts"] = artifacts
+        existing = artifacts.get("related_work_brief")
+        if isinstance(existing, dict) and existing.get("thread_plan") is not None:
+            return existing
+        baseline = state.get("baseline")
+        brief = self._related_work_brief(
+            artifacts.get("related_work_candidates", []),
+            field_query=str(artifacts.get("related_work_field_query", "") or ""),
+            baseline_mentioned_queries=artifacts.get("related_work_baseline_mentioned_queries", []),
+            baseline_title=baseline.title if baseline else "",
+            innovations=state.get("innovations", []),
+        )
+        artifacts["related_work_brief"] = brief
+        return brief
 
     def _group_related_work(
         self,
