@@ -3582,6 +3582,115 @@ def test_llm_related_work_gets_citation_backstop_when_model_omits_cites():
     assert r"\cite{baseline,recent}" in section
 
 
+def test_llm_related_work_prompt_includes_threaded_provenance_brief():
+    client = FakeLLMClient("A cautious related work section with citations.")
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline Survival Paper"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(datasets=["BLCA"], metrics=["C-INDEX"]),
+        "innovations": [
+            InnovationPoint(
+                name="Innovation 1: Adaptive prototype geometry",
+                motivation="Need more stable graph structure.",
+                technical_idea="Construct offline transport-aware prototypes.",
+                evidence=["model.py:42"],
+            )
+        ],
+        "bibliography": [
+            CitationEntry(key="classicpaper", title="Classic paper"),
+            CitationEntry(key="recentpaper", title="Recent paper"),
+        ],
+        "artifacts": {
+            "related_work_field_query": "whole slide images survival prediction",
+            "related_work_baseline_mentioned_queries": [
+                "Mobadersany | Predicting cancer outcomes from histology"
+            ],
+            "related_work_candidates": [
+                {
+                    "key": "classicpaper",
+                    "category": "baseline_reference",
+                    "title": "Classic paper",
+                    "year": "2018",
+                    "discovery_path_label": "baseline reference list",
+                    "source_query": "baseline references of Baseline Survival Paper",
+                },
+                {
+                    "key": "recentpaper",
+                    "category": "recent",
+                    "title": "Recent paper",
+                    "year": "2025",
+                    "discovery_path_label": "recent field search",
+                    "source_query": "whole slide images survival prediction",
+                },
+            ],
+        },
+    }
+
+    SectionWriterAgent(llm_client=client)._run_llm_section(state, "related_work")
+
+    payload = json.loads(client.calls[0]["messages"][1].content)
+    brief = payload["related_work_brief"]
+    threads = {item["thread_id"]: item for item in brief["thread_plan"]}
+    assert brief["baseline_title"] == "Baseline Survival Paper"
+    assert brief["field_query"] == "whole slide images survival prediction"
+    assert brief["baseline_mentioned_queries"] == [
+        "Mobadersany | Predicting cancer outcomes from histology"
+    ]
+    assert brief["innovation_names"] == ["Innovation 1: Adaptive prototype geometry"]
+    assert threads["baseline_lineage"]["heading"] == "Baseline Lineage"
+    assert threads["baseline_lineage"]["candidates"][0]["discovery_path_label"] == "baseline reference list"
+    assert (
+        threads["baseline_lineage"]["candidates"][0]["source_query"]
+        == "baseline references of Baseline Survival Paper"
+    )
+    assert threads["recent_developments"]["candidates"][0]["source_query"] == "whole slide images survival prediction"
+
+
+def test_related_work_repair_payload_includes_threaded_provenance_brief():
+    client = FakeSequenceLLMClient(
+        [
+            "The proposed method is positioned as removing the need for earlier graph mechanisms.",
+            "A cautious related work section with citations.",
+        ]
+    )
+    state = {
+        "request": PaperRequest(project_name="tcga-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline Survival Paper"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            missing_details=["Baseline comparison rows are not explicit."],
+        ),
+        "innovations": [],
+        "outline": PaperOutline(),
+        "bibliography": [CitationEntry(key="classicpaper", title="Classic paper")],
+        "artifacts": {
+            "related_work_field_query": "whole slide images survival prediction",
+            "related_work_candidates": [
+                {
+                    "key": "classicpaper",
+                    "category": "influential",
+                    "title": "Classic paper",
+                    "year": "2018",
+                    "discovery_path_label": "high-citation field search",
+                    "source_query": "whole slide images survival prediction",
+                }
+            ],
+        },
+    }
+
+    SectionWriterAgent(llm_client=client)._run_llm_section(state, "related_work")
+
+    repair_payload = json.loads(client.calls[1]["messages"][1].content)
+    assert repair_payload["validation_error"].startswith("LLM related_work section included unsupported empirical language")
+    assert repair_payload["related_work_brief"]["field_query"] == "whole slide images survival prediction"
+    thread = repair_payload["related_work_brief"]["thread_plan"][0]
+    assert thread["thread_id"] == "influential_context"
+    assert thread["candidates"][0]["discovery_path_label"] == "high-citation field search"
+    assert thread["candidates"][0]["source_query"] == "whole slide images survival prediction"
+
+
 def test_llm_section_writer_repairs_rejected_method_once():
     client = FakeSequenceLLMClient(
         [
