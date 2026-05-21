@@ -9227,17 +9227,130 @@ def test_cli_triage_report_ranks_and_deduplicates_runs(monkeypatch, tmp_path, ca
     assert summary["counts"]["blocked"] == 1
     assert summary["counts"]["needs_revision"] == 1
     assert summary["counts"]["not_recorded"] == 0
+    assert summary["counts"]["triage_recorded"] == 2
+    assert summary["counts"]["triage_derived"] == 0
     assert summary["counts"]["research_guide"] == 1
     assert summary["counts"]["paper_e2e"] == 1
     assert [item["source_kind"] for item in summary["entries"]] == ["paper_e2e", "research_guide"]
+    assert [item["triage_source"] for item in summary["entries"]] == ["recorded", "recorded"]
     assert summary["entries"][0]["project_name"] == "solo-paper"
     assert summary["entries"][0]["repair_target"] == "paper_e2e_smoke_llm_preflight"
     assert summary["entries"][1]["project_name"] == "guide-run"
     assert summary["entries"][1]["next_action_category"] == "related_work_online"
     assert "# Run Triage Report" in report
     assert "- Triage not recorded: 0" in report
-    assert "| 1 | paper_e2e | solo-paper | NeurIPS | blocked | blocked | high (rank=3) | paper_e2e_smoke_llm_preflight | quota blocked |" in report
-    assert "| 2 | research_guide | guide-run | TPAMI | pass | needs_revision | medium (rank=1) | related_work_thread_coverage | related_work_online |" in report
+    assert "- Triage recorded: 2" in report
+    assert "- Triage derived: 0" in report
+    assert "| 1 | paper_e2e | solo-paper | NeurIPS | blocked | blocked | recorded | high (rank=3) | paper_e2e_smoke_llm_preflight | quota blocked |" in report
+    assert "| 2 | research_guide | guide-run | TPAMI | pass | needs_revision | recorded | medium (rank=1) | related_work_thread_coverage | related_work_online |" in report
+
+
+def test_cli_triage_report_derives_legacy_triage(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "outputs"
+    legacy_guide_dir = root / "legacy-guide"
+    legacy_paper_dir = root / "legacy-paper"
+    legacy_guide_dir.mkdir(parents=True)
+    legacy_paper_dir.mkdir(parents=True)
+
+    legacy_paper_manifest_path = legacy_paper_dir / "ARTIFACT_MANIFEST.json"
+    legacy_paper_summary_path = legacy_paper_dir / "RUN_SUMMARY.json"
+    legacy_guide_summary_path = legacy_guide_dir / "RESEARCH_GUIDE_SUMMARY.json"
+
+    legacy_paper_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "paper-e2e-artifact-manifest/v1",
+                "status": "blocked",
+                "project_name": "legacy-paper",
+                "target_venue": "TPAMI",
+                "artifacts": [
+                    {
+                        "label": "run_summary",
+                        "kind": "run_summary",
+                        "path": str(legacy_paper_summary_path),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_paper_summary_path.write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "pipeline_phase": "paper_e2e_smoke_preflight",
+                "blocking_items": ["contract: Missing main trained-model result table."],
+                "next_actions": [
+                    {
+                        "category": "validate_results",
+                        "command": "paper-agent validate-results --strict",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_guide_summary_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "pipeline_phase": "paper_e2e_acceptance_passed",
+                "project_name": "legacy-guide",
+                "target_venue": "TPAMI",
+                "quality_evidence": {
+                    "acceptance_triage_status": "needs_revision",
+                    "acceptance_priority": "high",
+                    "acceptance_priority_rank": 2,
+                    "acceptance_repair_target": "experiment_result_contract",
+                    "acceptance_reason": "invalid result contract",
+                },
+                "blocking_evidence": {},
+                "next_actions": [
+                    {
+                        "source": "paper_e2e",
+                        "category": "validate_results",
+                        "command": "paper-agent validate-results --strict",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "triage-report",
+            "--root",
+            str(root),
+            "--summary",
+            str(root / "TRIAGE_SUMMARY.json"),
+            "--report",
+            str(root / "TRIAGE_REPORT.md"),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((root / "TRIAGE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (root / "TRIAGE_REPORT.md").read_text(encoding="utf-8")
+    assert "Triage totals:" in output
+    assert summary["counts"]["total"] == 2
+    assert summary["counts"]["triage_recorded"] == 0
+    assert summary["counts"]["triage_derived"] == 2
+    assert [item["triage_source"] for item in summary["entries"]] == ["derived", "derived"]
+    assert summary["entries"][0]["project_name"] == "legacy-paper"
+    assert summary["entries"][0]["triage_status"] == "blocked"
+    assert summary["entries"][0]["priority"] == "high"
+    assert summary["entries"][0]["repair_target"] == "paper_e2e_smoke_preflight"
+    assert summary["entries"][1]["project_name"] == "legacy-guide"
+    assert summary["entries"][1]["triage_status"] == "needs_revision"
+    assert summary["entries"][1]["repair_target"] == "experiment_result_contract"
+    assert "- Triage derived: 2" in report
+    assert "| 1 | paper_e2e | legacy-paper | TPAMI | blocked | blocked | derived | high (rank=3) | paper_e2e_smoke_preflight | validate_results |" in report
+    assert "| 2 | research_guide | legacy-guide | TPAMI | pass | needs_revision | derived | high (rank=2) | experiment_result_contract | validate_results |" in report
 
 
 def test_cli_paper_e2e_acceptance_runs_smoke_and_showcase_report(

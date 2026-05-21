@@ -8003,9 +8003,7 @@ def _triage_manifest_summary_payload(manifest: dict[str, object], manifest_path:
 def _triage_entry_from_research_guide(summary_path: Path, summary: dict[str, object]) -> dict[str, object]:
     if not summary:
         return {}
-    triage = summary.get("triage", {})
-    if not isinstance(triage, dict):
-        triage = {}
+    triage, triage_source = _triage_research_guide_entry_state(summary)
     outputs = summary.get("outputs", {}) if isinstance(summary.get("outputs", {}), dict) else {}
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list):
@@ -8018,6 +8016,7 @@ def _triage_entry_from_research_guide(summary_path: Path, summary: dict[str, obj
         "run_status": str(summary.get("status", "") or "unknown"),
         "pipeline_phase": str(summary.get("pipeline_phase", "") or ""),
         "triage_status": str(triage.get("status", "") or "not_recorded"),
+        "triage_source": triage_source,
         "priority": str(triage.get("priority", "") or "not_recorded"),
         "priority_rank": int(triage.get("priority_rank", 0) or 0),
         "repair_target": str(triage.get("repair_target", "") or ""),
@@ -8037,9 +8036,7 @@ def _triage_entry_from_paper_manifest(
 ) -> dict[str, object]:
     if not manifest:
         return {}
-    triage = manifest.get("triage", {})
-    if not isinstance(triage, dict):
-        triage = _paper_e2e_summary_triage(summary)
+    triage, triage_source = _triage_paper_e2e_entry_state(manifest, summary)
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list):
         next_actions = []
@@ -8052,6 +8049,7 @@ def _triage_entry_from_paper_manifest(
         "run_status": str(manifest.get("status", summary.get("status", "unknown")) or "unknown"),
         "pipeline_phase": str(summary.get("pipeline_phase", "") or ""),
         "triage_status": str(triage.get("status", "") or "not_recorded"),
+        "triage_source": triage_source,
         "priority": str(triage.get("priority", "") or "not_recorded"),
         "priority_rank": int(triage.get("priority_rank", 0) or 0),
         "repair_target": str(triage.get("repair_target", "") or ""),
@@ -8083,6 +8081,48 @@ def _triage_entry_sort_key(entry: dict[str, object]) -> tuple[int, int, str, str
     )
 
 
+def _normalized_triage_state(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or not value.get("status"):
+        return {}
+    return {
+        "status": str(value.get("status", "") or ""),
+        "priority": str(value.get("priority", "") or ""),
+        "priority_rank": int(value.get("priority_rank", 0) or 0),
+        "repair_target": str(value.get("repair_target", "") or ""),
+        "reason": str(value.get("reason", "") or ""),
+    }
+
+
+def _triage_paper_e2e_entry_state(
+    manifest: dict[str, object],
+    summary: dict[str, object],
+) -> tuple[dict[str, object], str]:
+    manifest_triage = _normalized_triage_state(manifest.get("triage", {}))
+    if manifest_triage:
+        return manifest_triage, "recorded"
+    summary_triage = _normalized_triage_state(summary.get("triage", {}))
+    if summary_triage:
+        return summary_triage, "recorded"
+    return _paper_e2e_summary_triage(summary), "derived"
+
+
+def _triage_research_guide_entry_state(summary: dict[str, object]) -> tuple[dict[str, object], str]:
+    recorded = _normalized_triage_state(summary.get("triage", {}))
+    if recorded:
+        return recorded, "recorded"
+    quality = summary.get("quality_evidence", {})
+    if not isinstance(quality, dict):
+        quality = {}
+    blocking_evidence = summary.get("blocking_evidence", {})
+    if not isinstance(blocking_evidence, dict):
+        blocking_evidence = {}
+    if not quality:
+        outputs = summary.get("outputs", {})
+        if isinstance(outputs, dict) and outputs:
+            quality = _research_paper_guide_quality_evidence(outputs)
+    return _research_paper_guide_triage(summary, quality, blocking_evidence), "derived"
+
+
 def _triage_report_counts(
     all_entries: list[dict[str, object]],
     emitted_entries: list[dict[str, object]],
@@ -8098,6 +8138,8 @@ def _triage_report_counts(
         "needs_revision": count_by(emitted_entries, "triage_status", "needs_revision"),
         "ready": count_by(emitted_entries, "triage_status", "ready"),
         "not_recorded": count_by(emitted_entries, "triage_status", "not_recorded"),
+        "triage_recorded": count_by(emitted_entries, "triage_source", "recorded"),
+        "triage_derived": count_by(emitted_entries, "triage_source", "derived"),
         "high_priority": count_by(emitted_entries, "priority", "high"),
         "medium_priority": count_by(emitted_entries, "priority", "medium"),
         "low_priority": count_by(emitted_entries, "priority", "low"),
@@ -8124,14 +8166,16 @@ def _build_triage_report_markdown(payload: dict[str, object]) -> str:
         f"- Needs revision: {counts.get('needs_revision', 0)}",
         f"- Ready: {counts.get('ready', 0)}",
         f"- Triage not recorded: {counts.get('not_recorded', 0)}",
+        f"- Triage recorded: {counts.get('triage_recorded', 0)}",
+        f"- Triage derived: {counts.get('triage_derived', 0)}",
         f"- High priority: {counts.get('high_priority', 0)}",
         f"- Medium priority: {counts.get('medium_priority', 0)}",
         f"- Low priority: {counts.get('low_priority', 0)}",
         "",
         "## Ranked Entries",
         "",
-        "| Rank | Source | Project | Venue | Run status | Triage | Priority | Repair target | Next step | Path |",
-        "|---:|---|---|---|---|---|---|---|---|---|",
+        "| Rank | Source | Project | Venue | Run status | Triage | Triage source | Priority | Repair target | Next step | Path |",
+        "|---:|---|---|---|---|---|---|---|---|---|---|",
     ]
     for index, entry in enumerate(entries, start=1):
         path_value = str(
@@ -8148,6 +8192,7 @@ def _build_triage_report_markdown(payload: dict[str, object]) -> str:
             f"{_table_safe(str(entry.get('target_venue', '')))} | "
             f"{_table_safe(str(entry.get('run_status', '')))} | "
             f"{_table_safe(str(entry.get('triage_status', '')))} | "
+            f"{_table_safe(str(entry.get('triage_source', '')))} | "
             f"{_table_safe(str(entry.get('priority', '')))} "
             f"(rank={_table_safe(str(entry.get('priority_rank', 0)))}) | "
             f"{_table_safe(str(entry.get('repair_target', '')))} | "
@@ -8167,6 +8212,7 @@ def _build_triage_report_markdown(payload: dict[str, object]) -> str:
                 f"- Run status: {entry.get('run_status', '')}",
                 f"- Pipeline phase: {entry.get('pipeline_phase', '')}",
                 f"- Triage: {entry.get('triage_status', '')}",
+                f"- Triage source: {entry.get('triage_source', '')}",
                 f"- Priority: {entry.get('priority', '')} (rank={entry.get('priority_rank', 0)})",
                 f"- Repair target: {entry.get('repair_target', '')}",
                 f"- Reason: {entry.get('reason', '')}",

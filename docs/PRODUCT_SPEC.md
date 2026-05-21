@@ -192,7 +192,10 @@ The repo should also provide a directory-level `triage-report` command that
 scans `RESEARCH_GUIDE_SUMMARY.json` plus standalone `ARTIFACT_MANIFEST.json`
 files under one root, deduplicates child manifests already referenced by a
 research-guide summary, and writes a ranked JSON/Markdown view for heartbeat or
-doctor-style automation.
+doctor-style automation. For legacy artifacts that predate stable stored
+`triage` fields, the command should derive triage from blocked summary state or
+acceptance-triage evidence and record whether each entry was `recorded` or
+`derived`.
 Its `--results-mode` option makes result handling explicit: `auto` preserves the
 default missing/template-result repair flow, `use-existing` requires
 `--experiment-results` and never invokes the TCGA result guide, and

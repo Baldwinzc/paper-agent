@@ -340,7 +340,10 @@ python -m paper_agent.cli triage-report `
 This scans `RESEARCH_GUIDE_SUMMARY.json` and standalone
 `ARTIFACT_MANIFEST.json` files, deduplicates child paper manifests that are
 already referenced by a research-guide run, and emits one ranked JSON/Markdown
-view keyed by `triage.status`, `priority_rank`, and `repair_target`.
+view keyed by `triage.status`, `priority_rank`, and `repair_target`. When older
+artifacts do not yet carry a stored `triage` object, the command derives one
+from blocked summary state or acceptance-triage fields and marks the entry as
+`triage_source=derived`.
 Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
 templates immediately; use `--artifact-template-dir` to choose the output
 directory and fill the generated files with real trained-model outputs.
