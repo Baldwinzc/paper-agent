@@ -1413,6 +1413,50 @@ def test_related_work_discovery_extracts_baseline_mentioned_queries():
     assert any(query.startswith("Chen |") and "2d point clouds" in query for query in queries)
 
 
+def test_related_work_discovery_records_error_details_with_query_context(monkeypatch):
+    def work(title, identifier, year, cited_by_count, referenced_works=None, authors=None):
+        return {
+            "id": f"https://openalex.org/{identifier}",
+            "title": title,
+            "doi": f"https://doi.org/10.1234/{identifier.lower()}",
+            "publication_year": year,
+            "authorships": [{"author": {"display_name": author}} for author in (authors or ["Ada Lovelace"])],
+            "primary_location": {"source": {"display_name": "IEEE Transactions"}},
+            "ids": {"openalex": f"https://openalex.org/{identifier}"},
+            "referenced_works": referenced_works or [],
+            "cited_by_count": cited_by_count,
+        }
+
+    def fake_query(self, params):
+        if params.get("search") == "Baseline Survival Paper":
+            return {"results": [work("Baseline Survival Paper", "WBASE", 2024, 42)]}
+        if params.get("sort") == "cited_by_count:desc":
+            raise RuntimeError("openalex quota exceeded for cited_by_count")
+        return {"results": []}
+
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", "0")
+    monkeypatch.setenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", "0")
+    monkeypatch.setattr(RelatedWorkDiscoveryAgent, "_query_openalex", fake_query)
+    state = {
+        "request": PaperRequest(
+            project_name="error-demo",
+            target_venue="TPAMI",
+            keywords=["whole-slide images", "survival prediction"],
+        ),
+        "baseline": BaselineSummary(title="Baseline Survival Paper"),
+        "bibliography": [],
+        "artifacts": {},
+    }
+
+    state = RelatedWorkDiscoveryAgent().run(state)
+
+    details = state["artifacts"]["related_work_discovery_error_details"]
+    assert details[0]["source"] == "influential_search"
+    assert details[0]["query"] == "whole slide images survival prediction"
+    assert details[0]["sort"] == "cited_by_count:desc"
+    assert "quota exceeded" in details[0]["error"]
+
+
 def test_section_writer_uses_related_work_discovery_in_fallback():
     state = {
         "request": PaperRequest(project_name="related-work-demo", target_venue="TPAMI"),
@@ -1514,6 +1558,14 @@ def test_cli_related_work_doctor_writes_summary_and_report(monkeypatch, tmp_path
                     },
                 ],
                 "related_work_discovery_errors": {"baseline_mentions": "timeout"},
+                "related_work_discovery_error_details": [
+                    {
+                        "source": "baseline_mentions",
+                        "query": "Mobadersany | Predicting cancer outcomes from histology",
+                        "sort": "relevance_score:desc",
+                        "error": "timeout",
+                    }
+                ],
             },
         }
 
@@ -1573,6 +1625,7 @@ def test_cli_related_work_doctor_writes_summary_and_report(monkeypatch, tmp_path
     assert "## Candidate Preview" in report
     assert "whole slide images survival prediction" in report
     assert "Mobadersany | Predicting cancer outcomes from histology" in report
+    assert "source=baseline_mentions; query=Mobadersany | Predicting cancer outcomes from histology; sort=relevance_score:desc; error=timeout" in report
     assert "reference_retry" in report
 
 
@@ -2757,6 +2810,14 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "reference_pruned_seed_keys": ["survivalprediction"],
             "related_work_discovery_mode": "openalex",
             "related_work_discovery_errors": {"recent_search": "timeout"},
+            "related_work_discovery_error_details": [
+                {
+                    "source": "recent_search",
+                    "query": "whole slide images survival prediction",
+                    "sort": "publication_date:desc",
+                    "error": "timeout",
+                }
+            ],
             "related_work_field_query": "whole slide images survival prediction",
             "related_work_baseline_mentioned_queries": [
                 "Mobadersany | Predicting cancer outcomes from histology"
@@ -2847,6 +2908,8 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["related_work_candidate_preview"][0]["title"] == "A"
     assert summary["related_work_discovery_error_count"] == 1
     assert summary["related_work_discovery_error_sources"] == ["recent_search"]
+    assert summary["related_work_discovery_error_details"][0]["source"] == "recent_search"
+    assert summary["related_work_discovery_error_details"][0]["query"] == "whole slide images survival prediction"
     assert summary["experiment_result_tables"] == 1
     assert summary["experiment_contract_status"] == "needs_attention"
     assert summary["experiment_contract_warnings"] == 1
@@ -7968,6 +8031,14 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
                     "related_work_baseline_mentioned_queries": [
                         "Mobadersany | Predicting cancer outcomes from histology"
                     ],
+                    "related_work_discovery_error_details": [
+                        {
+                            "source": "baseline_mentions",
+                            "query": "Mobadersany | Predicting cancer outcomes from histology",
+                            "sort": "relevance_score:desc",
+                            "error": "timeout",
+                        }
+                    ],
                     "related_work_candidates": [],
                     "related_work_discovery_errors": {"baseline_mentions": "timeout"},
                     "section_writer_llm_successes": [],
@@ -8050,6 +8121,10 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert "- Related-work field query: `whole slide images survival prediction`" in acceptance_report
     assert (
         "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`"
+        in acceptance_report
+    )
+    assert (
+        "- Related-work error detail 1: source=baseline_mentions; query=Mobadersany | Predicting cancer outcomes from histology; sort=relevance_score:desc; error=timeout"
         in acceptance_report
     )
     assert "related_work_online" in acceptance_report
@@ -8794,6 +8869,14 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                 ],
                 "related_work_discovery_error_count": 1,
                 "related_work_discovery_error_sources": ["recent_search"],
+                "related_work_discovery_error_details": [
+                    {
+                        "source": "recent_search",
+                        "query": "whole slide images survival prediction",
+                        "sort": "publication_date:desc",
+                        "error": "timeout",
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -8844,6 +8927,7 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["related_work_field_query"] == "whole slide images survival prediction"
     assert quality["related_work_baseline_mentioned_queries"][0].startswith("Mobadersany |")
     assert quality["related_work_candidate_preview"][0]["category"] == "baseline_mentioned"
+    assert quality["related_work_discovery_error_details"][0]["source"] == "recent_search"
     assert "- LLM sections: 2/3; successes: abstract, method" in report
     assert "- LLM calls: 2/3; tokens=512" in report
     assert "- LLM self-review: llm; auto_revisions=1" in report
@@ -8856,6 +8940,10 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert "- Field query: `whole slide images survival prediction`" in report
     assert "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`" in report
     assert "- Candidate preview: [baseline_mentioned] Predicting cancer outcomes from histology; [influential] Computational pathology survey" in report
+    assert (
+        "- Discovery error detail 1: source=recent_search; query=whole slide images survival prediction; sort=publication_date:desc; error=timeout"
+        in report
+    )
     assert "- Discovery errors: 1; sources=recent_search" in report
 
 

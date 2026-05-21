@@ -6329,6 +6329,10 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     related_work_candidate_preview = quality.get("related_work_candidate_preview", [])
     if not isinstance(related_work_candidate_preview, list):
         related_work_candidate_preview = []
+    related_work_error_details = _related_work_discovery_error_details(
+        quality.get("related_work_discovery_error_details", []),
+        limit=3,
+    )
     llm_attempted_count = len(llm_attempted) if llm_attempted else quality.get("llm_section_call_count", 0)
     lines = [
         "# Research Paper Guide Report",
@@ -6374,6 +6378,8 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             preview_items.append(f"[{category}] {title}")
         if preview_items:
             lines.append(f"- Candidate preview: {'; '.join(preview_items)}")
+    for index, detail in enumerate(related_work_error_details, start=1):
+        lines.append(f"- Discovery error detail {index}: {_related_work_error_detail_text(detail)}")
     lines.extend(
         [
             "",
@@ -6634,6 +6640,10 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         ),
         "related_work_discovery_error_count": paper_summary.get("related_work_discovery_error_count", 0),
         "related_work_discovery_error_sources": paper_summary.get("related_work_discovery_error_sources", []),
+        "related_work_discovery_error_details": _related_work_discovery_error_details(
+            paper_summary.get("related_work_discovery_error_details", []),
+            limit=5,
+        ),
         "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
         "llm_provider": paper_llm.get("provider", paper_inputs.get("llm_provider", "")),
         "llm_model": paper_llm.get("model", paper_inputs.get("llm_model", "")),
@@ -6749,6 +6759,52 @@ def _related_work_candidate_preview(value: object, *, limit: int = 10) -> list[d
             }
         )
     return preview
+
+
+def _related_work_discovery_error_details(value: object, *, limit: int = 5) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    details: list[dict[str, str]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source", "") or "")
+        error = str(item.get("error", "") or "")
+        query = str(item.get("query", "") or "")
+        filter_value = str(item.get("filter", "") or "")
+        sort = str(item.get("sort", "") or "")
+        if not (source or error or query or filter_value or sort):
+            continue
+        details.append(
+            {
+                "source": source,
+                "error": error,
+                "query": query,
+                "filter": filter_value,
+                "sort": sort,
+            }
+        )
+    return details
+
+
+def _related_work_error_detail_text(detail: dict[str, str]) -> str:
+    parts: list[str] = []
+    source = str(detail.get("source", "") or "")
+    query = str(detail.get("query", "") or "")
+    filter_value = str(detail.get("filter", "") or "")
+    sort = str(detail.get("sort", "") or "")
+    error = str(detail.get("error", "") or "")
+    if source:
+        parts.append(f"source={source}")
+    if query:
+        parts.append(f"query={query}")
+    if filter_value:
+        parts.append(f"filter={filter_value}")
+    if sort:
+        parts.append(f"sort={sort}")
+    if error:
+        parts.append(f"error={error}")
+    return "; ".join(parts)
 
 
 def _related_work_discovery_summary(source: dict[str, object]) -> dict[str, object]:
@@ -7063,6 +7119,10 @@ def _build_related_work_doctor_report(summary: dict[str, object]) -> str:
     mentioned_queries = summary.get("related_work_baseline_mentioned_queries", [])
     if not isinstance(mentioned_queries, list):
         mentioned_queries = []
+    error_details = _related_work_discovery_error_details(
+        summary.get("related_work_discovery_error_details", []),
+        limit=3,
+    )
     lines = [
         "# Related-Work Doctor Report",
         "",
@@ -7095,6 +7155,8 @@ def _build_related_work_doctor_report(summary: dict[str, object]) -> str:
             lines.append(f"- Baseline mention query {index}: `{str(query)}`")
     else:
         lines.append("- Baseline mention queries: none")
+    for index, detail in enumerate(error_details, start=1):
+        lines.append(f"- Discovery error detail {index}: {_related_work_error_detail_text(detail)}")
     lines.extend(
         [
             "",
@@ -8758,6 +8820,10 @@ def _build_acceptance_report(
     related_work_candidate_preview = summary.get("related_work_candidate_preview", [])
     if not isinstance(related_work_candidate_preview, list):
         related_work_candidate_preview = []
+    related_work_error_details = _related_work_discovery_error_details(
+        summary.get("related_work_discovery_error_details", []),
+        limit=3,
+    )
     lines = [
         "# Paper Agent Acceptance Report",
         "",
@@ -8842,6 +8908,8 @@ def _build_acceptance_report(
             preview_items.append(f"[{category}] {title}")
         if preview_items:
             lines.append(f"- Related-work candidate preview: {'; '.join(preview_items)}")
+    for index, detail in enumerate(related_work_error_details, start=1):
+        lines.append(f"- Related-work error detail {index}: {_related_work_error_detail_text(detail)}")
     lines.extend(
         [
             "",
@@ -9503,6 +9571,10 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         ),
         "related_work_discovery_error_count": related_work.get("error_count", 0),
         "related_work_discovery_error_sources": related_work.get("error_sources", []),
+        "related_work_discovery_error_details": _related_work_discovery_error_details(
+            artifacts.get("related_work_discovery_error_details", []),
+            limit=5,
+        ),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
         "experiment_numeric_comparisons": sum(
             len(table.comparisons)

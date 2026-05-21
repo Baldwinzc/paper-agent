@@ -24,6 +24,7 @@ class RelatedWorkDiscoveryAgent:
 
         artifacts = state.setdefault("artifacts", {})
         errors: dict[str, str] = {}
+        error_details: list[dict[str, str]] = []
         candidates: list[CitationEntry] = []
         baseline_work: dict[str, Any] | None = None
         baseline = state.get("baseline")
@@ -34,24 +35,58 @@ class RelatedWorkDiscoveryAgent:
                 baseline_work = self._search_work(baseline.title)
             except Exception as exc:
                 errors["baseline_search"] = str(exc)
+                error_details.append(
+                    self._error_detail(
+                        source="baseline_search",
+                        error=str(exc),
+                        query=baseline.title,
+                        sort="relevance_score:desc",
+                    )
+                )
 
         if baseline_work:
             try:
                 candidates.extend(self._referenced_work_candidates(baseline_work, limit=3))
             except Exception as exc:
                 errors["baseline_references"] = str(exc)
+                references = [self._openalex_id(work_id) for work_id in baseline_work.get("referenced_works", [])]
+                error_details.append(
+                    self._error_detail(
+                        source="baseline_references",
+                        error=str(exc),
+                        filter="openalex_id:" + "|".join([work_id for work_id in references if work_id][:25]),
+                        sort="cited_by_count:desc",
+                    )
+                )
             try:
                 candidates.extend(self._citing_work_candidates(baseline_work, limit=3))
             except Exception as exc:
                 errors["baseline_citations"] = str(exc)
+                error_details.append(
+                    self._error_detail(
+                        source="baseline_citations",
+                        error=str(exc),
+                        filter=f"cites:{self._openalex_id(str(baseline_work.get('id') or ''))}",
+                        sort="publication_date:desc",
+                    )
+                )
 
         if baseline:
+            mentioned_queries: list[str] = []
             try:
                 mentioned_queries = self._mentioned_work_queries(baseline)
                 artifacts["related_work_baseline_mentioned_queries"] = mentioned_queries
                 candidates.extend(self._mentioned_work_candidates(baseline, limit=3, queries=mentioned_queries))
             except Exception as exc:
                 errors["baseline_mentions"] = str(exc)
+                error_details.append(
+                    self._error_detail(
+                        source="baseline_mentions",
+                        error=str(exc),
+                        query=self._compact_trace_value("; ".join(mentioned_queries[:3])),
+                        sort="relevance_score:desc",
+                    )
+                )
 
         query = self._field_query(state)
         artifacts["related_work_field_query"] = query
@@ -68,6 +103,14 @@ class RelatedWorkDiscoveryAgent:
                 )
             except Exception as exc:
                 errors["influential_search"] = str(exc)
+                error_details.append(
+                    self._error_detail(
+                        source="influential_search",
+                        error=str(exc),
+                        query=query,
+                        sort="cited_by_count:desc",
+                    )
+                )
             try:
                 candidates.extend(
                     self._search_candidates(
@@ -80,6 +123,14 @@ class RelatedWorkDiscoveryAgent:
                 )
             except Exception as exc:
                 errors["recent_search"] = str(exc)
+                error_details.append(
+                    self._error_detail(
+                        source="recent_search",
+                        error=str(exc),
+                        query=query,
+                        sort="publication_date:desc",
+                    )
+                )
 
         existing = self._resolve_baseline_seed_entries(state.get("bibliography", []), baseline_work)
         merged = self._merge_entries(existing, candidates)
@@ -95,6 +146,8 @@ class RelatedWorkDiscoveryAgent:
         self._update_reference_verification(artifacts, merged)
         if errors:
             artifacts["related_work_discovery_errors"] = errors
+        if error_details:
+            artifacts["related_work_discovery_error_details"] = error_details
         return state
 
     def _disabled(self) -> bool:
@@ -624,6 +677,33 @@ class RelatedWorkDiscoveryAgent:
             if doi.lower().startswith(prefix):
                 return doi[len(prefix) :]
         return doi
+
+    def _error_detail(
+        self,
+        *,
+        source: str,
+        error: str,
+        query: str = "",
+        filter: str = "",
+        sort: str = "",
+    ) -> dict[str, str]:
+        detail = {
+            "source": source,
+            "error": self._compact_trace_value(error),
+        }
+        if query:
+            detail["query"] = self._compact_trace_value(query)
+        if filter:
+            detail["filter"] = self._compact_trace_value(filter)
+        if sort:
+            detail["sort"] = sort
+        return detail
+
+    def _compact_trace_value(self, value: str, limit: int = 240) -> str:
+        compact = re.sub(r"\s+", " ", value or "").strip()
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
 
     def _work_url(self, work: dict[str, Any], doi: str) -> str:
         if doi:

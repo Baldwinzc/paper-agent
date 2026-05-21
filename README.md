@@ -50,7 +50,7 @@ The current scaffold supports:
   the baseline, influential field papers, and recent field papers.
 - Run summaries, acceptance reports, and research-guide reports surface the
   related-work discovery mode, field query, baseline mention queries, candidate
-  buckets, and retrieval error sources.
+  buckets, retrieval error sources, and query-specific discovery error details.
 - A standalone `related-work-doctor` CLI can run only the baseline/reference/
   literature-discovery path and write a focused diagnostic summary/report with
   retrieval queries, candidate buckets, and repair commands.
