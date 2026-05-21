@@ -5440,6 +5440,11 @@ def _run_llm_draft_smoke(args: argparse.Namespace) -> None:
     summary = _build_run_summary(state, markdown_path)
     acceptance_report_path = output_dir / "ACCEPTANCE_REPORT.md"
     summary["outputs"]["acceptance_report_path"] = str(acceptance_report_path)
+    _apply_acceptance_statuses(
+        summary,
+        min_llm_sections=args.min_llm_sections,
+        require_llm_self_review=args.include_llm_self_review,
+    )
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
     _write_acceptance_report(
         summary,
@@ -5662,6 +5667,11 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         summary["next_actions"] = next_actions
         summary["next_action"] = str(next_actions[0].get("action", "") or "")
         summary["next_command"] = str(next_actions[0].get("command", "") or "")
+    _apply_acceptance_statuses(
+        summary,
+        min_llm_sections=args.min_llm_sections if args.require_llm else 0,
+        require_llm_self_review=args.include_llm_self_review,
+    )
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
     _write_acceptance_report(
         summary,
@@ -5799,16 +5809,24 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
             ("generated_experiment_results", "file", inputs.get("experiment_results_path", ""))
         )
     artifact_specs.extend(_paper_e2e_artifact_template_manifest_specs(summary))
+    acceptance = {
+        "overall_status": str(summary.get("acceptance_overall_status", "") or ""),
+        "pipeline_status": str(summary.get("acceptance_pipeline_status", "") or ""),
+        "submission_evidence_status": str(
+            summary.get("acceptance_submission_evidence_status", "") or ""
+        ),
+    }
 
     return {
         "schema_version": "paper-e2e-artifact-manifest/v1",
-        "status": summary.get("status", "pass"),
+        "status": _paper_e2e_manifest_status(summary),
         "project_name": summary.get("project_name", ""),
         "target_venue": summary.get("target_venue", ""),
         "manifest_path": str(manifest_path),
         "smoke_contract_status": smoke_contract.get("status", "")
         if isinstance(smoke_contract, dict)
         else "",
+        "acceptance": acceptance,
         "llm": {
             "mode": inputs.get("llm_mode", smoke_checks.get("llm_mode", "")),
             "provider": inputs.get("llm_provider", ""),
@@ -5852,6 +5870,20 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
             if str(path_value or "")
         ],
     }
+
+
+def _paper_e2e_manifest_status(summary: dict) -> str:
+    summary_status = str(summary.get("status", "") or "")
+    if summary_status == "blocked":
+        return "blocked"
+    acceptance_overall = str(summary.get("acceptance_overall_status", "") or "")
+    if acceptance_overall == "FAIL":
+        return "fail"
+    if acceptance_overall == "PASS_WITH_WARNINGS":
+        return "pass_with_warnings"
+    if acceptance_overall == "PASS":
+        return "pass"
+    return summary_status or "pass"
 
 
 def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -> dict[str, object]:
@@ -6425,6 +6457,9 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             "## Paper Acceptance",
             "",
             f"- Manifest status: {quality.get('manifest_status', paper_manifest.get('status', 'not found'))}",
+            f"- Acceptance overall: {quality.get('acceptance_overall_status', 'not recorded')}",
+            f"- Acceptance pipeline: {quality.get('acceptance_pipeline_status', 'not recorded')}",
+            f"- Submission evidence: {quality.get('acceptance_submission_evidence_status', 'not recorded')}",
             f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
             f"- Experiment contract: {quality.get('experiment_contract_status', paper_experiment.get('contract_status', 'not recorded'))}",
             f"- LLM mode: {quality.get('llm_mode', paper_llm.get('mode', 'not recorded'))}",
@@ -6460,6 +6495,21 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             lines.append(f"- Source: {_table_safe(str(blocking_evidence.get('source', '')))}")
         if blocking_evidence.get("pipeline_phase"):
             lines.append(f"- Child phase: {_table_safe(str(blocking_evidence.get('pipeline_phase', '')))}")
+        if blocking_evidence.get("acceptance_overall_status"):
+            lines.append(
+                "- Acceptance overall: "
+                f"{_table_safe(str(blocking_evidence.get('acceptance_overall_status', '')))}"
+            )
+        if blocking_evidence.get("acceptance_pipeline_status"):
+            lines.append(
+                "- Acceptance pipeline: "
+                f"{_table_safe(str(blocking_evidence.get('acceptance_pipeline_status', '')))}"
+            )
+        if blocking_evidence.get("acceptance_submission_evidence_status"):
+            lines.append(
+                "- Submission evidence: "
+                f"{_table_safe(str(blocking_evidence.get('acceptance_submission_evidence_status', '')))}"
+            )
         if blocking_evidence.get("experiment_contract_status"):
             lines.append(
                 f"- Experiment contract: {_table_safe(str(blocking_evidence.get('experiment_contract_status', '')))}"
@@ -6621,6 +6671,9 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
     paper_manifest = _read_optional_json_object(str(outputs.get("paper_artifact_manifest", "")))
     paper_inputs = paper_summary.get("inputs", {}) if isinstance(paper_summary.get("inputs", {}), dict) else {}
     paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
+    paper_acceptance = (
+        paper_manifest.get("acceptance", {}) if isinstance(paper_manifest.get("acceptance", {}), dict) else {}
+    )
     paper_experiment = (
         paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     )
@@ -6646,6 +6699,18 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         ),
         "manifest_status": paper_manifest.get("status", "not found"),
         "smoke_contract_status": paper_manifest.get("smoke_contract_status", "not recorded"),
+        "acceptance_overall_status": paper_acceptance.get(
+            "overall_status",
+            paper_summary.get("acceptance_overall_status", "not recorded"),
+        ),
+        "acceptance_pipeline_status": paper_acceptance.get(
+            "pipeline_status",
+            paper_summary.get("acceptance_pipeline_status", "not recorded"),
+        ),
+        "acceptance_submission_evidence_status": paper_acceptance.get(
+            "submission_evidence_status",
+            paper_summary.get("acceptance_submission_evidence_status", "not recorded"),
+        ),
         "experiment_contract_status": paper_experiment.get(
             "contract_status",
             paper_summary.get("experiment_contract_status", "not recorded"),
@@ -6731,6 +6796,7 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
 def _research_paper_guide_blocking_evidence(outputs: dict[str, object]) -> dict[str, object]:
     result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
     paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
+    paper_manifest = _read_optional_json_object(str(outputs.get("paper_artifact_manifest", "")))
     if str(paper_summary.get("status", "") or "") == "blocked":
         diagnostics = paper_summary.get("llm_diagnostics", {})
         if not isinstance(diagnostics, dict):
@@ -6761,6 +6827,50 @@ def _research_paper_guide_blocking_evidence(outputs: dict[str, object]) -> dict[
             "artifact_template_status": str(artifact_template.get("status", "") or ""),
             "artifact_template_output_dir": str(artifact_template.get("output_dir", "") or ""),
             "artifact_template_command": str(artifact_template.get("command", "") or ""),
+        }
+    paper_acceptance = (
+        paper_manifest.get("acceptance", {}) if isinstance(paper_manifest.get("acceptance", {}), dict) else {}
+    )
+    acceptance_overall = str(
+        paper_acceptance.get("overall_status", "")
+        or paper_summary.get("acceptance_overall_status", "")
+        or ""
+    )
+    if acceptance_overall == "FAIL":
+        contract = _summary_experiment_contract(paper_summary)
+        quality = _summary_experiment_quality(paper_summary)
+        provenance = _summary_experiment_provenance(paper_summary)
+        consistency = _summary_experiment_artifact_consistency(paper_summary)
+        return {
+            "source": "paper_e2e",
+            "pipeline_phase": "paper_e2e_acceptance_failed",
+            "acceptance_overall_status": acceptance_overall,
+            "acceptance_pipeline_status": str(
+                paper_acceptance.get("pipeline_status", "")
+                or paper_summary.get("acceptance_pipeline_status", "")
+                or ""
+            ),
+            "acceptance_submission_evidence_status": str(
+                paper_acceptance.get("submission_evidence_status", "")
+                or paper_summary.get("acceptance_submission_evidence_status", "")
+                or ""
+            ),
+            "experiment_contract_status": str(contract.get("status", "") or ""),
+            "experiment_contract_errors": list(contract.get("errors", []))
+            if isinstance(contract.get("errors", []), list)
+            else [],
+            "experiment_quality_status": str(quality.get("status", "") or ""),
+            "experiment_quality_errors": list(quality.get("errors", []))
+            if isinstance(quality.get("errors", []), list)
+            else [],
+            "experiment_provenance_status": str(provenance.get("status", "") or ""),
+            "experiment_provenance_errors": list(provenance.get("errors", []))
+            if isinstance(provenance.get("errors", []), list)
+            else [],
+            "experiment_artifact_consistency_status": str(consistency.get("status", "") or ""),
+            "experiment_artifact_consistency_errors": list(consistency.get("errors", []))
+            if isinstance(consistency.get("errors", []), list)
+            else [],
         }
     if str(result_summary.get("status", "") or "") == "blocked":
         todo_files = result_summary.get("artifact_csv_todo_files", [])
@@ -7503,7 +7613,15 @@ def _run_paper_e2e_acceptance(args: argparse.Namespace) -> None:
             output=str(showcase_path),
         )
     )
+    manifest = _read_json_object(manifest_path, "Paper E2E artifact manifest")
+    acceptance = manifest.get("acceptance", {}) if isinstance(manifest.get("acceptance", {}), dict) else {}
+    acceptance_overall = str(
+        acceptance.get("overall_status", "")
+        or ("FAIL" if manifest.get("status") == "fail" else "")
+    )
     print(f"Paper E2E acceptance artifacts: {output_dir}")
+    if acceptance_overall and acceptance_overall != "PASS":
+        print(f"Acceptance overall status: {acceptance_overall}")
     print("paper-e2e-acceptance passed.")
 
 
@@ -8696,6 +8814,11 @@ def _write_run_reports(
     summary = _build_run_summary(state, markdown_path)
     if resolved_report_path:
         summary["outputs"]["acceptance_report_path"] = str(resolved_report_path)
+    _apply_acceptance_statuses(
+        summary,
+        min_llm_sections=min_llm_sections,
+        require_llm_self_review=require_llm_self_review,
+    )
 
     written_summary_path = _write_run_summary_data(summary, summary_path) if summary_path else None
     written_report_path = (
@@ -8895,18 +9018,34 @@ def _write_acceptance_report(
     return report_path
 
 
-def _build_acceptance_report(
+def _apply_acceptance_statuses(
     summary: dict,
     *,
     min_llm_sections: int = 4,
     require_llm_self_review: bool = False,
-) -> str:
+) -> dict[str, object]:
+    bundle = _acceptance_status_bundle(
+        summary,
+        min_llm_sections=min_llm_sections,
+        require_llm_self_review=require_llm_self_review,
+    )
+    summary["acceptance_overall_status"] = bundle["overall"]
+    summary["acceptance_pipeline_status"] = bundle["pipeline_status"]
+    summary["acceptance_submission_evidence_status"] = bundle["submission_evidence_status"]
+    return bundle
+
+
+def _acceptance_status_bundle(
+    summary: dict,
+    *,
+    min_llm_sections: int = 4,
+    require_llm_self_review: bool = False,
+) -> dict[str, object]:
     experiment_evidence = _summary_experiment_evidence(summary)
     experiment_contract = _summary_experiment_contract(summary)
     experiment_quality = _summary_experiment_quality(summary)
     experiment_provenance = _summary_experiment_provenance(summary)
     artifact_consistency = _summary_experiment_artifact_consistency(summary)
-    related_work = _related_work_discovery_summary(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -8925,6 +9064,39 @@ def _build_acceptance_report(
         experiment_provenance,
         artifact_consistency,
     )
+    return {
+        "checks": checks,
+        "failed": failed,
+        "warnings": warnings,
+        "overall": overall,
+        "pipeline_status": pipeline_status,
+        "submission_evidence_status": submission_evidence_status,
+    }
+
+
+def _build_acceptance_report(
+    summary: dict,
+    *,
+    min_llm_sections: int = 4,
+    require_llm_self_review: bool = False,
+) -> str:
+    experiment_evidence = _summary_experiment_evidence(summary)
+    experiment_contract = _summary_experiment_contract(summary)
+    experiment_quality = _summary_experiment_quality(summary)
+    experiment_provenance = _summary_experiment_provenance(summary)
+    artifact_consistency = _summary_experiment_artifact_consistency(summary)
+    related_work = _related_work_discovery_summary(summary)
+    acceptance = _acceptance_status_bundle(
+        summary,
+        min_llm_sections=min_llm_sections,
+        require_llm_self_review=require_llm_self_review,
+    )
+    checks = acceptance["checks"]
+    failed = acceptance["failed"]
+    warnings = acceptance["warnings"]
+    overall = acceptance["overall"]
+    pipeline_status = acceptance["pipeline_status"]
+    submission_evidence_status = acceptance["submission_evidence_status"]
 
     inputs = summary.get("inputs", {})
     outputs = summary.get("outputs", {})

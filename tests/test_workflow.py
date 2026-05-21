@@ -8638,6 +8638,127 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert labels["latex_project"]["kind"] == "directory"
 
 
+def test_cli_paper_e2e_smoke_manifest_tracks_acceptance_failure(monkeypatch, tmp_path, capsys):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "results.md"
+    latex_dir = tmp_path / "latex"
+    output_dir = tmp_path / "paper-smoke"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| ProtoSurv baseline | 0.646 |\n"
+        "| Hyper-ProtoSurv ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            self.llm_client = llm_client
+
+        def run(self, request):
+            return {
+                "request": request,
+                "final_markdown": "# Draft\n\n## Related Work\n\nMissing one planned thread.",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "reference_resolver_mode": "openalex",
+                    "related_work_discovery_mode": "openalex",
+                    "related_work_candidates": [
+                        {"category": "baseline_reference", "title": "Baseline paper"},
+                        {"category": "recent", "title": "Recent paper"},
+                    ],
+                    "related_work_brief": {
+                        "thread_plan": [
+                            {
+                                "thread_id": "baseline_lineage",
+                                "heading": "Baseline Lineage",
+                                "candidate_count": 1,
+                                "categories": ["baseline_reference"],
+                            },
+                            {
+                                "thread_id": "recent_developments",
+                                "heading": "Recent Developments",
+                                "candidate_count": 1,
+                                "categories": ["recent"],
+                            },
+                        ]
+                    },
+                    "related_work_thread_alignment": [
+                        {
+                            "thread_id": "baseline_lineage",
+                            "heading": "Baseline Lineage",
+                            "covered": True,
+                            "heading_present": True,
+                            "matched_candidate_keys": ["baselinepaper"],
+                            "matched_candidate_titles": [],
+                            "status": "aligned",
+                        },
+                        {
+                            "thread_id": "recent_developments",
+                            "heading": "Recent Developments",
+                            "covered": False,
+                            "heading_present": False,
+                            "matched_candidate_keys": [],
+                            "matched_candidate_titles": [],
+                            "status": "missing",
+                        },
+                    ],
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-smoke",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--no-strict-results",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RUN_SUMMARY.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    acceptance_report = (output_dir / "ACCEPTANCE_REPORT.md").read_text(encoding="utf-8")
+    assert "paper-e2e-smoke passed." in output
+    assert summary["acceptance_overall_status"] == "FAIL"
+    assert summary["acceptance_pipeline_status"] == "FAIL"
+    assert manifest["status"] == "fail"
+    assert manifest["smoke_contract_status"] == "pass"
+    assert manifest["acceptance"]["overall_status"] == "FAIL"
+    assert manifest["acceptance"]["pipeline_status"] == "FAIL"
+    assert manifest["acceptance"]["submission_evidence_status"] == "WARN"
+    assert "- Overall status: FAIL" in acceptance_report
+    assert "| Related-work thread coverage | FAIL | aligned=1/2; covered=1/2; missing=1; partial=0 |" in acceptance_report
+
+
 def test_cli_paper_e2e_smoke_records_successful_llm_preflight(
     monkeypatch,
     tmp_path,
@@ -9076,6 +9197,132 @@ def test_cli_paper_e2e_acceptance_runs_smoke_and_showcase_report(
     assert "| overleaf_zip | yes |" in showcase_report
 
 
+def test_cli_paper_e2e_acceptance_surfaces_failed_acceptance_status(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    experiment_path = tmp_path / "results.md"
+    latex_dir = tmp_path / "latex"
+    output_dir = tmp_path / "paper-acceptance"
+    showcase_path = tmp_path / "SHOWCASE_REPORT.md"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    latex_dir.mkdir()
+    experiment_path.write_text(
+        "| Method | BLCA C-index |\n"
+        "|---|---:|\n"
+        "| ProtoSurv baseline | 0.646 |\n"
+        "| Hyper-ProtoSurv ours | 0.671 |\n",
+        encoding="utf-8",
+    )
+    (latex_dir / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (latex_dir / "DRAFT_REPORT.md").write_text("# Report", encoding="utf-8")
+
+    class FakeWorkflow:
+        def __init__(self, llm_client=None):
+            self.llm_client = llm_client
+
+        def run(self, request):
+            return {
+                "request": request,
+                "final_markdown": "# Draft\n\n## Related Work\n\nMissing one planned thread.",
+                "venue_template": VenueTemplate(venue="TPAMI", template_source="built-in"),
+                "bibliography": [],
+                "artifacts": {
+                    "section_writer_mode": "deterministic",
+                    "reference_resolver_mode": "openalex",
+                    "related_work_discovery_mode": "openalex",
+                    "related_work_candidates": [
+                        {"category": "baseline_reference", "title": "Baseline paper"},
+                        {"category": "recent", "title": "Recent paper"},
+                    ],
+                    "related_work_brief": {
+                        "thread_plan": [
+                            {
+                                "thread_id": "baseline_lineage",
+                                "heading": "Baseline Lineage",
+                                "candidate_count": 1,
+                                "categories": ["baseline_reference"],
+                            },
+                            {
+                                "thread_id": "recent_developments",
+                                "heading": "Recent Developments",
+                                "candidate_count": 1,
+                                "categories": ["recent"],
+                            },
+                        ]
+                    },
+                    "related_work_thread_alignment": [
+                        {
+                            "thread_id": "baseline_lineage",
+                            "heading": "Baseline Lineage",
+                            "covered": True,
+                            "heading_present": True,
+                            "matched_candidate_keys": ["baselinepaper"],
+                            "matched_candidate_titles": [],
+                            "status": "aligned",
+                        },
+                        {
+                            "thread_id": "recent_developments",
+                            "heading": "Recent Developments",
+                            "covered": False,
+                            "heading_present": False,
+                            "matched_candidate_keys": [],
+                            "matched_candidate_titles": [],
+                            "status": "missing",
+                        },
+                    ],
+                    "section_writer_llm_successes": [],
+                    "llm_self_review": {"mode": "disabled"},
+                    "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
+                    "experiment_result_tables": [{"title": "Main results"}],
+                },
+                "latex_output_path": latex_dir / "main.tex",
+                "latex_project_dir": latex_dir,
+                "review_findings": [],
+            }
+
+    monkeypatch.setattr(cli_module, "PaperWorkflow", FakeWorkflow)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "paper-e2e-acceptance",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--experiment-results",
+            str(experiment_path),
+            "--target-venue",
+            "TPAMI",
+            "--output-dir",
+            str(output_dir),
+            "--showcase-report",
+            str(showcase_path),
+            "--no-strict-results",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    manifest = json.loads((output_dir / "ARTIFACT_MANIFEST.json").read_text(encoding="utf-8"))
+    showcase_report = showcase_path.read_text(encoding="utf-8")
+    assert "paper-e2e-smoke passed." in output
+    assert "Paper E2E showcase report written to" in output
+    assert "Acceptance overall status: FAIL" in output
+    assert "paper-e2e-acceptance passed." in output
+    assert manifest["status"] == "fail"
+    assert manifest["acceptance"]["overall_status"] == "FAIL"
+    assert showcase_path.is_file()
+    assert "- Status: fail" in showcase_report
+    assert "- Overall status: FAIL" in showcase_report
+
+
 def test_cli_paper_e2e_acceptance_writes_showcase_on_strict_block(
     monkeypatch,
     tmp_path,
@@ -9426,6 +9673,11 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
             {
                 "status": "pass",
                 "smoke_contract_status": "pass",
+                "acceptance": {
+                    "overall_status": "PASS_WITH_WARNINGS",
+                    "pipeline_status": "FAIL",
+                    "submission_evidence_status": "PASS",
+                },
                 "experiment": {"contract_status": "complete"},
                 "llm": {
                     "mode": "required",
@@ -9460,6 +9712,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["llm_section_successes"] == ["abstract", "method"]
     assert quality["llm_section_total_tokens"] == 512
     assert quality["latex_compile_status"] == "passed"
+    assert quality["acceptance_overall_status"] == "PASS_WITH_WARNINGS"
+    assert quality["acceptance_pipeline_status"] == "FAIL"
+    assert quality["acceptance_submission_evidence_status"] == "PASS"
     assert quality["experiment_provenance_status"] == "complete"
     assert quality["experiment_artifact_consistency_status"] == "complete"
     assert quality["related_work_discovery_mode"] == "openalex"
@@ -9501,6 +9756,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
         in report
     )
     assert "- Discovery errors: 1; sources=recent_search" in report
+    assert "- Acceptance overall: PASS_WITH_WARNINGS" in report
+    assert "- Acceptance pipeline: FAIL" in report
+    assert "- Submission evidence: PASS" in report
 
 
 def test_cli_research_paper_guide_use_existing_skips_result_guide(
@@ -9585,6 +9843,8 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     assert not (output_dir / "RESULT_GUIDE_SUMMARY.json").exists()
     assert summary["quality_evidence"]["result_guide_status"] == "not_run"
     assert summary["quality_evidence"]["result_guide_phase"] == "use_existing_results"
+    assert summary["quality_evidence"]["manifest_status"] == "fail"
+    assert summary["quality_evidence"]["acceptance_overall_status"] == "FAIL"
     assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 3
     assert [action["category"] for action in summary["next_actions"]] == [
         "related_work_online",
@@ -9593,9 +9853,12 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     ]
     assert "- Result guide status: not_run" in report
     assert "- Result guide phase: use_existing_results" in report
+    assert "- Manifest status: fail" in report
+    assert "- Acceptance overall: FAIL" in report
     assert "## Next Actions" in report
     assert "related_work_online" in report
     assert "--online" in report
+    assert "Acceptance overall status: FAIL" in output
     assert captured["request"].experiment_results == result_path.read_text(encoding="utf-8")
 
 
