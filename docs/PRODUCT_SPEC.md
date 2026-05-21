@@ -164,6 +164,10 @@ console text. Through `paper-e2e-acceptance`, the same blocked state also gets a
 `SHOWCASE_REPORT.md`. The blocked summary includes a `next_actions` repair
 chain for validation, artifact-template creation, result generation from
 completed CSV artifacts, and smoke rerun.
+Completed paper E2E runs should also expose a stable `triage` object in
+`RUN_SUMMARY.json` and `ARTIFACT_MANIFEST.json`, and the showcase report should
+echo the same `status`, `priority`, and `repair_target` fields for direct
+automation-facing ranking.
 When an LLM-required smoke blocks during provider preflight, it writes the same
 blocked artifact set with sanitized provider diagnostics and repair commands.
 With `--write-artifact-template`, the blocked smoke can also write the TODO CSV

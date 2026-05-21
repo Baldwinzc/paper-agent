@@ -324,6 +324,10 @@ result-contract errors, and a `next_actions` repair chain: inspect with
 If `--require-llm` reaches the provider but preflight fails, the command also
 writes the same blocked artifact set with sanitized provider diagnostics and LLM
 repair commands, without recording API keys.
+Completed `paper-e2e` runs now also carry a stable `triage` object in
+`RUN_SUMMARY.json` and `ARTIFACT_MANIFEST.json`, and `SHOWCASE_REPORT.md`
+surfaces the same `status/priority/repair_target` summary for direct
+automation-facing ranking.
 Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
 templates immediately; use `--artifact-template-dir` to choose the output
 directory and fill the generated files with real trained-model outputs.

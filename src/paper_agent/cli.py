@@ -5824,6 +5824,7 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         "repair_target": str(summary.get("acceptance_repair_target", "") or ""),
         "reason": str(summary.get("acceptance_reason", "") or ""),
     }
+    triage = _paper_e2e_summary_triage(summary)
 
     return {
         "schema_version": "paper-e2e-artifact-manifest/v1",
@@ -5835,6 +5836,7 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         if isinstance(smoke_contract, dict)
         else "",
         "acceptance": acceptance,
+        "triage": triage,
         "llm": {
             "mode": inputs.get("llm_mode", smoke_checks.get("llm_mode", "")),
             "provider": inputs.get("llm_provider", ""),
@@ -5892,6 +5894,37 @@ def _paper_e2e_manifest_status(summary: dict) -> str:
     if acceptance_overall == "PASS":
         return "pass"
     return summary_status or "pass"
+
+
+def _paper_e2e_summary_triage(summary: dict) -> dict[str, object]:
+    triage = summary.get("triage", {})
+    if isinstance(triage, dict) and triage.get("status"):
+        return {
+            "status": str(triage.get("status", "") or ""),
+            "priority": str(triage.get("priority", "") or ""),
+            "priority_rank": int(triage.get("priority_rank", 0) or 0),
+            "repair_target": str(triage.get("repair_target", "") or ""),
+            "reason": str(triage.get("reason", "") or ""),
+        }
+    summary_status = str(summary.get("status", "") or "")
+    if summary_status == "blocked":
+        blocking_items = summary.get("blocking_items", [])
+        if not isinstance(blocking_items, list):
+            blocking_items = []
+        return {
+            "status": "blocked",
+            "priority": "high",
+            "priority_rank": 3,
+            "repair_target": str(summary.get("pipeline_phase", "") or "paper_e2e"),
+            "reason": str(blocking_items[0]) if blocking_items else str(summary.get("next_action", "") or "Pipeline blocked."),
+        }
+    return {
+        "status": str(summary.get("acceptance_triage_status", "") or "ready"),
+        "priority": str(summary.get("acceptance_priority", "") or "low"),
+        "priority_rank": int(summary.get("acceptance_priority_rank", 0) or 0),
+        "repair_target": str(summary.get("acceptance_repair_target", "") or ""),
+        "reason": str(summary.get("acceptance_reason", "") or "All acceptance checks passed."),
+    }
 
 
 def _paper_e2e_artifact_manifest_entry(label: str, kind: str, path_value: str) -> dict[str, object]:
@@ -7803,12 +7836,19 @@ def _build_paper_e2e_showcase_report(
         if isinstance(manifest.get("experiment", {}), dict)
         else {}
     )
+    triage = manifest.get("triage", {})
+    if not isinstance(triage, dict) or not triage:
+        triage = _paper_e2e_summary_triage(summary)
     lines = [
         "# Paper E2E Showcase Report",
         "",
         f"- Status: {manifest.get('status', summary.get('status', 'unknown'))}",
         f"- Project: {manifest.get('project_name', summary.get('project_name', ''))}",
         f"- Target venue: {manifest.get('target_venue', summary.get('target_venue', ''))}",
+        f"- Triage: {triage.get('status', 'not recorded')}",
+        f"- Priority: {triage.get('priority', 'not recorded')} (rank={triage.get('priority_rank', 'not recorded')})",
+        f"- Repair target: {triage.get('repair_target', 'not recorded')}",
+        f"- Repair reason: {triage.get('reason', 'not recorded')}",
         f"- Manifest: {manifest_path}",
         f"- Run summary: {summary_path or 'not found'}",
         f"- Acceptance report: {acceptance_path or 'not found'}",
@@ -8036,6 +8076,7 @@ def _write_paper_e2e_smoke_failure_summary(
             manifest_path=manifest_path,
         ),
     }
+    summary["triage"] = _paper_e2e_summary_triage(summary)
     written_summary_path = _write_run_summary_data(summary, summary_path)
     _write_paper_e2e_blocked_acceptance_report(summary, acceptance_report_path)
     _write_paper_e2e_artifact_manifest(summary, manifest_path)
@@ -8125,6 +8166,7 @@ def _write_paper_e2e_smoke_llm_failure_summary(
             manifest_path=manifest_path,
         ),
     }
+    summary["triage"] = _paper_e2e_summary_triage(summary)
     written_summary_path = _write_run_summary_data(summary, summary_path)
     _write_paper_e2e_blocked_acceptance_report(summary, acceptance_report_path)
     _write_paper_e2e_artifact_manifest(summary, manifest_path)
@@ -8141,6 +8183,7 @@ def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], repor
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list):
         next_actions = []
+    triage = _paper_e2e_summary_triage(summary)
     lines = [
         "# Paper Agent Blocked Acceptance Report",
         "",
@@ -8148,6 +8191,10 @@ def _write_paper_e2e_blocked_acceptance_report(summary: dict[str, object], repor
         f"- Pipeline phase: {summary.get('pipeline_phase', '')}",
         f"- Project: {summary.get('project_name', '')}",
         f"- Target venue: {summary.get('target_venue', '')}",
+        f"- Triage: {triage.get('status', 'not recorded')}",
+        f"- Priority: {triage.get('priority', 'not recorded')} (rank={triage.get('priority_rank', 'not recorded')})",
+        f"- Repair target: {triage.get('repair_target', 'not recorded')}",
+        f"- Repair reason: {triage.get('reason', 'not recorded')}",
         "",
         "## Acceptance Snapshot",
         "",
@@ -9169,6 +9216,7 @@ def _apply_acceptance_statuses(
     summary["acceptance_priority_rank"] = triage["priority_rank"]
     summary["acceptance_repair_target"] = triage["repair_target"]
     summary["acceptance_reason"] = triage["reason"]
+    summary["triage"] = _paper_e2e_summary_triage(summary)
     return bundle
 
 

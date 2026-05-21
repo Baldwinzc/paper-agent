@@ -8754,6 +8754,9 @@ def test_cli_paper_e2e_smoke_manifest_tracks_acceptance_failure(monkeypatch, tmp
     assert summary["acceptance_priority"] == "high"
     assert summary["acceptance_priority_rank"] == 2
     assert summary["acceptance_repair_target"] == "related_work_thread_coverage"
+    assert summary["triage"]["status"] == "needs_revision"
+    assert summary["triage"]["priority"] == "high"
+    assert summary["triage"]["repair_target"] == "related_work_thread_coverage"
     assert manifest["status"] == "fail"
     assert manifest["smoke_contract_status"] == "pass"
     assert manifest["acceptance"]["overall_status"] == "FAIL"
@@ -8763,6 +8766,9 @@ def test_cli_paper_e2e_smoke_manifest_tracks_acceptance_failure(monkeypatch, tmp
     assert manifest["acceptance"]["priority"] == "high"
     assert manifest["acceptance"]["priority_rank"] == 2
     assert manifest["acceptance"]["repair_target"] == "related_work_thread_coverage"
+    assert manifest["triage"]["status"] == "needs_revision"
+    assert manifest["triage"]["priority"] == "high"
+    assert manifest["triage"]["repair_target"] == "related_work_thread_coverage"
     assert "- Overall status: FAIL" in acceptance_report
     assert "| Related-work thread coverage | FAIL | aligned=1/2; covered=1/2; missing=1; partial=0 |" in acceptance_report
 
@@ -9017,6 +9023,13 @@ def test_cli_paper_e2e_report_writes_showcase_markdown(monkeypatch, tmp_path, ca
                 "project_name": "paper-smoke",
                 "target_venue": "TPAMI",
                 "smoke_contract_status": "pass",
+                "triage": {
+                    "status": "ready",
+                    "priority": "low",
+                    "priority_rank": 0,
+                    "repair_target": "",
+                    "reason": "All acceptance checks passed.",
+                },
                 "llm": {
                     "mode": "required",
                     "provider": "deepseek",
@@ -9089,6 +9102,8 @@ def test_cli_paper_e2e_report_writes_showcase_markdown(monkeypatch, tmp_path, ca
     assert "Paper E2E showcase report written to" in output
     assert "# Paper E2E Showcase Report" in report
     assert "- Project: paper-smoke" in report
+    assert "- Triage: ready" in report
+    assert "- Priority: low (rank=0)" in report
     assert "- Provider/model: deepseek / deepseek-v4-pro" in report
     assert "- Preflight: pass; tokens=12" in report
     assert "- Contract: complete" in report
@@ -9327,8 +9342,10 @@ def test_cli_paper_e2e_acceptance_surfaces_failed_acceptance_status(
     assert manifest["status"] == "fail"
     assert manifest["acceptance"]["overall_status"] == "FAIL"
     assert manifest["acceptance"]["triage_status"] == "needs_revision"
+    assert manifest["triage"]["status"] == "needs_revision"
     assert showcase_path.is_file()
     assert "- Status: fail" in showcase_report
+    assert "- Triage: needs_revision" in showcase_report
     assert "- Overall status: FAIL" in showcase_report
 
 
@@ -10168,10 +10185,16 @@ def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, t
     assert summary["smoke_contract"]["checks"]["strict_results"] is True
     assert summary["smoke_contract"]["checks"]["strict_results_accepted"] is False
     assert summary["smoke_contract"]["checks"]["llm_mode"] == "not_started"
+    assert summary["triage"]["status"] == "blocked"
+    assert summary["triage"]["priority"] == "high"
+    assert summary["triage"]["repair_target"] == "paper_e2e_smoke_preflight"
     assert manifest["status"] == "blocked"
     assert manifest["smoke_contract_status"] == "blocked"
+    assert manifest["triage"]["status"] == "blocked"
+    assert manifest["triage"]["priority"] == "high"
     assert manifest["experiment"]["contract_status"] == "invalid"
     assert "# Paper Agent Blocked Acceptance Report" in report
+    assert "- Triage: blocked" in report
     assert "| Experiment result contract | FAIL | invalid;" in report
     assert summary["next_command"].startswith("paper-agent validate-results")
     assert [action["category"] for action in summary["next_actions"]] == [
