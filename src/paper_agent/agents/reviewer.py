@@ -10,6 +10,12 @@ from paper_agent.state import PaperState, ReviewFinding
 class ReviewerAgent:
     """Flags risks before the draft is treated as paper-ready."""
 
+    RELATED_WORK_THREAD_HEADING_HINTS = {
+        "baseline_lineage": ("baseline lineage", "baseline family", "baseline context"),
+        "influential_context": ("influential field context", "field context", "influential context"),
+        "recent_developments": ("recent developments", "recent work", "recent literature"),
+    }
+
     METRIC_ALIASES = {
         "ACC": "ACCURACY",
         "ACCURACY": "ACCURACY",
@@ -192,6 +198,13 @@ class ReviewerAgent:
                 state.get("artifacts", {}).get("citation_key_aliases", {}),
             )
             state.setdefault("artifacts", {})["related_work_citation_coverage"] = coverage
+            thread_alignment = self._related_work_thread_alignment(
+                sections.related_work,
+                state.get("artifacts", {}).get("related_work_brief", {}),
+                state.get("bibliography", []),
+                state.get("artifacts", {}).get("citation_key_aliases", {}),
+            )
+            state.setdefault("artifacts", {})["related_work_thread_alignment"] = thread_alignment
             missing_coverage = [
                 item
                 for item in coverage
@@ -206,6 +219,23 @@ class ReviewerAgent:
                         suggestion=(
                             "Add verified citations to each research-thread subsection or remove "
                             "unsupported related-work claims."
+                        ),
+                    )
+                )
+            missing_threads = [
+                item
+                for item in thread_alignment
+                if item.get("expected") and not item.get("covered")
+            ]
+            if missing_threads:
+                threads = ", ".join(str(item.get("heading") or item.get("thread_id") or "") for item in missing_threads[:5])
+                findings.append(
+                    ReviewFinding(
+                        severity="minor",
+                        issue=f"Related Work misses planned literature threads: {threads}.",
+                        suggestion=(
+                            "Cover each planned related-work bucket with explicit discussion of the "
+                            "recovered candidates or adjust the discovery seeds before submission."
                         ),
                     )
                 )
@@ -307,6 +337,109 @@ class ReviewerAgent:
                 }
             )
         return coverage
+
+    def _related_work_thread_alignment(
+        self,
+        related_work: str,
+        brief: dict[str, object],
+        bibliography,
+        citation_aliases: dict[str, str],
+    ) -> list[dict[str, object]]:
+        if not related_work.strip() or not isinstance(brief, dict):
+            return []
+
+        thread_plan = brief.get("thread_plan", [])
+        if not isinstance(thread_plan, list):
+            return []
+
+        threads = self._related_work_threads(related_work)
+        headings = [heading for heading, _ in threads]
+        normalized_section = self._normalize_reference_text(related_work)
+        real_keys = {
+            entry.key
+            for entry in bibliography
+            if not self._unresolved_seed_entry(entry)
+        }
+        real_section_keys = [
+            key for key in self._citation_keys(related_work, citation_aliases) if key in real_keys
+        ]
+        alignment: list[dict[str, object]] = []
+        for item in thread_plan:
+            if not isinstance(item, dict):
+                continue
+            thread_id = str(item.get("thread_id", "") or "")
+            heading = str(item.get("heading", "") or thread_id or "unknown")
+            categories = [
+                str(category)
+                for category in item.get("categories", [])
+                if str(category)
+            ] if isinstance(item.get("categories", []), list) else []
+            candidates = item.get("candidates", [])
+            if not isinstance(candidates, list):
+                candidates = []
+            candidate_count = int(item.get("candidate_count", len(candidates)) or 0)
+            candidate_keys = [
+                str(candidate.get("key", "") or "")
+                for candidate in candidates
+                if isinstance(candidate, dict) and str(candidate.get("key", "") or "")
+            ]
+            candidate_titles = [
+                str(candidate.get("title", "") or "")
+                for candidate in candidates
+                if isinstance(candidate, dict) and str(candidate.get("title", "") or "")
+            ]
+            matched_keys = [key for key in candidate_keys if key in real_section_keys]
+            matched_titles = [
+                title
+                for title in candidate_titles
+                if self._normalize_reference_text(title) in normalized_section
+            ]
+            heading_present = any(
+                self._related_work_heading_matches(thread_id, heading, actual_heading)
+                for actual_heading in headings
+            )
+            covered = bool(matched_keys or matched_titles)
+            if heading_present and covered:
+                status = "aligned"
+            elif covered:
+                status = "mentioned_without_heading"
+            elif heading_present:
+                status = "heading_only"
+            else:
+                status = "missing"
+            alignment.append(
+                {
+                    "thread_id": thread_id,
+                    "heading": heading,
+                    "expected": candidate_count > 0,
+                    "candidate_count": candidate_count,
+                    "categories": categories,
+                    "heading_present": heading_present,
+                    "matched_candidate_keys": matched_keys,
+                    "matched_candidate_titles": matched_titles,
+                    "covered": covered,
+                    "status": status,
+                }
+            )
+        return alignment
+
+    def _related_work_heading_matches(
+        self,
+        thread_id: str,
+        expected_heading: str,
+        actual_heading: str,
+    ) -> bool:
+        actual = self._normalize_reference_text(actual_heading)
+        expected = self._normalize_reference_text(expected_heading)
+        if actual and expected and actual == expected:
+            return True
+        for hint in self.RELATED_WORK_THREAD_HEADING_HINTS.get(thread_id, ()):
+            if self._normalize_reference_text(hint) == actual:
+                return True
+        return False
+
+    def _normalize_reference_text(self, text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
     def _related_work_threads(self, related_work: str) -> list[tuple[str, str]]:
         threads: list[tuple[str, str]] = []

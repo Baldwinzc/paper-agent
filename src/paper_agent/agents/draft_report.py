@@ -517,6 +517,20 @@ class DraftReportAgent:
                 citations = ", ".join(item.get("real_citation_keys") or item.get("citation_keys") or [])
                 lines.append(f"- `{item.get('thread')}`: {status}; citations: {citations or 'none'}")
 
+        thread_alignment = artifacts.get("related_work_thread_alignment", [])
+        if thread_alignment:
+            lines.extend(["", "## Related Work Thread Alignment", ""])
+            for item in thread_alignment:
+                categories = ", ".join(item.get("categories", []) or [])
+                matches = ", ".join(item.get("matched_candidate_keys", []) or item.get("matched_candidate_titles", []) or [])
+                lines.append(
+                    f"- `{item.get('heading') or item.get('thread_id')}`: "
+                    f"{item.get('status', 'unknown')}; "
+                    f"heading_present={'yes' if item.get('heading_present') else 'no'}; "
+                    f"categories={categories or 'none'}; "
+                    f"matches={matches or 'none'}"
+                )
+
         consistency = artifacts.get("factual_consistency", [])
         if consistency:
             lines.extend(["", "## Factual Consistency", ""])

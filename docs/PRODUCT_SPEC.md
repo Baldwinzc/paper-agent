@@ -94,6 +94,9 @@ baseline-lineage/influential/recent candidate counts, and retrieval error
 sources plus query-specific error details so literature coverage gaps are explicit.
 Their related-work candidate previews should also record a human-readable
 discovery-path label and the exact source query used to recover each candidate.
+Those same artifacts should expose the planned related-work thread buckets and
+the draft's measured thread coverage/alignment status so automation can detect
+when a generated Related Work section misses an expected literature bucket.
 The standalone `related-work-doctor` command should expose the same discovery
 state without requiring a full paper run: field query, baseline-mentioned work
 queries, candidate buckets, resolver/discovery error sources, and concrete

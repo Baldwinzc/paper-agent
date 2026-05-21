@@ -300,7 +300,9 @@ The artifact manifest lists the generated Markdown, LaTeX, report, zip, and
 summary files with existence checks, sizes, and file hashes for reproducible
 demo handoff. The run summary and acceptance report also surface related-work
 candidate preview entries with discovery-path labels and source queries so
-literature provenance is visible without opening nested doctor artifacts.
+literature provenance is visible without opening nested doctor artifacts. They
+also surface planned related-work thread buckets plus measured thread
+coverage/alignment in the generated draft.
 To turn an existing smoke manifest into a one-page demonstration report, run:
 
 ```powershell

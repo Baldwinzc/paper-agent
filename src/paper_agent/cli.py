@@ -6326,6 +6326,12 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     related_work_mentioned_queries = quality.get("related_work_baseline_mentioned_queries", [])
     if not isinstance(related_work_mentioned_queries, list):
         related_work_mentioned_queries = []
+    related_work_thread_plan = quality.get("related_work_thread_plan_preview", [])
+    if not isinstance(related_work_thread_plan, list):
+        related_work_thread_plan = []
+    related_work_thread_alignment = quality.get("related_work_thread_alignment", [])
+    if not isinstance(related_work_thread_alignment, list):
+        related_work_thread_alignment = []
     related_work_candidate_preview = quality.get("related_work_candidate_preview", [])
     if not isinstance(related_work_candidate_preview, list):
         related_work_candidate_preview = []
@@ -6361,11 +6367,38 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         f"- Field query: `{str(quality.get('related_work_field_query', '') or 'not recorded')}`",
         f"- Baseline mention queries recovered: {len(related_work_mentioned_queries)}",
         (
+            "- Thread coverage: "
+            f"aligned={quality.get('related_work_thread_alignment_aligned', 0)}; "
+            f"covered={quality.get('related_work_thread_alignment_covered', 0)}; "
+            f"missing={quality.get('related_work_thread_alignment_missing', 0)}"
+        ),
+        (
             "- Discovery errors: "
             f"{quality.get('related_work_discovery_error_count', 0)}; "
             f"sources={', '.join(str(item) for item in quality.get('related_work_discovery_error_sources', [])) or 'none'}"
         ),
     ]
+    for item in related_work_thread_plan[:3]:
+        if not isinstance(item, dict):
+            continue
+        categories = ", ".join(str(category) for category in item.get("categories", [])) or "none"
+        lines.append(
+            f"- Thread plan `{str(item.get('heading', '') or item.get('thread_id', '') or 'unknown')}`: "
+            f"candidates={int(item.get('candidate_count', 0) or 0)}; categories={categories}"
+        )
+    for item in related_work_thread_alignment[:3]:
+        if not isinstance(item, dict):
+            continue
+        matches = ", ".join(str(key) for key in item.get("matched_candidate_keys", []))
+        if not matches:
+            matches = ", ".join(str(title) for title in item.get("matched_candidate_titles", []))
+        if not matches:
+            matches = "none"
+        lines.append(
+            f"- Thread alignment `{str(item.get('heading', '') or item.get('thread_id', '') or 'unknown')}`: "
+            f"status={str(item.get('status', '') or 'unknown')}; "
+            f"heading_present={'yes' if item.get('heading_present') else 'no'}; matches={matches}"
+        )
     for index, query in enumerate(related_work_mentioned_queries[:3], start=1):
         lines.append(f"- Baseline mention query {index}: `{str(query)}`")
     if related_work_candidate_preview:
@@ -6637,6 +6670,17 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
             if isinstance(paper_summary.get("related_work_baseline_mentioned_queries", []), list)
             else []
         ),
+        "related_work_thread_plan_preview": _related_work_thread_plan_preview(
+            paper_summary.get("related_work_thread_plan_preview", []),
+            limit=5,
+        ),
+        "related_work_thread_alignment": _related_work_thread_alignment_preview(
+            paper_summary.get("related_work_thread_alignment", []),
+            limit=5,
+        ),
+        "related_work_thread_alignment_aligned": paper_summary.get("related_work_thread_alignment_aligned", 0),
+        "related_work_thread_alignment_covered": paper_summary.get("related_work_thread_alignment_covered", 0),
+        "related_work_thread_alignment_missing": paper_summary.get("related_work_thread_alignment_missing", 0),
         "related_work_candidate_preview": _related_work_candidate_preview(
             paper_summary.get(
                 "related_work_candidate_preview",
@@ -6764,6 +6808,68 @@ def _related_work_candidate_preview(value: object, *, limit: int = 10) -> list[d
                 "year": str(item.get("year", "") or ""),
                 "query": str(item.get("query", "") or ""),
                 "source_query": str(item.get("source_query", "") or str(item.get("query", "") or "")),
+            }
+        )
+    return preview
+
+
+def _related_work_thread_plan_preview(value: object, *, limit: int = 5) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    preview: list[dict[str, object]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        categories = item.get("categories", [])
+        preview.append(
+            {
+                "thread_id": str(item.get("thread_id", "") or ""),
+                "heading": str(item.get("heading", "") or ""),
+                "candidate_count": int(item.get("candidate_count", 0) or 0),
+                "categories": [str(category) for category in categories if str(category)]
+                if isinstance(categories, list)
+                else [],
+            }
+        )
+    return preview
+
+
+def _related_work_thread_alignment_preview(value: object, *, limit: int = 5) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    preview: list[dict[str, object]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        preview.append(
+            {
+                "thread_id": str(item.get("thread_id", "") or ""),
+                "heading": str(item.get("heading", "") or ""),
+                "candidate_count": int(item.get("candidate_count", 0) or 0),
+                "categories": [
+                    str(category)
+                    for category in item.get("categories", [])
+                    if str(category)
+                ]
+                if isinstance(item.get("categories", []), list)
+                else [],
+                "heading_present": bool(item.get("heading_present", False)),
+                "matched_candidate_keys": [
+                    str(key)
+                    for key in item.get("matched_candidate_keys", [])
+                    if str(key)
+                ]
+                if isinstance(item.get("matched_candidate_keys", []), list)
+                else [],
+                "matched_candidate_titles": [
+                    str(title)
+                    for title in item.get("matched_candidate_titles", [])
+                    if str(title)
+                ]
+                if isinstance(item.get("matched_candidate_titles", []), list)
+                else [],
+                "covered": bool(item.get("covered", False)),
+                "status": str(item.get("status", "") or ""),
             }
         )
     return preview
@@ -8826,6 +8932,12 @@ def _build_acceptance_report(
     related_work_mentioned_queries = summary.get("related_work_baseline_mentioned_queries", [])
     if not isinstance(related_work_mentioned_queries, list):
         related_work_mentioned_queries = []
+    related_work_thread_plan = summary.get("related_work_thread_plan_preview", [])
+    if not isinstance(related_work_thread_plan, list):
+        related_work_thread_plan = []
+    related_work_thread_alignment = summary.get("related_work_thread_alignment", [])
+    if not isinstance(related_work_thread_alignment, list):
+        related_work_thread_alignment = []
     related_work_candidate_preview = summary.get("related_work_candidate_preview", [])
     if not isinstance(related_work_candidate_preview, list):
         related_work_candidate_preview = []
@@ -8902,9 +9014,36 @@ def _build_acceptance_report(
             f"{related_work.get('error_count', 0)}; "
             f"sources={', '.join(str(item) for item in related_work.get('error_sources', [])) or 'none'}"
         ),
+        (
+            "- Related-work thread coverage: "
+            f"aligned={summary.get('related_work_thread_alignment_aligned', 0)}; "
+            f"covered={summary.get('related_work_thread_alignment_covered', 0)}; "
+            f"missing={summary.get('related_work_thread_alignment_missing', 0)}"
+        ),
         f"- Related-work field query: `{related_work_field_query or 'not recorded'}`",
         f"- Baseline mention queries recovered: {len(related_work_mentioned_queries)}",
     ]
+    for item in related_work_thread_plan[:3]:
+        if not isinstance(item, dict):
+            continue
+        categories = ", ".join(str(category) for category in item.get("categories", [])) or "none"
+        lines.append(
+            f"- Thread plan `{str(item.get('heading', '') or item.get('thread_id', '') or 'unknown')}`: "
+            f"candidates={int(item.get('candidate_count', 0) or 0)}; categories={categories}"
+        )
+    for item in related_work_thread_alignment[:3]:
+        if not isinstance(item, dict):
+            continue
+        matches = ", ".join(str(key) for key in item.get("matched_candidate_keys", []))
+        if not matches:
+            matches = ", ".join(str(title) for title in item.get("matched_candidate_titles", []))
+        if not matches:
+            matches = "none"
+        lines.append(
+            f"- Thread alignment `{str(item.get('heading', '') or item.get('thread_id', '') or 'unknown')}`: "
+            f"status={str(item.get('status', '') or 'unknown')}; "
+            f"heading_present={'yes' if item.get('heading_present') else 'no'}; matches={matches}"
+        )
     for index, query in enumerate(related_work_mentioned_queries[:3], start=1):
         lines.append(f"- Baseline mention query {index}: `{str(query)}`")
     if related_work_candidate_preview:
@@ -9580,6 +9719,39 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         ]
         if isinstance(artifacts.get("related_work_baseline_mentioned_queries", []), list)
         else [],
+        "related_work_thread_plan_preview": _related_work_thread_plan_preview(
+            (
+                artifacts.get("related_work_brief", {}).get("thread_plan", [])
+                if isinstance(artifacts.get("related_work_brief", {}), dict)
+                else []
+            ),
+            limit=5,
+        ),
+        "related_work_thread_alignment": _related_work_thread_alignment_preview(
+            artifacts.get("related_work_thread_alignment", []),
+            limit=5,
+        ),
+        "related_work_thread_alignment_aligned": sum(
+            1
+            for item in artifacts.get("related_work_thread_alignment", [])
+            if isinstance(item, dict) and str(item.get("status", "") or "") == "aligned"
+        )
+        if isinstance(artifacts.get("related_work_thread_alignment", []), list)
+        else 0,
+        "related_work_thread_alignment_covered": sum(
+            1
+            for item in artifacts.get("related_work_thread_alignment", [])
+            if isinstance(item, dict) and bool(item.get("covered", False))
+        )
+        if isinstance(artifacts.get("related_work_thread_alignment", []), list)
+        else 0,
+        "related_work_thread_alignment_missing": sum(
+            1
+            for item in artifacts.get("related_work_thread_alignment", [])
+            if isinstance(item, dict) and str(item.get("status", "") or "") == "missing"
+        )
+        if isinstance(artifacts.get("related_work_thread_alignment", []), list)
+        else 0,
         "related_work_candidate_preview": _related_work_candidate_preview(
             artifacts.get("related_work_candidates", []),
             limit=5,

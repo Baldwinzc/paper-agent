@@ -2194,6 +2194,60 @@ def test_reviewer_flags_outline_language():
     assert reviewed["artifacts"]["outline_language_hits"] == ["introduction", "experiments"]
 
 
+def test_reviewer_flags_missing_planned_related_work_threads():
+    state = {
+        "experiments": ExperimentSummary(),
+        "innovations": [],
+        "sections": DraftSections(
+            related_work=(
+                "### Baseline Lineage\n"
+                "Baseline work motivates this setting \\cite{baselinepaper}."
+            )
+        ),
+        "bibliography": [
+            CitationEntry(
+                key="baselinepaper",
+                title="Baseline paper",
+                authors=["Author"],
+                year="2018",
+            ),
+            CitationEntry(
+                key="recentpaper",
+                title="Recent paper",
+                authors=["Author"],
+                year="2025",
+            ),
+        ],
+        "artifacts": {
+            "related_work_brief": {
+                "thread_plan": [
+                    {
+                        "thread_id": "baseline_lineage",
+                        "heading": "Baseline Lineage",
+                        "candidate_count": 1,
+                        "categories": ["baseline_reference"],
+                        "candidates": [{"key": "baselinepaper", "title": "Baseline paper"}],
+                    },
+                    {
+                        "thread_id": "recent_developments",
+                        "heading": "Recent Developments",
+                        "candidate_count": 1,
+                        "categories": ["recent"],
+                        "candidates": [{"key": "recentpaper", "title": "Recent paper"}],
+                    },
+                ]
+            }
+        },
+    }
+
+    reviewed = ReviewerAgent().run(state)
+
+    alignment = {item["thread_id"]: item for item in reviewed["artifacts"]["related_work_thread_alignment"]}
+    assert alignment["baseline_lineage"]["status"] == "aligned"
+    assert alignment["recent_developments"]["status"] == "missing"
+    assert any("misses planned literature threads" in finding.issue for finding in reviewed["review_findings"])
+
+
 def test_draft_report_includes_related_work_citation_coverage(tmp_path):
     state = {
         "request": PaperRequest(project_name="coverage-report-demo", target_venue="TPAMI"),
@@ -2214,7 +2268,27 @@ def test_draft_report_includes_related_work_citation_coverage(tmp_path):
                     "real_citation_keys": ["resolved"],
                     "covered_by_real_citation": True,
                 },
-            ]
+            ],
+            "related_work_thread_alignment": [
+                {
+                    "thread_id": "baseline_lineage",
+                    "heading": "Baseline Lineage",
+                    "status": "aligned",
+                    "heading_present": True,
+                    "categories": ["baseline_reference"],
+                    "matched_candidate_keys": ["resolved"],
+                    "matched_candidate_titles": [],
+                },
+                {
+                    "thread_id": "recent_developments",
+                    "heading": "Recent Developments",
+                    "status": "missing",
+                    "heading_present": False,
+                    "categories": ["recent"],
+                    "matched_candidate_keys": [],
+                    "matched_candidate_titles": [],
+                },
+            ],
         },
     }
 
@@ -2224,6 +2298,9 @@ def test_draft_report_includes_related_work_citation_coverage(tmp_path):
     assert "## Related Work Citation Coverage" in report
     assert "`Classic Thread`: missing real citation" in report
     assert "`Recent Thread`: covered; citations: resolved" in report
+    assert "## Related Work Thread Alignment" in report
+    assert "`Baseline Lineage`: aligned; heading_present=yes; categories=baseline_reference; matches=resolved" in report
+    assert "`Recent Developments`: missing; heading_present=no; categories=recent; matches=none" in report
 
 
 def test_draft_report_includes_factual_consistency(tmp_path):
@@ -2911,6 +2988,63 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "related_work_baseline_mentioned_queries": [
                 "Mobadersany | Predicting cancer outcomes from histology"
             ],
+            "related_work_brief": {
+                "thread_plan": [
+                    {
+                        "thread_id": "baseline_lineage",
+                        "heading": "Baseline Lineage",
+                        "candidate_count": 1,
+                        "categories": ["baseline_reference"],
+                    },
+                    {
+                        "thread_id": "influential_context",
+                        "heading": "Influential Field Context",
+                        "candidate_count": 1,
+                        "categories": ["influential"],
+                    },
+                    {
+                        "thread_id": "recent_developments",
+                        "heading": "Recent Developments",
+                        "candidate_count": 1,
+                        "categories": ["recent"],
+                    },
+                ]
+            },
+            "related_work_thread_alignment": [
+                {
+                    "thread_id": "baseline_lineage",
+                    "heading": "Baseline Lineage",
+                    "candidate_count": 1,
+                    "categories": ["baseline_reference"],
+                    "heading_present": True,
+                    "matched_candidate_keys": ["paper"],
+                    "matched_candidate_titles": ["A"],
+                    "covered": True,
+                    "status": "aligned",
+                },
+                {
+                    "thread_id": "influential_context",
+                    "heading": "Influential Field Context",
+                    "candidate_count": 1,
+                    "categories": ["influential"],
+                    "heading_present": False,
+                    "matched_candidate_keys": [],
+                    "matched_candidate_titles": ["B"],
+                    "covered": True,
+                    "status": "mentioned_without_heading",
+                },
+                {
+                    "thread_id": "recent_developments",
+                    "heading": "Recent Developments",
+                    "candidate_count": 1,
+                    "categories": ["recent"],
+                    "heading_present": False,
+                    "matched_candidate_keys": [],
+                    "matched_candidate_titles": [],
+                    "covered": False,
+                    "status": "missing",
+                },
+            ],
             "related_work_candidates": [
                 {
                     "title": "A",
@@ -3010,6 +3144,10 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["related_work_baseline_mentioned_queries"] == [
         "Mobadersany | Predicting cancer outcomes from histology"
     ]
+    assert summary["related_work_thread_plan_preview"][0]["heading"] == "Baseline Lineage"
+    assert summary["related_work_thread_alignment"][1]["status"] == "mentioned_without_heading"
+    assert summary["related_work_thread_alignment_missing"] == 1
+    assert summary["related_work_thread_alignment_covered"] == 2
     assert summary["related_work_candidate_preview"][0]["title"] == "A"
     assert summary["related_work_candidate_preview"][0]["discovery_path_label"] == "baseline reference list"
     assert summary["related_work_discovery_error_count"] == 1
@@ -3147,6 +3285,55 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
         "related_work_baseline_lineage_candidates": 3,
         "related_work_influential_candidates": 2,
         "related_work_recent_candidates": 2,
+        "related_work_thread_plan_preview": [
+            {
+                "thread_id": "baseline_lineage",
+                "heading": "Baseline Lineage",
+                "candidate_count": 3,
+                "categories": ["baseline_reference", "baseline_citing", "baseline_mentioned"],
+            },
+            {
+                "thread_id": "influential_context",
+                "heading": "Influential Field Context",
+                "candidate_count": 2,
+                "categories": ["influential"],
+            },
+            {
+                "thread_id": "recent_developments",
+                "heading": "Recent Developments",
+                "candidate_count": 2,
+                "categories": ["recent"],
+            },
+        ],
+        "related_work_thread_alignment": [
+            {
+                "thread_id": "baseline_lineage",
+                "heading": "Baseline Lineage",
+                "status": "aligned",
+                "heading_present": True,
+                "matched_candidate_keys": ["predictingcanceroutcomesfrom"],
+                "matched_candidate_titles": [],
+            },
+            {
+                "thread_id": "influential_context",
+                "heading": "Influential Field Context",
+                "status": "mentioned_without_heading",
+                "heading_present": False,
+                "matched_candidate_keys": [],
+                "matched_candidate_titles": ["Computational pathology survey"],
+            },
+            {
+                "thread_id": "recent_developments",
+                "heading": "Recent Developments",
+                "status": "missing",
+                "heading_present": False,
+                "matched_candidate_keys": [],
+                "matched_candidate_titles": [],
+            },
+        ],
+        "related_work_thread_alignment_aligned": 1,
+        "related_work_thread_alignment_covered": 2,
+        "related_work_thread_alignment_missing": 1,
         "related_work_discovery_error_count": 1,
         "related_work_discovery_error_sources": ["recent_search"],
         "next_actions": [
@@ -3220,6 +3407,15 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "- Related-work discovery mode: openalex" in report
     assert "- Related-work candidate buckets: baseline_lineage=3; influential=2; recent=2; total=7" in report
     assert "- Related-work discovery errors: 1; sources=recent_search" in report
+    assert "- Related-work thread coverage: aligned=1; covered=2; missing=1" in report
+    assert (
+        "- Thread plan `Baseline Lineage`: candidates=3; categories=baseline_reference, baseline_citing, baseline_mentioned"
+        in report
+    )
+    assert (
+        "- Thread alignment `Recent Developments`: status=missing; heading_present=no; matches=none"
+        in report
+    )
     assert "## Recommended Next Actions" in report
     assert "related_work_retry" in report
     assert "paper-agent paper-e2e-smoke --online" in report
@@ -9072,6 +9268,49 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                     "Mobadersany | Predicting cancer outcomes from histology",
                     "Chen | Whole slide images are 2d point clouds",
                 ],
+                "related_work_thread_plan_preview": [
+                    {
+                        "thread_id": "baseline_lineage",
+                        "heading": "Baseline Lineage",
+                        "candidate_count": 3,
+                        "categories": ["baseline_reference", "baseline_citing", "baseline_mentioned"],
+                    },
+                    {
+                        "thread_id": "influential_context",
+                        "heading": "Influential Field Context",
+                        "candidate_count": 2,
+                        "categories": ["influential"],
+                    },
+                ],
+                "related_work_thread_alignment": [
+                    {
+                        "thread_id": "baseline_lineage",
+                        "heading": "Baseline Lineage",
+                        "status": "aligned",
+                        "heading_present": True,
+                        "matched_candidate_keys": ["predictingcanceroutcomesfrom"],
+                        "matched_candidate_titles": [],
+                    },
+                    {
+                        "thread_id": "influential_context",
+                        "heading": "Influential Field Context",
+                        "status": "mentioned_without_heading",
+                        "heading_present": False,
+                        "matched_candidate_keys": [],
+                        "matched_candidate_titles": ["Computational pathology survey"],
+                    },
+                    {
+                        "thread_id": "recent_developments",
+                        "heading": "Recent Developments",
+                        "status": "missing",
+                        "heading_present": False,
+                        "matched_candidate_keys": [],
+                        "matched_candidate_titles": [],
+                    },
+                ],
+                "related_work_thread_alignment_aligned": 1,
+                "related_work_thread_alignment_covered": 2,
+                "related_work_thread_alignment_missing": 1,
                 "related_work_candidate_preview": [
                     {
                         "category": "baseline_mentioned",
@@ -9145,6 +9384,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["related_work_candidates"] == 6
     assert quality["related_work_field_query"] == "whole slide images survival prediction"
     assert quality["related_work_baseline_mentioned_queries"][0].startswith("Mobadersany |")
+    assert quality["related_work_thread_plan_preview"][0]["heading"] == "Baseline Lineage"
+    assert quality["related_work_thread_alignment"][1]["status"] == "mentioned_without_heading"
+    assert quality["related_work_thread_alignment_missing"] == 1
     assert quality["related_work_candidate_preview"][0]["category"] == "baseline_mentioned"
     assert quality["related_work_candidate_preview"][0]["discovery_path_label"] == "baseline related-work mention"
     assert quality["related_work_discovery_error_details"][0]["source"] == "recent_search"
@@ -9159,6 +9401,15 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert "- Recent candidates: 1" in report
     assert "- Field query: `whole slide images survival prediction`" in report
     assert "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`" in report
+    assert "- Thread coverage: aligned=1; covered=2; missing=1" in report
+    assert (
+        "- Thread plan `Baseline Lineage`: candidates=3; categories=baseline_reference, baseline_citing, baseline_mentioned"
+        in report
+    )
+    assert (
+        "- Thread alignment `Recent Developments`: status=missing; heading_present=no; matches=none"
+        in report
+    )
     assert (
         "- Candidate preview: [baseline_mentioned: baseline related-work mention] Predicting cancer outcomes from histology <= Mobadersany | Predicting cancer outcomes from histology; [influential: high-citation field search] Computational pathology survey <= whole slide images survival prediction"
         in report
