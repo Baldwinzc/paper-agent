@@ -6219,8 +6219,27 @@ def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path
     outputs["research_guide_summary"] = str(summary_path)
     report_path = Path(str(outputs.get("research_guide_report") or summary_path.with_name("RESEARCH_GUIDE_REPORT.md")))
     outputs["research_guide_report"] = str(report_path)
-    summary["quality_evidence"] = _research_paper_guide_quality_evidence(outputs)
-    summary["blocking_evidence"] = _research_paper_guide_blocking_evidence(outputs)
+    quality_evidence = _research_paper_guide_quality_evidence(outputs)
+    blocking_evidence = _research_paper_guide_blocking_evidence(outputs)
+    result_evidence = _research_paper_guide_result_evidence(
+        summary,
+        quality=quality_evidence,
+        blocking_evidence=blocking_evidence,
+    )
+    quality_evidence.update(
+        {
+            "result_guide_status": result_evidence.get("status", "not found"),
+            "result_guide_phase": result_evidence.get("phase", ""),
+            "result_contract_status": result_evidence.get("contract_status", "not recorded"),
+            "result_provenance_status": result_evidence.get("provenance_status", "not recorded"),
+            "result_artifact_consistency_status": result_evidence.get(
+                "artifact_consistency_status",
+                "not recorded",
+            ),
+        }
+    )
+    summary["quality_evidence"] = quality_evidence
+    summary["blocking_evidence"] = blocking_evidence
     summary["next_actions"] = _research_paper_guide_next_actions(summary)
     written_summary = _write_run_summary_data(summary, summary_path)
     _write_research_paper_guide_report(summary, report_path)
@@ -6251,6 +6270,12 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         next_actions = _research_paper_guide_next_actions(summary)
     paper_experiment = paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     paper_llm = paper_manifest.get("llm", {}) if isinstance(paper_manifest.get("llm", {}), dict) else {}
+    result_evidence = _research_paper_guide_result_evidence(
+        summary,
+        result_summary=result_summary,
+        quality=quality,
+        blocking_evidence=blocking_evidence,
+    )
     llm_attempted = quality.get("llm_section_attempted", [])
     llm_successes = quality.get("llm_section_successes", [])
     if not isinstance(llm_attempted, list):
@@ -6268,12 +6293,12 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         "",
         "## Result Evidence",
         "",
-        f"- Result guide status: {result_summary.get('status', 'not found')}",
-        f"- Result guide phase: {result_summary.get('pipeline_phase', '')}",
+        f"- Result guide status: {result_evidence.get('status', 'not found')}",
+        f"- Result guide phase: {result_evidence.get('phase', '')}",
         f"- Experiment results: {summary.get('inputs', {}).get('experiment_results', '') if isinstance(summary.get('inputs', {}), dict) else ''}",
-        f"- Contract: {result_summary.get('experiment_contract_status', 'not recorded')}",
-        f"- Provenance: {result_summary.get('experiment_provenance_status', 'not recorded')}",
-        f"- Artifact consistency: {result_summary.get('experiment_artifact_consistency_status', 'not recorded')}",
+        f"- Contract: {result_evidence.get('contract_status', 'not recorded')}",
+        f"- Provenance: {result_evidence.get('provenance_status', 'not recorded')}",
+        f"- Artifact consistency: {result_evidence.get('artifact_consistency_status', 'not recorded')}",
         "",
         "## Paper Acceptance",
         "",
@@ -6404,6 +6429,69 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _research_paper_guide_result_evidence(
+    summary: dict[str, object],
+    *,
+    result_summary: dict[str, object] | None = None,
+    quality: dict[str, object] | None = None,
+    blocking_evidence: dict[str, object] | None = None,
+) -> dict[str, str]:
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    if result_summary is None:
+        result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
+    if quality is None:
+        quality = _research_paper_guide_quality_evidence(outputs)
+    if blocking_evidence is None:
+        blocking_evidence = _research_paper_guide_blocking_evidence(outputs)
+    paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
+    experiment_provenance = _summary_experiment_provenance(paper_summary)
+    artifact_consistency = _summary_experiment_artifact_consistency(paper_summary)
+    results_mode = str(inputs.get("results_mode", "") or "")
+
+    status = str(result_summary.get("status", "") or "")
+    if not status:
+        status = "not_run" if results_mode == "use-existing" else "not found"
+    phase = str(result_summary.get("pipeline_phase", "") or "")
+    if not phase and results_mode == "use-existing":
+        phase = "use_existing_results"
+    contract_status = str(result_summary.get("experiment_contract_status", "") or "")
+    if not contract_status:
+        contract_status = str(
+            quality.get("experiment_contract_status", "")
+            or blocking_evidence.get("experiment_contract_status", "")
+            or paper_summary.get("experiment_contract_status", "")
+            or "not recorded"
+        )
+    provenance_status = str(result_summary.get("experiment_provenance_status", "") or "")
+    if not provenance_status:
+        provenance_status = str(
+            quality.get("experiment_provenance_status", "")
+            or blocking_evidence.get("experiment_provenance_status", "")
+            or experiment_provenance.get("status", "")
+            or "not recorded"
+        )
+    artifact_consistency_status = str(result_summary.get("experiment_artifact_consistency_status", "") or "")
+    if not artifact_consistency_status:
+        artifact_consistency_status = str(
+            quality.get("experiment_artifact_consistency_status", "")
+            or blocking_evidence.get("experiment_artifact_consistency_status", "")
+            or artifact_consistency.get("status", "")
+            or "not recorded"
+        )
+    return {
+        "status": status,
+        "phase": phase,
+        "contract_status": contract_status,
+        "provenance_status": provenance_status,
+        "artifact_consistency_status": artifact_consistency_status,
+    }
+
+
 def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[str, object]:
     result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
     paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
@@ -6413,6 +6501,8 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
     paper_experiment = (
         paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     )
+    experiment_provenance = _summary_experiment_provenance(paper_summary)
+    artifact_consistency = _summary_experiment_artifact_consistency(paper_summary)
     smoke_contract = paper_summary.get("smoke_contract", {}) if isinstance(paper_summary.get("smoke_contract", {}), dict) else {}
     smoke_checks = smoke_contract.get("checks", {}) if isinstance(smoke_contract.get("checks", {}), dict) else {}
     attempted = paper_summary.get("section_writer_llm_attempted_sections", [])
@@ -6437,6 +6527,8 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
             "contract_status",
             paper_summary.get("experiment_contract_status", "not recorded"),
         ),
+        "experiment_provenance_status": experiment_provenance.get("status", "not recorded"),
+        "experiment_artifact_consistency_status": artifact_consistency.get("status", "not recorded"),
         "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
         "llm_provider": paper_llm.get("provider", paper_inputs.get("llm_provider", "")),
         "llm_model": paper_llm.get("model", paper_inputs.get("llm_model", "")),

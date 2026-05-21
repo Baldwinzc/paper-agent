@@ -8567,6 +8567,8 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                 "submission_compile_status": "passed",
                 "submission_compile_tool": "tectonic.exe",
                 "experiment_contract_status": "complete",
+                "experiment_provenance": {"status": "complete"},
+                "experiment_artifact_consistency": {"status": "complete"},
             }
         ),
         encoding="utf-8",
@@ -8610,6 +8612,8 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["llm_section_successes"] == ["abstract", "method"]
     assert quality["llm_section_total_tokens"] == 512
     assert quality["latex_compile_status"] == "passed"
+    assert quality["experiment_provenance_status"] == "complete"
+    assert quality["experiment_artifact_consistency_status"] == "complete"
     assert "- LLM sections: 2/3; successes: abstract, method" in report
     assert "- LLM calls: 2/3; tokens=512" in report
     assert "- LLM self-review: llm; auto_revisions=1" in report
@@ -8692,7 +8696,10 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     assert summary["inputs"]["results_mode"] == "use-existing"
     assert "--results-mode use-existing" in summary["next_command"]
     assert not (output_dir / "RESULT_GUIDE_SUMMARY.json").exists()
-    assert "- Result guide status: not found" in report
+    assert summary["quality_evidence"]["result_guide_status"] == "not_run"
+    assert summary["quality_evidence"]["result_guide_phase"] == "use_existing_results"
+    assert "- Result guide status: not_run" in report
+    assert "- Result guide phase: use_existing_results" in report
     assert captured["request"].experiment_results == result_path.read_text(encoding="utf-8")
 
 
@@ -8792,6 +8799,9 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 4
     assert summary["blocking_evidence"]["experiment_contract_status"] == "invalid"
     assert summary["blocking_evidence"]["experiment_contract_errors"]
+    assert summary["quality_evidence"]["result_guide_status"] == "not_run"
+    assert summary["quality_evidence"]["result_contract_status"] == "invalid"
+    assert summary["quality_evidence"]["result_provenance_status"] == "invalid"
     assert summary["outputs"]["overleaf_zip"] == str(output_dir / "paper.zip")
     assert f"--zip {output_dir / 'paper.zip'}" in summary["next_command"]
     assert [action["category"] for action in summary["next_actions"]] == [
@@ -8803,6 +8813,11 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     assert summary["next_actions"][0]["command"] == paper_summary["next_actions"][0]["command"]
     assert str(output_dir / "paper.zip") in summary["next_actions"][3]["command"]
     assert "## Next Actions" in report
+    assert "- Result guide status: not_run" in report
+    assert "- Result guide phase: use_existing_results" in report
+    assert "- Contract: invalid" in report
+    assert "- Provenance: invalid" in report
+    assert "- Artifact consistency: not_configured" in report
     assert "- Experiment contract: invalid" in report
     assert "- Contract issue:" in report
     assert f"| Overleaf zip | no | `{output_dir / 'paper.zip'}` |" in report
