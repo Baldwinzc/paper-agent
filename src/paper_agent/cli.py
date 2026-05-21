@@ -6202,6 +6202,7 @@ def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path
     report_path = Path(str(outputs.get("research_guide_report") or summary_path.with_name("RESEARCH_GUIDE_REPORT.md")))
     outputs["research_guide_report"] = str(report_path)
     summary["quality_evidence"] = _research_paper_guide_quality_evidence(outputs)
+    summary["blocking_evidence"] = _research_paper_guide_blocking_evidence(outputs)
     summary["next_actions"] = _research_paper_guide_next_actions(summary)
     written_summary = _write_run_summary_data(summary, summary_path)
     _write_research_paper_guide_report(summary, report_path)
@@ -6224,6 +6225,9 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     quality = summary.get("quality_evidence", {})
     if not isinstance(quality, dict) or not quality:
         quality = _research_paper_guide_quality_evidence(outputs)
+    blocking_evidence = summary.get("blocking_evidence", {})
+    if not isinstance(blocking_evidence, dict) or not blocking_evidence:
+        blocking_evidence = _research_paper_guide_blocking_evidence(outputs)
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list) or not next_actions:
         next_actions = _research_paper_guide_next_actions(summary)
@@ -6284,6 +6288,39 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         lines.extend(["", "## Blocking Items", ""])
         for item in blocking_items[:10]:
             lines.append(f"- {_table_safe(str(item))}")
+    if blocking_evidence:
+        lines.extend(["", "## Blocking Evidence", ""])
+        if blocking_evidence.get("source"):
+            lines.append(f"- Source: {_table_safe(str(blocking_evidence.get('source', '')))}")
+        if blocking_evidence.get("pipeline_phase"):
+            lines.append(f"- Child phase: {_table_safe(str(blocking_evidence.get('pipeline_phase', '')))}")
+        if blocking_evidence.get("llm_failure_kind"):
+            lines.append(f"- LLM failure kind: {_table_safe(str(blocking_evidence.get('llm_failure_kind', '')))}")
+        if blocking_evidence.get("llm_provider") or blocking_evidence.get("llm_model"):
+            lines.append(
+                "- LLM provider/model: "
+                f"{_table_safe(str(blocking_evidence.get('llm_provider', '') or 'not recorded'))} / "
+                f"{_table_safe(str(blocking_evidence.get('llm_model', '') or 'not recorded'))}"
+            )
+        if blocking_evidence.get("llm_endpoint_host"):
+            lines.append(f"- LLM endpoint host: {_table_safe(str(blocking_evidence.get('llm_endpoint_host', '')))}")
+        if blocking_evidence.get("llm_diagnosis"):
+            lines.append(f"- LLM diagnosis: {_table_safe(str(blocking_evidence.get('llm_diagnosis', '')))}")
+        if blocking_evidence.get("artifact_template_status"):
+            lines.append(
+                f"- Artifact template status: {_table_safe(str(blocking_evidence.get('artifact_template_status', '')))}"
+            )
+        if blocking_evidence.get("artifact_template_output_dir"):
+            lines.append(
+                f"- Artifact template output dir: `{_table_safe(str(blocking_evidence.get('artifact_template_output_dir', '')))}`"
+            )
+        if blocking_evidence.get("artifact_template_command"):
+            lines.append(
+                f"- Artifact template command: `{_table_safe(str(blocking_evidence.get('artifact_template_command', '')))}`"
+            )
+        todo_files = blocking_evidence.get("artifact_csv_todo_files", [])
+        if isinstance(todo_files, list) and todo_files:
+            lines.append(f"- Result CSV files with TODO: {len(todo_files)}")
     if next_actions:
         lines.extend(
             [
@@ -6382,6 +6419,39 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         "latex_compile_tool": paper_summary.get("submission_compile_tool", ""),
         "latex_compile_install_hint": paper_summary.get("submission_compile_install_hint", ""),
     }
+
+
+def _research_paper_guide_blocking_evidence(outputs: dict[str, object]) -> dict[str, object]:
+    result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
+    paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
+    if str(paper_summary.get("status", "") or "") == "blocked":
+        diagnostics = paper_summary.get("llm_diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+        artifact_template = paper_summary.get("artifact_template", {})
+        if not isinstance(artifact_template, dict):
+            artifact_template = {}
+        return {
+            "source": "paper_e2e",
+            "pipeline_phase": str(paper_summary.get("pipeline_phase", "") or ""),
+            "llm_failure_kind": str(diagnostics.get("failure_kind", "") or ""),
+            "llm_provider": str(diagnostics.get("provider", "") or ""),
+            "llm_model": str(diagnostics.get("model", "") or ""),
+            "llm_endpoint_host": str(diagnostics.get("endpoint_host", "") or ""),
+            "llm_diagnosis": str(diagnostics.get("diagnosis", "") or ""),
+            "artifact_template_status": str(artifact_template.get("status", "") or ""),
+            "artifact_template_output_dir": str(artifact_template.get("output_dir", "") or ""),
+            "artifact_template_command": str(artifact_template.get("command", "") or ""),
+        }
+    if str(result_summary.get("status", "") or "") == "blocked":
+        todo_files = result_summary.get("artifact_csv_todo_files", [])
+        return {
+            "source": "result_guide",
+            "pipeline_phase": str(result_summary.get("pipeline_phase", "") or ""),
+            "artifact_csv_todo_files": todo_files if isinstance(todo_files, list) else [],
+            "artifact_template_status": "todo_remaining" if todo_files else "",
+        }
+    return {}
 
 
 def _research_paper_guide_next_actions(summary: dict[str, object]) -> list[dict[str, str]]:

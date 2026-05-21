@@ -172,6 +172,9 @@ default missing/template-result repair flow, `use-existing` requires
 When a child stage blocks, the top-level research-guide artifacts must surface
 the inherited `next_actions` repair chain from the blocked result guide or paper
 acceptance summary so external automation does not need to inspect nested files.
+Those same top-level artifacts should also surface inherited blocking evidence
+such as sanitized LLM preflight diagnostics and artifact-template repair status
+from the blocked child summary.
 The built-in Hyper-ProtoSurv showcase defaults to TCGA cohort CSV metadata rather
 than synthetic performance numbers; trained-model scores must come from a supplied
 experiment-results file.

@@ -247,6 +247,10 @@ manifest status, showcase report, and Overleaf zip path.
 When the run blocks during result completion or paper acceptance, the top-level
 research guide summary/report also carries the child `next_actions` command
 chain so repair commands are visible without opening nested JSON files.
+Blocked top-level research-guide artifacts also surface inherited child-stage
+diagnostics such as LLM quota/configuration failures and result-artifact repair
+status, so automation can explain why the pipeline stopped without parsing the
+nested paper summary.
 Use `--results-mode auto` for this default behavior. Use
 `--results-mode use-existing --experiment-results path\to\tcga_results.md` to
 skip the TCGA result guide and draft only from a supplied result file. Use

@@ -8801,6 +8801,82 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     assert "paper-agent paper-e2e-smoke" in report
 
 
+def test_cli_research_paper_guide_surfaces_llm_preflight_blocking_evidence(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code" / "hyper-protosurv"
+    logs_dir = tmp_path / "logs"
+    output_dir = tmp_path / "research-guide"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir(parents=True)
+    _write_complete_tcga_artifacts(logs_dir)
+    llm_config = LLMConfig(
+        api_key="secret-test-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+    )
+
+    def fail_preflight(client, config, *, context):
+        raise SystemExit(
+            f"{context} LLM preflight failed for deepseek/deepseek-v4-pro: "
+            "quota blocked for secret-test-key"
+        )
+
+    monkeypatch.setattr(cli_module, "load_llm_config", lambda: llm_config)
+    monkeypatch.setattr(cli_module, "_llm_preflight_check", fail_preflight)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "research-paper-guide",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--target-venue",
+            "TPAMI",
+            "--artifacts-dir",
+            str(logs_dir),
+            "--output-dir",
+            str(output_dir),
+            "--zip",
+            "",
+            "--require-llm",
+            "--min-llm-sections",
+            "4",
+        ],
+    )
+
+    try:
+        cli_module.main()
+    except SystemExit as exc:
+        assert "research-paper-guide blocked during paper acceptance" in str(exc)
+    else:
+        raise AssertionError("Expected research-paper-guide to surface blocked LLM preflight.")
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RESEARCH_GUIDE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RESEARCH_GUIDE_REPORT.md").read_text(encoding="utf-8")
+    serialized = json.dumps(summary)
+    assert "Research paper guide summary written" in output
+    assert summary["status"] == "blocked"
+    assert summary["pipeline_phase"] == "paper_e2e_acceptance_blocked"
+    assert summary["blocking_evidence"]["source"] == "paper_e2e"
+    assert summary["blocking_evidence"]["pipeline_phase"] == "paper_e2e_smoke_llm_preflight"
+    assert summary["blocking_evidence"]["llm_failure_kind"] == "quota"
+    assert summary["blocking_evidence"]["llm_provider"] == "deepseek"
+    assert summary["blocking_evidence"]["llm_model"] == "deepseek-v4-pro"
+    assert "secret-test-key" not in serialized
+    assert "## Blocking Evidence" in report
+    assert "LLM failure kind: quota" in report
+    assert "LLM provider/model: deepseek / deepseek-v4-pro" in report
+    assert "paper-agent llm-doctor" in report
+    assert "secret-test-key" not in report
+
+
 def test_cli_paper_e2e_smoke_strict_results_fails_before_workflow(monkeypatch, tmp_path, capsys):
     baseline_pdf = tmp_path / "baseline.pdf"
     code_dir = tmp_path / "code"
