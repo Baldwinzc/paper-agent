@@ -48,6 +48,8 @@ The current scaffold supports:
   raw `Innovation 1` citation keys.
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
+- Run summaries, acceptance reports, and research-guide reports surface the
+  related-work discovery mode, candidate buckets, and retrieval error sources.
 - Related Work citation coverage checks for research-thread subsections.
 - Factual consistency checks for unsupported datasets, metrics, experiment numbers,
   and Method subsections not tied to accepted innovation points.

@@ -6300,6 +6300,19 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         f"- Provenance: {result_evidence.get('provenance_status', 'not recorded')}",
         f"- Artifact consistency: {result_evidence.get('artifact_consistency_status', 'not recorded')}",
         "",
+        "## Related-Work Discovery",
+        "",
+        f"- Discovery mode: {quality.get('related_work_discovery_mode', 'not run')}",
+        f"- Candidates: {quality.get('related_work_candidates', 0)}",
+        f"- Baseline-lineage candidates: {quality.get('related_work_baseline_lineage_candidates', 0)}",
+        f"- Influential candidates: {quality.get('related_work_influential_candidates', 0)}",
+        f"- Recent candidates: {quality.get('related_work_recent_candidates', 0)}",
+        (
+            "- Discovery errors: "
+            f"{quality.get('related_work_discovery_error_count', 0)}; "
+            f"sources={', '.join(str(item) for item in quality.get('related_work_discovery_error_sources', [])) or 'none'}"
+        ),
+        "",
         "## Paper Acceptance",
         "",
         f"- Manifest status: {quality.get('manifest_status', paper_manifest.get('status', 'not found'))}",
@@ -6529,6 +6542,16 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         ),
         "experiment_provenance_status": experiment_provenance.get("status", "not recorded"),
         "experiment_artifact_consistency_status": artifact_consistency.get("status", "not recorded"),
+        "related_work_discovery_mode": paper_summary.get("related_work_discovery_mode", "not run"),
+        "related_work_candidates": paper_summary.get("related_work_candidates", 0),
+        "related_work_baseline_lineage_candidates": paper_summary.get(
+            "related_work_baseline_lineage_candidates",
+            0,
+        ),
+        "related_work_influential_candidates": paper_summary.get("related_work_influential_candidates", 0),
+        "related_work_recent_candidates": paper_summary.get("related_work_recent_candidates", 0),
+        "related_work_discovery_error_count": paper_summary.get("related_work_discovery_error_count", 0),
+        "related_work_discovery_error_sources": paper_summary.get("related_work_discovery_error_sources", []),
         "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
         "llm_provider": paper_llm.get("provider", paper_inputs.get("llm_provider", "")),
         "llm_model": paper_llm.get("model", paper_inputs.get("llm_model", "")),
@@ -6606,6 +6629,71 @@ def _research_paper_guide_blocking_evidence(outputs: dict[str, object]) -> dict[
             "artifact_template_status": "todo_remaining" if todo_files else "",
         }
     return {}
+
+
+RELATED_WORK_BASELINE_LINEAGE_CATEGORIES = (
+    "baseline_reference",
+    "baseline_citing",
+    "baseline_mentioned",
+)
+
+
+def _related_work_candidate_category_counts(candidates: object) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(candidates, list):
+        return counts
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "") or "unknown")
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _related_work_discovery_summary(source: dict[str, object]) -> dict[str, object]:
+    category_counts = source.get("related_work_candidate_categories", {})
+    if not isinstance(category_counts, dict) or not category_counts:
+        category_counts = _related_work_candidate_category_counts(source.get("related_work_candidates", []))
+    normalized_category_counts = {
+        str(key): int(value)
+        for key, value in category_counts.items()
+        if str(key) and isinstance(value, int)
+    }
+    total_value = source.get("related_work_candidates", 0)
+    if isinstance(total_value, list):
+        total_candidates = len(total_value)
+    elif isinstance(total_value, int):
+        total_candidates = total_value
+    else:
+        total_candidates = sum(normalized_category_counts.values())
+    baseline_lineage_candidates = int(source.get("related_work_baseline_lineage_candidates", 0) or 0)
+    influential_candidates = int(source.get("related_work_influential_candidates", 0) or 0)
+    recent_candidates = int(source.get("related_work_recent_candidates", 0) or 0)
+    if normalized_category_counts:
+        baseline_lineage_candidates = sum(
+            normalized_category_counts.get(category, 0)
+            for category in RELATED_WORK_BASELINE_LINEAGE_CATEGORIES
+        )
+        influential_candidates = normalized_category_counts.get("influential", 0)
+        recent_candidates = normalized_category_counts.get("recent", 0)
+    errors = source.get("related_work_discovery_errors", {})
+    if not isinstance(errors, dict):
+        errors = {}
+    if not errors:
+        error_sources_value = source.get("related_work_discovery_error_sources", [])
+        if isinstance(error_sources_value, list) and error_sources_value:
+            errors = {str(key): "" for key in error_sources_value if str(key)}
+    error_sources = sorted(str(key) for key in errors.keys() if str(key))
+    return {
+        "mode": str(source.get("related_work_discovery_mode", "not run") or "not run"),
+        "candidates": total_candidates,
+        "baseline_lineage_candidates": baseline_lineage_candidates,
+        "influential_candidates": influential_candidates,
+        "recent_candidates": recent_candidates,
+        "category_counts": normalized_category_counts,
+        "error_count": len(error_sources),
+        "error_sources": error_sources,
+    }
 
 
 def _research_paper_guide_next_actions(summary: dict[str, object]) -> list[dict[str, str]]:
@@ -8096,6 +8184,7 @@ def _build_acceptance_report(
     experiment_quality = _summary_experiment_quality(summary)
     experiment_provenance = _summary_experiment_provenance(summary)
     artifact_consistency = _summary_experiment_artifact_consistency(summary)
+    related_work = _related_work_discovery_summary(summary)
     checks = _acceptance_checks(
         summary,
         min_llm_sections=min_llm_sections,
@@ -8173,7 +8262,19 @@ def _build_acceptance_report(
         f"- Resolved references: {summary.get('reference_resolved', 0)}",
         f"- Unresolved seed references: {summary.get('reference_unresolved', 0)}",
         f"- Pruned generic seed references: {summary.get('reference_pruned_seed_count', 0)}",
-        f"- Related-work candidates: {summary.get('related_work_candidates', 0)}",
+        f"- Related-work discovery mode: {related_work.get('mode', 'not run')}",
+        (
+            "- Related-work candidate buckets: "
+            f"baseline_lineage={related_work.get('baseline_lineage_candidates', 0)}; "
+            f"influential={related_work.get('influential_candidates', 0)}; "
+            f"recent={related_work.get('recent_candidates', 0)}; "
+            f"total={related_work.get('candidates', 0)}"
+        ),
+        (
+            "- Related-work discovery errors: "
+            f"{related_work.get('error_count', 0)}; "
+            f"sources={', '.join(str(item) for item in related_work.get('error_sources', [])) or 'none'}"
+        ),
         "",
         "## Acceptance Checks",
         "",
@@ -8708,6 +8809,7 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
     artifact_consistency = artifacts.get("experiment_artifact_consistency", {})
     if not isinstance(artifact_consistency, dict) or not artifact_consistency:
         artifact_consistency = _summary_experiment_artifact_consistency({})
+    related_work = _related_work_discovery_summary(artifacts)
     llm_call_trace = _section_writer_llm_call_trace(artifacts)
     llm_preflight = _summary_llm_preflight(artifacts)
     experiment_results_present = bool(experiment_results.strip())
@@ -8790,7 +8892,14 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "reference_pruned_seed_count": len(artifacts.get("reference_pruned_seed_keys", [])),
         "reference_pruned_seed_keys": artifacts.get("reference_pruned_seed_keys", []),
         "reference_resolution_trace": len(artifacts.get("reference_resolution_trace", [])),
-        "related_work_candidates": len(artifacts.get("related_work_candidates", [])),
+        "related_work_discovery_mode": related_work.get("mode", "not run"),
+        "related_work_candidates": related_work.get("candidates", 0),
+        "related_work_baseline_lineage_candidates": related_work.get("baseline_lineage_candidates", 0),
+        "related_work_influential_candidates": related_work.get("influential_candidates", 0),
+        "related_work_recent_candidates": related_work.get("recent_candidates", 0),
+        "related_work_candidate_categories": related_work.get("category_counts", {}),
+        "related_work_discovery_error_count": related_work.get("error_count", 0),
+        "related_work_discovery_error_sources": related_work.get("error_sources", []),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),
         "experiment_numeric_comparisons": sum(
             len(table.comparisons)

@@ -2627,7 +2627,13 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "reference_verification": {"resolved_count": 1, "unresolved_count": 2},
             "reference_resolution_trace": [{"key": "paper", "status": "resolved"}],
             "reference_pruned_seed_keys": ["survivalprediction"],
-            "related_work_candidates": [{"title": "A"}],
+            "related_work_discovery_mode": "openalex",
+            "related_work_discovery_errors": {"recent_search": "timeout"},
+            "related_work_candidates": [
+                {"title": "A", "category": "baseline_reference"},
+                {"title": "B", "category": "influential"},
+                {"title": "C", "category": "recent"},
+            ],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
             "experiment_statistical_tests": [{"comparison": "A vs B"}],
@@ -2687,7 +2693,18 @@ def test_run_summary_reports_core_metrics(tmp_path):
     assert summary["reference_pruned_seed_count"] == 1
     assert summary["reference_pruned_seed_keys"] == ["survivalprediction"]
     assert summary["reference_resolution_trace"] == 1
-    assert summary["related_work_candidates"] == 1
+    assert summary["related_work_discovery_mode"] == "openalex"
+    assert summary["related_work_candidates"] == 3
+    assert summary["related_work_baseline_lineage_candidates"] == 1
+    assert summary["related_work_influential_candidates"] == 1
+    assert summary["related_work_recent_candidates"] == 1
+    assert summary["related_work_candidate_categories"] == {
+        "baseline_reference": 1,
+        "influential": 1,
+        "recent": 1,
+    }
+    assert summary["related_work_discovery_error_count"] == 1
+    assert summary["related_work_discovery_error_sources"] == ["recent_search"]
     assert summary["experiment_result_tables"] == 1
     assert summary["experiment_contract_status"] == "needs_attention"
     assert summary["experiment_contract_warnings"] == 1
@@ -2814,6 +2831,13 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
         "submission_compile_mode": "compile",
         "submission_compile_status": "passed",
         "submission_compile_tool": "tectonic.exe",
+        "related_work_discovery_mode": "openalex",
+        "related_work_candidates": 7,
+        "related_work_baseline_lineage_candidates": 3,
+        "related_work_influential_candidates": 2,
+        "related_work_recent_candidates": 2,
+        "related_work_discovery_error_count": 1,
+        "related_work_discovery_error_sources": ["recent_search"],
         "experiment_result_tables": 2,
         "experiment_ablation_evidence": 4,
         "experiment_sensitivity_evidence": 1,
@@ -2875,6 +2899,9 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "- Main result tables: 2" in report
     assert "## Reference Readiness" in report
     assert "- Unresolved seed references: 0" in report
+    assert "- Related-work discovery mode: openalex" in report
+    assert "- Related-work candidate buckets: baseline_lineage=3; influential=2; recent=2; total=7" in report
+    assert "- Related-work discovery errors: 1; sources=recent_search" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LLM call trace | PASS | 6/6 calls succeeded; total_tokens=4800; required >= 4 |" in report
@@ -8569,6 +8596,13 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                 "experiment_contract_status": "complete",
                 "experiment_provenance": {"status": "complete"},
                 "experiment_artifact_consistency": {"status": "complete"},
+                "related_work_discovery_mode": "openalex",
+                "related_work_candidates": 6,
+                "related_work_baseline_lineage_candidates": 3,
+                "related_work_influential_candidates": 2,
+                "related_work_recent_candidates": 1,
+                "related_work_discovery_error_count": 1,
+                "related_work_discovery_error_sources": ["recent_search"],
             }
         ),
         encoding="utf-8",
@@ -8614,10 +8648,18 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["latex_compile_status"] == "passed"
     assert quality["experiment_provenance_status"] == "complete"
     assert quality["experiment_artifact_consistency_status"] == "complete"
+    assert quality["related_work_discovery_mode"] == "openalex"
+    assert quality["related_work_candidates"] == 6
     assert "- LLM sections: 2/3; successes: abstract, method" in report
     assert "- LLM calls: 2/3; tokens=512" in report
     assert "- LLM self-review: llm; auto_revisions=1" in report
     assert "- LaTeX compile: passed; tool=tectonic.exe; mode=compile" in report
+    assert "- Discovery mode: openalex" in report
+    assert "- Candidates: 6" in report
+    assert "- Baseline-lineage candidates: 3" in report
+    assert "- Influential candidates: 2" in report
+    assert "- Recent candidates: 1" in report
+    assert "- Discovery errors: 1; sources=recent_search" in report
 
 
 def test_cli_research_paper_guide_use_existing_skips_result_guide(
