@@ -5662,16 +5662,16 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         generated_results_from_artifacts=bool(args.generate_results_from_artifacts),
         status="pass",
     )
-    next_actions = _paper_e2e_related_work_next_actions(args, summary)
-    if next_actions:
-        summary["next_actions"] = next_actions
-        summary["next_action"] = str(next_actions[0].get("action", "") or "")
-        summary["next_command"] = str(next_actions[0].get("command", "") or "")
     _apply_acceptance_statuses(
         summary,
         min_llm_sections=args.min_llm_sections if args.require_llm else 0,
         require_llm_self_review=args.include_llm_self_review,
     )
+    next_actions = _paper_e2e_related_work_next_actions(args, summary)
+    if next_actions:
+        summary["next_actions"] = next_actions
+        summary["next_action"] = str(next_actions[0].get("action", "") or "")
+        summary["next_command"] = str(next_actions[0].get("command", "") or "")
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
     _write_acceptance_report(
         summary,
@@ -5815,6 +5815,14 @@ def _paper_e2e_artifact_manifest(summary: dict, manifest_path: Path) -> dict[str
         "submission_evidence_status": str(
             summary.get("acceptance_submission_evidence_status", "") or ""
         ),
+        "primary_issue_name": str(summary.get("acceptance_primary_issue_name", "") or ""),
+        "primary_issue_status": str(summary.get("acceptance_primary_issue_status", "") or ""),
+        "primary_issue_detail": str(summary.get("acceptance_primary_issue_detail", "") or ""),
+        "triage_status": str(summary.get("acceptance_triage_status", "") or ""),
+        "priority": str(summary.get("acceptance_priority", "") or ""),
+        "priority_rank": int(summary.get("acceptance_priority_rank", 0) or 0),
+        "repair_target": str(summary.get("acceptance_repair_target", "") or ""),
+        "reason": str(summary.get("acceptance_reason", "") or ""),
     }
 
     return {
@@ -6314,6 +6322,7 @@ def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path
     summary["quality_evidence"] = quality_evidence
     summary["blocking_evidence"] = blocking_evidence
     summary["next_actions"] = _research_paper_guide_next_actions(summary)
+    summary["triage"] = _research_paper_guide_triage(summary, quality_evidence, blocking_evidence)
     written_summary = _write_run_summary_data(summary, summary_path)
     _write_research_paper_guide_report(summary, report_path)
     print(f"Research paper guide report written to {report_path}")
@@ -6338,6 +6347,9 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
     blocking_evidence = summary.get("blocking_evidence", {})
     if not isinstance(blocking_evidence, dict) or not blocking_evidence:
         blocking_evidence = _research_paper_guide_blocking_evidence(outputs)
+    triage = summary.get("triage", {})
+    if not isinstance(triage, dict) or not triage:
+        triage = _research_paper_guide_triage(summary, quality, blocking_evidence)
     next_actions = summary.get("next_actions", [])
     if not isinstance(next_actions, list) or not next_actions:
         next_actions = _research_paper_guide_next_actions(summary)
@@ -6379,6 +6391,10 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         f"- Phase: {summary.get('pipeline_phase', '')}",
         f"- Project: {summary.get('project_name', '')}",
         f"- Target venue: {summary.get('target_venue', '')}",
+        f"- Triage: {triage.get('status', 'not recorded')}",
+        f"- Priority: {triage.get('priority', 'not recorded')} (rank={triage.get('priority_rank', 'not recorded')})",
+        f"- Repair target: {triage.get('repair_target', 'not recorded')}",
+        f"- Repair reason: {triage.get('reason', 'not recorded')}",
         "",
         "## Result Evidence",
         "",
@@ -6460,6 +6476,10 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             f"- Acceptance overall: {quality.get('acceptance_overall_status', 'not recorded')}",
             f"- Acceptance pipeline: {quality.get('acceptance_pipeline_status', 'not recorded')}",
             f"- Submission evidence: {quality.get('acceptance_submission_evidence_status', 'not recorded')}",
+            f"- Acceptance triage: {quality.get('acceptance_triage_status', 'not recorded')}",
+            f"- Acceptance priority: {quality.get('acceptance_priority', 'not recorded')} (rank={quality.get('acceptance_priority_rank', 'not recorded')})",
+            f"- Acceptance repair target: {quality.get('acceptance_repair_target', 'not recorded')}",
+            f"- Acceptance reason: {quality.get('acceptance_reason', 'not recorded')}",
             f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
             f"- Experiment contract: {quality.get('experiment_contract_status', paper_experiment.get('contract_status', 'not recorded'))}",
             f"- LLM mode: {quality.get('llm_mode', paper_llm.get('mode', 'not recorded'))}",
@@ -6665,6 +6685,53 @@ def _research_paper_guide_result_evidence(
     }
 
 
+def _research_paper_guide_triage(
+    summary: dict[str, object],
+    quality: dict[str, object],
+    blocking_evidence: dict[str, object],
+) -> dict[str, object]:
+    summary_status = str(summary.get("status", "") or "")
+    blocking_items = summary.get("blocking_items", [])
+    if not isinstance(blocking_items, list):
+        blocking_items = []
+    if summary_status == "blocked":
+        reason = str(blocking_items[0]) if blocking_items else str(summary.get("pipeline_phase", "") or "blocked")
+        target = str(
+            blocking_evidence.get("source", "")
+            or blocking_evidence.get("pipeline_phase", "")
+            or summary.get("pipeline_phase", "")
+            or "research_paper_guide"
+        )
+        return {
+            "status": "blocked",
+            "priority": "high",
+            "priority_rank": 3,
+            "repair_target": target,
+            "reason": reason,
+        }
+    acceptance_triage_status = str(quality.get("acceptance_triage_status", "") or "")
+    if acceptance_triage_status == "needs_revision":
+        return {
+            "status": "needs_revision",
+            "priority": str(quality.get("acceptance_priority", "") or "medium"),
+            "priority_rank": int(quality.get("acceptance_priority_rank", 1) or 1),
+            "repair_target": str(quality.get("acceptance_repair_target", "") or "paper_acceptance"),
+            "reason": str(
+                quality.get("acceptance_reason", "")
+                or quality.get("acceptance_primary_issue_detail", "")
+                or quality.get("acceptance_overall_status", "")
+                or "Acceptance warnings require revision."
+            ),
+        }
+    return {
+        "status": "ready",
+        "priority": "low",
+        "priority_rank": 0,
+        "repair_target": "",
+        "reason": "Result and acceptance summaries are ready for author review.",
+    }
+
+
 def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[str, object]:
     result_summary = _read_optional_json_object(str(outputs.get("result_guide_summary", "")))
     paper_summary = _read_optional_json_object(str(outputs.get("paper_run_summary", "")))
@@ -6710,6 +6777,38 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         "acceptance_submission_evidence_status": paper_acceptance.get(
             "submission_evidence_status",
             paper_summary.get("acceptance_submission_evidence_status", "not recorded"),
+        ),
+        "acceptance_primary_issue_name": paper_acceptance.get(
+            "primary_issue_name",
+            paper_summary.get("acceptance_primary_issue_name", ""),
+        ),
+        "acceptance_primary_issue_status": paper_acceptance.get(
+            "primary_issue_status",
+            paper_summary.get("acceptance_primary_issue_status", ""),
+        ),
+        "acceptance_primary_issue_detail": paper_acceptance.get(
+            "primary_issue_detail",
+            paper_summary.get("acceptance_primary_issue_detail", ""),
+        ),
+        "acceptance_triage_status": paper_acceptance.get(
+            "triage_status",
+            paper_summary.get("acceptance_triage_status", "not recorded"),
+        ),
+        "acceptance_priority": paper_acceptance.get(
+            "priority",
+            paper_summary.get("acceptance_priority", "not recorded"),
+        ),
+        "acceptance_priority_rank": paper_acceptance.get(
+            "priority_rank",
+            paper_summary.get("acceptance_priority_rank", 0),
+        ),
+        "acceptance_repair_target": paper_acceptance.get(
+            "repair_target",
+            paper_summary.get("acceptance_repair_target", ""),
+        ),
+        "acceptance_reason": paper_acceptance.get(
+            "reason",
+            paper_summary.get("acceptance_reason", ""),
         ),
         "experiment_contract_status": paper_experiment.get(
             "contract_status",
@@ -8230,6 +8329,35 @@ def _paper_e2e_smoke_failure_next_actions(
     ]
 
 
+def _paper_e2e_acceptance_repair_actions(
+    args: argparse.Namespace,
+    summary: dict[str, object],
+) -> list[dict[str, str]]:
+    if str(summary.get("acceptance_overall_status", "") or "") != "FAIL":
+        return []
+    invalid_result_statuses = {
+        str(summary.get("experiment_contract_status", "") or ""),
+        str(summary.get("experiment_provenance_status", "") or ""),
+        str(summary.get("experiment_artifact_consistency_status", "") or ""),
+    }
+    primary_issue = str(summary.get("acceptance_primary_issue_name", "") or "")
+    needs_result_repair = (
+        "invalid" in invalid_result_statuses
+        or primary_issue in {
+            "Experiment source integrity",
+            "Experiment result contract",
+            "Experiment result provenance",
+            "Experiment artifact consistency",
+        }
+    )
+    if not needs_result_repair:
+        return []
+    experiment_path = _resolve_project_relative_path(str(getattr(args, "experiment_results", "") or ""))
+    if not str(experiment_path):
+        return []
+    return _paper_e2e_smoke_failure_next_actions(args, experiment_path)
+
+
 def _paper_e2e_related_work_next_actions(
     args: argparse.Namespace,
     summary: dict[str, object],
@@ -8247,7 +8375,7 @@ def _paper_e2e_related_work_next_actions(
     )
     error_sources = ", ".join(str(item) for item in related_work.get("error_sources", []))
     rerun_online = _paper_e2e_smoke_rerun_command(args, force_online=True)
-    actions: list[dict[str, str]] = []
+    actions = _paper_e2e_acceptance_repair_actions(args, summary)
     if needs_online:
         actions.append(
             {
@@ -9029,9 +9157,18 @@ def _apply_acceptance_statuses(
         min_llm_sections=min_llm_sections,
         require_llm_self_review=require_llm_self_review,
     )
+    triage = _acceptance_triage(summary, bundle)
     summary["acceptance_overall_status"] = bundle["overall"]
     summary["acceptance_pipeline_status"] = bundle["pipeline_status"]
     summary["acceptance_submission_evidence_status"] = bundle["submission_evidence_status"]
+    summary["acceptance_primary_issue_name"] = triage["primary_issue_name"]
+    summary["acceptance_primary_issue_status"] = triage["primary_issue_status"]
+    summary["acceptance_primary_issue_detail"] = triage["primary_issue_detail"]
+    summary["acceptance_triage_status"] = triage["status"]
+    summary["acceptance_priority"] = triage["priority"]
+    summary["acceptance_priority_rank"] = triage["priority_rank"]
+    summary["acceptance_repair_target"] = triage["repair_target"]
+    summary["acceptance_reason"] = triage["reason"]
     return bundle
 
 
@@ -9071,6 +9208,108 @@ def _acceptance_status_bundle(
         "overall": overall,
         "pipeline_status": pipeline_status,
         "submission_evidence_status": submission_evidence_status,
+    }
+
+
+def _acceptance_primary_issue(bundle: dict[str, object]) -> dict[str, str]:
+    failed = bundle.get("failed", [])
+    warnings = bundle.get("warnings", [])
+    for items, fallback_status in ((failed, "FAIL"), (warnings, "WARN")):
+        if not isinstance(items, list) or not items:
+            continue
+        item = items[0]
+        if not isinstance(item, dict):
+            continue
+        return {
+            "name": str(item.get("name", "") or ""),
+            "status": str(item.get("status", "") or fallback_status),
+            "detail": str(item.get("detail", "") or ""),
+        }
+    return {"name": "", "status": "", "detail": ""}
+
+
+def _acceptance_repair_target(name: str) -> str:
+    if not name:
+        return ""
+    mapping = {
+        "Input contract": "input_contract",
+        "Experiment input": "experiment_input",
+        "Experiment source integrity": "experiment_source_integrity",
+        "Experiment evidence coverage": "experiment_evidence_coverage",
+        "Experiment result contract": "experiment_result_contract",
+        "Experiment quality": "experiment_quality",
+        "Experiment result provenance": "experiment_result_provenance",
+        "Experiment artifact consistency": "experiment_artifact_consistency",
+        "LLM preflight": "llm_preflight",
+        "LLM section drafting": "llm_section_drafting",
+        "LLM call trace": "llm_call_trace",
+        "LLM section errors": "llm_section_errors",
+        "Evidence guard": "evidence_guard",
+        "Reviewer findings": "reviewer_findings",
+        "Related-work thread coverage": "related_work_thread_coverage",
+        "Submission readiness": "submission_readiness",
+        "Submission package": "submission_package",
+        "LaTeX compile": "latex_compile",
+        "Generated figures": "generated_figures",
+        "Output artifacts": "output_artifacts",
+        "LLM self-review": "llm_self_review",
+    }
+    if name in mapping:
+        return mapping[name]
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def _acceptance_triage(summary: dict, bundle: dict[str, object]) -> dict[str, object]:
+    primary = _acceptance_primary_issue(bundle)
+    summary_status = str(summary.get("status", "") or "")
+    if summary_status == "blocked":
+        blocking_items = summary.get("blocking_items", [])
+        if not isinstance(blocking_items, list):
+            blocking_items = []
+        reason = str(blocking_items[0]) if blocking_items else str(summary.get("pipeline_phase", "") or "blocked")
+        target = _acceptance_repair_target(str(summary.get("pipeline_phase", "") or "blocked"))
+        return {
+            "status": "blocked",
+            "priority": "high",
+            "priority_rank": 3,
+            "repair_target": target,
+            "reason": reason,
+            "primary_issue_name": primary["name"],
+            "primary_issue_status": primary["status"],
+            "primary_issue_detail": primary["detail"],
+        }
+    overall = str(bundle.get("overall", "") or "")
+    if overall == "FAIL":
+        return {
+            "status": "needs_revision",
+            "priority": "high",
+            "priority_rank": 2,
+            "repair_target": _acceptance_repair_target(primary["name"]),
+            "reason": primary["detail"] or primary["name"] or "Acceptance checks failed.",
+            "primary_issue_name": primary["name"],
+            "primary_issue_status": primary["status"],
+            "primary_issue_detail": primary["detail"],
+        }
+    if overall == "PASS_WITH_WARNINGS":
+        return {
+            "status": "needs_revision",
+            "priority": "medium",
+            "priority_rank": 1,
+            "repair_target": _acceptance_repair_target(primary["name"]),
+            "reason": primary["detail"] or primary["name"] or "Acceptance checks passed with warnings.",
+            "primary_issue_name": primary["name"],
+            "primary_issue_status": primary["status"],
+            "primary_issue_detail": primary["detail"],
+        }
+    return {
+        "status": "ready",
+        "priority": "low",
+        "priority_rank": 0,
+        "repair_target": "",
+        "reason": "All acceptance checks passed.",
+        "primary_issue_name": "",
+        "primary_issue_status": "",
+        "primary_issue_detail": "",
     }
 
 

@@ -180,6 +180,10 @@ paper acceptance: starting from code, baseline PDF, target venue, and either a
 strict result file or TCGA result artifacts, it produces the result guide summary,
 paper acceptance artifacts, showcase report, and top-level
 `RESEARCH_GUIDE_SUMMARY.json` and `RESEARCH_GUIDE_REPORT.md` files.
+Those top-level artifacts should include a stable `triage` record with
+`status`, `priority`, `priority_rank`, `repair_target`, and `reason`, so
+automation can rank `blocked`, `needs_revision`, and `ready` runs directly
+from JSON.
 Its `--results-mode` option makes result handling explicit: `auto` preserves the
 default missing/template-result repair flow, `use-existing` requires
 `--experiment-results` and never invokes the TCGA result guide, and

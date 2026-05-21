@@ -8750,11 +8750,19 @@ def test_cli_paper_e2e_smoke_manifest_tracks_acceptance_failure(monkeypatch, tmp
     assert "paper-e2e-smoke passed." in output
     assert summary["acceptance_overall_status"] == "FAIL"
     assert summary["acceptance_pipeline_status"] == "FAIL"
+    assert summary["acceptance_triage_status"] == "needs_revision"
+    assert summary["acceptance_priority"] == "high"
+    assert summary["acceptance_priority_rank"] == 2
+    assert summary["acceptance_repair_target"] == "related_work_thread_coverage"
     assert manifest["status"] == "fail"
     assert manifest["smoke_contract_status"] == "pass"
     assert manifest["acceptance"]["overall_status"] == "FAIL"
     assert manifest["acceptance"]["pipeline_status"] == "FAIL"
     assert manifest["acceptance"]["submission_evidence_status"] == "WARN"
+    assert manifest["acceptance"]["triage_status"] == "needs_revision"
+    assert manifest["acceptance"]["priority"] == "high"
+    assert manifest["acceptance"]["priority_rank"] == 2
+    assert manifest["acceptance"]["repair_target"] == "related_work_thread_coverage"
     assert "- Overall status: FAIL" in acceptance_report
     assert "| Related-work thread coverage | FAIL | aligned=1/2; covered=1/2; missing=1; partial=0 |" in acceptance_report
 
@@ -9318,6 +9326,7 @@ def test_cli_paper_e2e_acceptance_surfaces_failed_acceptance_status(
     assert "paper-e2e-acceptance passed." in output
     assert manifest["status"] == "fail"
     assert manifest["acceptance"]["overall_status"] == "FAIL"
+    assert manifest["acceptance"]["triage_status"] == "needs_revision"
     assert showcase_path.is_file()
     assert "- Status: fail" in showcase_report
     assert "- Overall status: FAIL" in showcase_report
@@ -9450,11 +9459,14 @@ def test_cli_research_paper_guide_writes_result_templates_when_artifacts_missing
     assert (logs_dir / "tcga_main_results.csv").is_file()
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "result_guide_blocked"
+    assert summary["triage"]["status"] == "blocked"
+    assert summary["triage"]["priority"] == "high"
     assert summary["outputs"]["research_guide_report"].endswith("RESEARCH_GUIDE_REPORT.md")
     assert summary["outputs"]["result_guide_summary"].endswith("RESULT_GUIDE_SUMMARY.json")
     assert result_summary["pipeline_phase"] == "artifact_template_written"
     assert "# Research Paper Guide Report" in report
     assert "- Status: blocked" in report
+    assert "- Triage: blocked" in report
     assert "- Result guide status: blocked" in report
     assert summary["next_actions"][0]["source"] == "result_guide"
     assert summary["next_actions"][0]["category"] == "result_artifacts"
@@ -9677,6 +9689,14 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                     "overall_status": "PASS_WITH_WARNINGS",
                     "pipeline_status": "FAIL",
                     "submission_evidence_status": "PASS",
+                    "primary_issue_name": "Related-work thread coverage",
+                    "primary_issue_status": "FAIL",
+                    "primary_issue_detail": "aligned=1/3; covered=2/3; missing=1; partial=1",
+                    "triage_status": "needs_revision",
+                    "priority": "medium",
+                    "priority_rank": 1,
+                    "repair_target": "related_work_thread_coverage",
+                    "reason": "aligned=1/3; covered=2/3; missing=1; partial=1",
                 },
                 "experiment": {"contract_status": "complete"},
                 "llm": {
@@ -9715,6 +9735,10 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["acceptance_overall_status"] == "PASS_WITH_WARNINGS"
     assert quality["acceptance_pipeline_status"] == "FAIL"
     assert quality["acceptance_submission_evidence_status"] == "PASS"
+    assert quality["acceptance_triage_status"] == "needs_revision"
+    assert quality["acceptance_priority"] == "medium"
+    assert quality["acceptance_priority_rank"] == 1
+    assert quality["acceptance_repair_target"] == "related_work_thread_coverage"
     assert quality["experiment_provenance_status"] == "complete"
     assert quality["experiment_artifact_consistency_status"] == "complete"
     assert quality["related_work_discovery_mode"] == "openalex"
@@ -9759,6 +9783,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert "- Acceptance overall: PASS_WITH_WARNINGS" in report
     assert "- Acceptance pipeline: FAIL" in report
     assert "- Submission evidence: PASS" in report
+    assert "- Acceptance triage: needs_revision" in report
+    assert "- Acceptance priority: medium (rank=1)" in report
+    assert "- Acceptance repair target: related_work_thread_coverage" in report
 
 
 def test_cli_research_paper_guide_use_existing_skips_result_guide(
@@ -9845,8 +9872,18 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     assert summary["quality_evidence"]["result_guide_phase"] == "use_existing_results"
     assert summary["quality_evidence"]["manifest_status"] == "fail"
     assert summary["quality_evidence"]["acceptance_overall_status"] == "FAIL"
-    assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 3
+    assert summary["quality_evidence"]["acceptance_triage_status"] == "needs_revision"
+    assert summary["quality_evidence"]["acceptance_priority"] == "high"
+    assert summary["quality_evidence"]["acceptance_repair_target"] == "experiment_result_contract"
+    assert summary["triage"]["status"] == "needs_revision"
+    assert summary["triage"]["priority"] == "high"
+    assert summary["triage"]["repair_target"] == "experiment_result_contract"
+    assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 7
     assert [action["category"] for action in summary["next_actions"]] == [
+        "validate_results",
+        "result_artifacts",
+        "experiment_results",
+        "paper_e2e_smoke",
         "related_work_online",
         "related_work_retry",
         "related_work_seed_review",
@@ -9855,8 +9892,15 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     assert "- Result guide phase: use_existing_results" in report
     assert "- Manifest status: fail" in report
     assert "- Acceptance overall: FAIL" in report
+    assert "- Triage: needs_revision" in report
+    assert "- Priority: high (rank=2)" in report
+    assert "- Repair target: experiment_result_contract" in report
+    assert "- Acceptance triage: needs_revision" in report
+    assert "- Acceptance repair target: experiment_result_contract" in report
     assert "## Next Actions" in report
-    assert "related_work_online" in report
+    assert "paper-agent validate-results" in report
+    assert "paper-agent tcga-artifact-template" in report
+    assert "paper-agent tcga-results-from-artifacts" in report
     assert "--online" in report
     assert "Acceptance overall status: FAIL" in output
     assert captured["request"].experiment_results == result_path.read_text(encoding="utf-8")

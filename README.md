@@ -250,6 +250,9 @@ templates and a top-level `RESEARCH_GUIDE_SUMMARY.json` plus
 `RESEARCH_GUIDE_REPORT.md` before stopping. On success, the report summarizes
 the result-guide contract/provenance/consistency status, paper acceptance
 manifest status, showcase report, and Overleaf zip path.
+The top-level summary also carries a stable `triage` object with `status`,
+`priority`, `priority_rank`, `repair_target`, and `reason`, so automation can
+sort `blocked`, `needs_revision`, and `ready` runs without parsing Markdown.
 When the run blocks during result completion or paper acceptance, the top-level
 research guide summary/report also carries the child `next_actions` command
 chain so repair commands are visible without opening nested JSON files.
