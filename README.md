@@ -50,6 +50,9 @@ The current scaffold supports:
   the baseline, influential field papers, and recent field papers.
 - Run summaries, acceptance reports, and research-guide reports surface the
   related-work discovery mode, candidate buckets, and retrieval error sources.
+- A standalone `related-work-doctor` CLI can run only the baseline/reference/
+  literature-discovery path and write a focused diagnostic summary/report with
+  retrieval queries, candidate buckets, and repair commands.
 - Related Work citation coverage checks for research-thread subsections.
 - Factual consistency checks for unsupported datasets, metrics, experiment numbers,
   and Method subsections not tied to accepted innovation points.
@@ -258,6 +261,25 @@ Use `--results-mode auto` for this default behavior. Use
 skip the TCGA result guide and draft only from a supplied result file. Use
 `--results-mode generate-from-artifacts` to force regeneration from
 `--artifacts-dir`, even when an experiment-result path already exists.
+
+To diagnose only the literature side without running the full paper pipeline:
+
+```powershell
+paper-agent related-work-doctor `
+  --baseline-pdf D:\code\agent\example\baseline `
+  --code-path D:\code\agent\example\code\hyper-protosurv `
+  --target-venue TPAMI `
+  --keyword "whole-slide images" `
+  --keyword "survival prediction" `
+  --output-dir outputs\related-work-doctor `
+  --online
+```
+
+This writes `RELATED_WORK_DOCTOR_SUMMARY.json` and
+`RELATED_WORK_DOCTOR_REPORT.md`. The report surfaces the OpenAlex field query,
+queries extracted from named works in the baseline related-work section,
+baseline-lineage/influential/recent candidate buckets, resolver/discovery error
+sources, and rerun commands when literature recovery is weak.
 
 `paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
 `SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always

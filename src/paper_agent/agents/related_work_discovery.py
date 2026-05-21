@@ -27,6 +27,7 @@ class RelatedWorkDiscoveryAgent:
         candidates: list[CitationEntry] = []
         baseline_work: dict[str, Any] | None = None
         baseline = state.get("baseline")
+        artifacts["related_work_baseline_mentioned_queries"] = []
 
         if baseline and baseline.title and baseline.title != "Baseline Paper":
             try:
@@ -46,11 +47,14 @@ class RelatedWorkDiscoveryAgent:
 
         if baseline:
             try:
-                candidates.extend(self._mentioned_work_candidates(baseline, limit=3))
+                mentioned_queries = self._mentioned_work_queries(baseline)
+                artifacts["related_work_baseline_mentioned_queries"] = mentioned_queries
+                candidates.extend(self._mentioned_work_candidates(baseline, limit=3, queries=mentioned_queries))
             except Exception as exc:
                 errors["baseline_mentions"] = str(exc)
 
         query = self._field_query(state)
+        artifacts["related_work_field_query"] = query
         if query:
             try:
                 candidates.extend(
@@ -157,8 +161,14 @@ class RelatedWorkDiscoveryAgent:
             for work in works[:limit]
         ]
 
-    def _mentioned_work_candidates(self, baseline, limit: int) -> list[CitationEntry]:
-        queries = self._mentioned_work_queries(baseline)
+    def _mentioned_work_candidates(
+        self,
+        baseline,
+        limit: int,
+        *,
+        queries: list[str] | None = None,
+    ) -> list[CitationEntry]:
+        queries = queries if queries is not None else self._mentioned_work_queries(baseline)
         entries: list[CitationEntry] = []
         for query in queries:
             if len(entries) >= limit:

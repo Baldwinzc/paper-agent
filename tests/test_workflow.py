@@ -1374,6 +1374,10 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
     assert titles.count("New whole-slide survival prediction model") == 1
     assert "Predicting cancer outcomes from histology" in titles
     assert any("Predicting cancer outcomes" in item.get("query", "") for item in state["artifacts"]["related_work_candidates"])
+    assert state["artifacts"]["related_work_field_query"] == "whole slide images survival prediction"
+    assert state["artifacts"]["related_work_baseline_mentioned_queries"] == [
+        "Mobadersany | Predicting cancer outcomes from histology"
+    ]
     assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
     assert "wholeslideimages" not in [entry.key for entry in state["bibliography"]]
     assert state["artifacts"]["reference_pruned_seed_keys"] == ["wholeslideimages"]
@@ -1446,6 +1450,130 @@ def test_section_writer_uses_related_work_discovery_in_fallback():
     assert "Classic paper" in sections.related_work
     assert "should be discussed" not in sections.related_work
     assert "should be positioned" not in sections.related_work
+
+
+def test_cli_related_work_doctor_writes_summary_and_report(monkeypatch, tmp_path, capsys):
+    baseline_pdf = tmp_path / "baseline.pdf"
+    code_dir = tmp_path / "code"
+    output_dir = tmp_path / "related-work-doctor"
+    baseline_pdf.write_bytes(b"%PDF-1.4\n")
+    code_dir.mkdir()
+    captured = {}
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_TEMPLATE_FETCH", raising=False)
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE", raising=False)
+    monkeypatch.delenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY", raising=False)
+
+    def fake_pipeline(request):
+        captured["request"] = request
+        captured["disable_reference_resolve"] = os.getenv("PAPER_AGENT_DISABLE_REFERENCE_RESOLVE")
+        captured["disable_related_work_discovery"] = os.getenv("PAPER_AGENT_DISABLE_RELATED_WORK_DISCOVERY")
+        return {
+            "request": request,
+            "bibliography": [
+                CitationEntry(
+                    key="baseline",
+                    title="Baseline Survival Paper",
+                    query="Baseline Survival Paper",
+                    authors=["Ada Lovelace"],
+                    year="2024",
+                    doi="10.1234/base",
+                    note="Resolved baseline reference.",
+                )
+            ],
+            "artifacts": {
+                "reference_resolver_mode": "openalex",
+                "reference_verification": {
+                    "resolved_count": 2,
+                    "unresolved_count": 1,
+                    "resolved_keys": ["baseline", "classicpaper"],
+                    "unresolved_seed_keys": ["seedref"],
+                    "needs_manual_check_keys": ["baseline", "classicpaper"],
+                },
+                "reference_resolution_trace": [{"seed_key": "baseline"}],
+                "reference_resolver_errors": {"seedref": "timeout"},
+                "citation_keys": ["baseline", "classicpaper", "recentpaper"],
+                "related_work_discovery_mode": "openalex",
+                "related_work_field_query": "whole slide images survival prediction",
+                "related_work_baseline_mentioned_queries": [
+                    "Mobadersany | Predicting cancer outcomes from histology"
+                ],
+                "related_work_candidates": [
+                    {
+                        "key": "classicpaper",
+                        "category": "baseline_reference",
+                        "title": "Classic survival analysis for whole-slide images",
+                        "year": "2018",
+                        "query": "Classic survival analysis for whole-slide images",
+                    },
+                    {
+                        "key": "recentpaper",
+                        "category": "recent",
+                        "title": "Recent whole-slide survival model",
+                        "year": "2026",
+                        "query": "Recent whole-slide survival model",
+                    },
+                ],
+                "related_work_discovery_errors": {"baseline_mentions": "timeout"},
+            },
+        }
+
+    monkeypatch.setattr(cli_module, "_run_related_work_doctor_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "related-work-doctor",
+            "--baseline-pdf",
+            str(baseline_pdf),
+            "--code-path",
+            str(code_dir),
+            "--target-venue",
+            "TPAMI",
+            "--keyword",
+            "whole-slide images",
+            "--keyword",
+            "survival prediction",
+            "--output-dir",
+            str(output_dir),
+            "--online",
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((output_dir / "RELATED_WORK_DOCTOR_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (output_dir / "RELATED_WORK_DOCTOR_REPORT.md").read_text(encoding="utf-8")
+    assert "Related-work doctor summary written to" in output
+    assert "Related-work doctor report written to" in output
+    assert "related-work-doctor completed with warnings." in output
+    assert captured["disable_reference_resolve"] == "0"
+    assert captured["disable_related_work_discovery"] == "0"
+    assert captured["request"].baseline_pdf_path == str(baseline_pdf)
+    assert captured["request"].code_path == str(code_dir)
+    assert captured["request"].target_venue == "TPAMI"
+    assert summary["schema_version"] == "related-work-doctor/v1"
+    assert summary["status"] == "warn"
+    assert summary["reference_resolver_error_count"] == 1
+    assert summary["reference_resolver_error_sources"] == ["seedref"]
+    assert summary["related_work_discovery_mode"] == "openalex"
+    assert summary["related_work_candidates"] == 2
+    assert summary["related_work_baseline_lineage_candidates"] == 1
+    assert summary["related_work_recent_candidates"] == 1
+    assert summary["related_work_field_query"] == "whole slide images survival prediction"
+    assert summary["related_work_baseline_mentioned_queries"] == [
+        "Mobadersany | Predicting cancer outcomes from histology"
+    ]
+    assert [action["category"] for action in summary["next_actions"]] == [
+        "reference_retry",
+        "related_work_retry",
+        "reference_seed_review",
+    ]
+    assert "## Discovery Evidence" in report
+    assert "## Candidate Preview" in report
+    assert "whole slide images survival prediction" in report
+    assert "Mobadersany | Predicting cancer outcomes from histology" in report
+    assert "reference_retry" in report
 
 
 def test_section_writer_fallback_uses_paper_prose_for_core_sections():

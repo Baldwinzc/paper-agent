@@ -13,9 +13,16 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+from paper_agent.agents.baseline_reader import BaselineReaderAgent
+from paper_agent.agents.bibliography import BibliographyAgent
+from paper_agent.agents.code_baseline_comparison import CodeBaselineComparisonAgent
+from paper_agent.agents.code_understanding import CodeUnderstandingAgent
 from paper_agent.agents.draft_report import DraftReportAgent
 from paper_agent.agents.experiment_analyzer import ExperimentAnalyzerAgent
+from paper_agent.agents.innovation_analyzer import InnovationAnalyzerAgent
 from paper_agent.agents.llm_self_review import LLMSelfReviewAgent
+from paper_agent.agents.reference_resolver import ReferenceResolverAgent
+from paper_agent.agents.related_work_discovery import RelatedWorkDiscoveryAgent
 from paper_agent.agents.submission_package_validator import SubmissionPackageValidatorAgent
 from paper_agent.agents.submission_readiness import SubmissionReadinessAgent
 from paper_agent.config import LLMConfig, load_llm_config
@@ -271,6 +278,28 @@ def _add_research_paper_guide_options(parser: argparse.ArgumentParser) -> None:
     _add_experiment_artifact_consistency_options(parser)
 
 
+def _add_related_work_doctor_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--baseline-pdf", required=True, help="Baseline PDF path or directory containing a PDF.")
+    parser.add_argument("--code-path", default="", help="Optional project code directory for innovation-derived seeds.")
+    parser.add_argument("--project-name", default="", help="Optional project name for the doctor run.")
+    parser.add_argument("--target-venue", default="TPAMI")
+    parser.add_argument("--keyword", action="append", default=[], help="Keyword; can be repeated.")
+    parser.add_argument("--output-dir", default="outputs/related-work-doctor")
+    parser.add_argument(
+        "--summary",
+        default="",
+        help="Optional JSON summary path. Defaults to output-dir/RELATED_WORK_DOCTOR_SUMMARY.json.",
+    )
+    parser.add_argument(
+        "--report",
+        default="",
+        help="Optional Markdown report path. Defaults to output-dir/RELATED_WORK_DOCTOR_REPORT.md.",
+    )
+    network = parser.add_mutually_exclusive_group()
+    network.add_argument("--online", action="store_true", help="Allow OpenAlex reference and related-work discovery calls.")
+    network.add_argument("--offline", action="store_true", help="Disable OpenAlex reference and related-work discovery calls.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="paper-agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -361,6 +390,11 @@ def main() -> None:
     _add_experiment_contract_options(draft)
     _add_experiment_provenance_options(draft)
     _add_experiment_artifact_consistency_options(draft)
+    related_work_doctor = sub.add_parser(
+        "related-work-doctor",
+        help="Run baseline/reference/related-work discovery only and write a focused literature diagnostic report.",
+    )
+    _add_related_work_doctor_options(related_work_doctor)
     sample = sub.add_parser(
         "sample-hyper-protosurv",
         help="Run the local Hyper-ProtoSurv example and write showcase artifacts.",
@@ -1135,6 +1169,8 @@ def main() -> None:
                 f"Draft failed: expected at least {args.min_llm_sections} LLM-written sections, "
                 f"got {len(successes)}."
             )
+    elif args.command == "related-work-doctor":
+        _run_related_work_doctor(args)
     elif args.command == "sample-hyper-protosurv":
         _run_hyper_protosurv_sample(args)
     elif args.command == "tcga-doctor":
@@ -6699,6 +6735,393 @@ def _related_work_discovery_summary(source: dict[str, object]) -> dict[str, obje
         "error_count": len(error_sources),
         "error_sources": error_sources,
     }
+
+
+def _run_related_work_doctor(args: argparse.Namespace) -> None:
+    baseline_pdf = _resolve_baseline_pdf(args.baseline_pdf)
+    code_path = Path(args.code_path) if getattr(args, "code_path", "") else None
+    if code_path and not code_path.is_dir():
+        raise SystemExit(f"Code path not found: {code_path}")
+    output_dir = Path(args.output_dir)
+    summary_path = (
+        Path(args.summary)
+        if args.summary
+        else output_dir / "RELATED_WORK_DOCTOR_SUMMARY.json"
+    )
+    report_path = (
+        Path(args.report)
+        if args.report
+        else output_dir / "RELATED_WORK_DOCTOR_REPORT.md"
+    )
+    network_mode = _configure_network_mode(args)
+    request = PaperRequest(
+        project_name=args.project_name or _default_project_name(output_dir),
+        target_venue=args.target_venue,
+        baseline_pdf_path=str(baseline_pdf),
+        code_path=str(code_path) if code_path else None,
+        keywords=list(args.keyword or []),
+    )
+    state = _run_related_work_doctor_pipeline(request)
+    _record_runtime_modes(
+        state,
+        network_mode=network_mode,
+        llm_mode="disabled",
+        compile_latex_requested=False,
+    )
+    summary = _build_related_work_doctor_summary(
+        args,
+        state,
+        baseline_pdf=baseline_pdf,
+        code_path=code_path,
+        summary_path=summary_path,
+        report_path=report_path,
+    )
+    written_summary = _write_run_summary_data(summary, summary_path)
+    written_report = _write_related_work_doctor_report(summary, report_path)
+    print(f"Related-work doctor summary written to {written_summary}")
+    print(f"Related-work doctor report written to {written_report}")
+    if summary.get("status") == "pass":
+        print("related-work-doctor passed.")
+    else:
+        print("related-work-doctor completed with warnings.")
+
+
+def _run_related_work_doctor_pipeline(request: PaperRequest) -> dict[str, object]:
+    state: dict[str, object] = {
+        "request": request,
+        "artifacts": {},
+        "bibliography": [],
+    }
+    for agent in (
+        BaselineReaderAgent(),
+        CodeUnderstandingAgent(),
+        CodeBaselineComparisonAgent(),
+        InnovationAnalyzerAgent(),
+        BibliographyAgent(),
+        ReferenceResolverAgent(),
+        RelatedWorkDiscoveryAgent(),
+    ):
+        state = agent.run(state)
+    return state
+
+
+def _build_related_work_doctor_summary(
+    args: argparse.Namespace,
+    state: dict[str, object],
+    *,
+    baseline_pdf: Path,
+    code_path: Path | None,
+    summary_path: Path,
+    report_path: Path,
+) -> dict[str, object]:
+    summary = _build_run_summary(state)
+    artifacts = state.get("artifacts", {})
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+        summary["outputs"] = outputs
+    outputs["summary"] = str(summary_path)
+    outputs["report"] = str(report_path)
+
+    reference_errors = artifacts.get("reference_resolver_errors", {})
+    if not isinstance(reference_errors, dict):
+        reference_errors = {}
+    candidate_preview = _related_work_doctor_candidate_preview(artifacts.get("related_work_candidates", []))
+    mentioned_queries = artifacts.get("related_work_baseline_mentioned_queries", [])
+    if not isinstance(mentioned_queries, list):
+        mentioned_queries = []
+
+    summary.update(
+        {
+            "schema_version": "related-work-doctor/v1",
+            "pipeline_phase": "related_work_discovery_completed",
+            "reference_resolver_error_count": len(reference_errors),
+            "reference_resolver_error_sources": sorted(str(key) for key in reference_errors if str(key)),
+            "related_work_field_query": str(artifacts.get("related_work_field_query", "") or ""),
+            "related_work_baseline_mentioned_queries": [str(item) for item in mentioned_queries if str(item)],
+            "related_work_candidate_preview": candidate_preview,
+        }
+    )
+    warning_items = _related_work_doctor_warning_items(summary)
+    summary["warning_items"] = warning_items
+    summary["status"] = "pass" if not warning_items else "warn"
+    summary["blocking_items"] = []
+    summary["inputs"] = summary.get("inputs", {})
+    if isinstance(summary["inputs"], dict):
+        summary["inputs"]["baseline_pdf_path"] = str(baseline_pdf)
+        summary["inputs"]["code_path"] = str(code_path or "")
+    next_actions = _related_work_doctor_next_actions(args, summary)
+    if next_actions:
+        summary["next_actions"] = next_actions
+        summary["next_action"] = str(next_actions[0].get("action", "") or "")
+        summary["next_command"] = str(next_actions[0].get("command", "") or "")
+    return summary
+
+
+def _related_work_doctor_candidate_preview(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    preview: list[dict[str, object]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        preview.append(
+            {
+                "key": str(item.get("key", "") or ""),
+                "category": str(item.get("category", "") or ""),
+                "title": str(item.get("title", "") or ""),
+                "year": str(item.get("year", "") or ""),
+                "query": str(item.get("query", "") or ""),
+            }
+        )
+    return preview
+
+
+def _related_work_doctor_warning_items(summary: dict[str, object]) -> list[str]:
+    warnings: list[str] = []
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    related_work = _related_work_discovery_summary(summary)
+    resolver_mode = str(summary.get("reference_resolver_mode", "not run") or "not run")
+    network_mode = str(inputs.get("network_mode", "") or "")
+    if network_mode == "offline" or resolver_mode == "disabled" or related_work.get("mode") == "disabled":
+        warnings.append("Online reference resolution or related-work discovery is disabled.")
+    reference_error_sources = summary.get("reference_resolver_error_sources", [])
+    if isinstance(reference_error_sources, list) and reference_error_sources:
+        joined = ", ".join(str(item) for item in reference_error_sources if str(item))
+        warnings.append(f"Reference resolver reported errors for: {joined}.")
+    error_sources = related_work.get("error_sources", [])
+    if isinstance(error_sources, list) and error_sources:
+        joined = ", ".join(str(item) for item in error_sources if str(item))
+        warnings.append(f"Related-work discovery reported errors for: {joined}.")
+    if int(summary.get("reference_unresolved", 0) or 0) > 0:
+        warnings.append(
+            f"{int(summary.get('reference_unresolved', 0) or 0)} bibliography seed entries remain unresolved."
+        )
+    if int(related_work.get("candidates", 0) or 0) == 0:
+        warnings.append("No related-work candidates were recovered.")
+    return warnings
+
+
+def _related_work_doctor_next_actions(
+    args: argparse.Namespace,
+    summary: dict[str, object],
+) -> list[dict[str, str]]:
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    related_work = _related_work_discovery_summary(summary)
+    resolver_mode = str(summary.get("reference_resolver_mode", "not run") or "not run")
+    network_mode = str(inputs.get("network_mode", "") or "")
+    rerun_online = _related_work_doctor_rerun_command(args, force_online=True)
+    actions: list[dict[str, str]] = []
+    if network_mode == "offline" or resolver_mode == "disabled" or related_work.get("mode") == "disabled":
+        actions.append(
+            {
+                "category": "related_work_online",
+                "action": "Rerun with online OpenAlex reference resolution and related-work discovery enabled.",
+                "command": rerun_online,
+            }
+        )
+    if int(summary.get("reference_resolver_error_count", 0) or 0) > 0:
+        actions.append(
+            {
+                "category": "reference_retry",
+                "action": "Review reference resolver failures and rerun after confirming OpenAlex connectivity.",
+                "command": rerun_online,
+            }
+        )
+    if int(related_work.get("error_count", 0) or 0) > 0:
+        actions.append(
+            {
+                "category": "related_work_retry",
+                "action": "Review related-work discovery failures and rerun after confirming OpenAlex connectivity.",
+                "command": rerun_online,
+            }
+        )
+    if int(summary.get("reference_unresolved", 0) or 0) > 0:
+        actions.append(
+            {
+                "category": "reference_seed_review",
+                "action": "Review unresolved bibliography seeds and refine the baseline metadata or keyword seeds.",
+                "command": rerun_online,
+            }
+        )
+    if int(related_work.get("candidates", 0) or 0) == 0 and str(related_work.get("mode", "") or "") != "disabled":
+        actions.append(
+            {
+                "category": "related_work_seed_review",
+                "action": "No literature candidates were recovered; review baseline mention queries and add stronger --keyword seeds before rerunning.",
+                "command": rerun_online,
+            }
+        )
+    return _dedup_command_actions(actions)
+
+
+def _related_work_doctor_rerun_command(
+    args: argparse.Namespace,
+    *,
+    force_online: bool = False,
+) -> str:
+    parts = [
+        "paper-agent",
+        "related-work-doctor",
+        "--baseline-pdf",
+        args.baseline_pdf,
+        "--target-venue",
+        args.target_venue,
+        "--output-dir",
+        args.output_dir,
+    ]
+    if getattr(args, "code_path", ""):
+        parts.extend(["--code-path", args.code_path])
+    if getattr(args, "project_name", ""):
+        parts.extend(["--project-name", args.project_name])
+    if getattr(args, "summary", ""):
+        parts.extend(["--summary", args.summary])
+    if getattr(args, "report", ""):
+        parts.extend(["--report", args.report])
+    for keyword in list(getattr(args, "keyword", []) or []):
+        parts.extend(["--keyword", keyword])
+    if force_online or getattr(args, "online", False):
+        parts.append("--online")
+    elif getattr(args, "offline", False):
+        parts.append("--offline")
+    return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _write_related_work_doctor_report(summary: dict[str, object], report_path: Path) -> Path:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_build_related_work_doctor_report(summary), encoding="utf-8")
+    return report_path
+
+
+def _build_related_work_doctor_report(summary: dict[str, object]) -> str:
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    outputs = summary.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    category_counts = summary.get("related_work_candidate_categories", {})
+    if not isinstance(category_counts, dict):
+        category_counts = {}
+    candidate_preview = summary.get("related_work_candidate_preview", [])
+    if not isinstance(candidate_preview, list):
+        candidate_preview = []
+    warning_items = summary.get("warning_items", [])
+    if not isinstance(warning_items, list):
+        warning_items = []
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list):
+        next_actions = []
+    field_query = str(summary.get("related_work_field_query", "") or "")
+    mentioned_queries = summary.get("related_work_baseline_mentioned_queries", [])
+    if not isinstance(mentioned_queries, list):
+        mentioned_queries = []
+    lines = [
+        "# Related-Work Doctor Report",
+        "",
+        f"- Status: {summary.get('status', 'unknown')}",
+        f"- Project: {summary.get('project_name', '')}",
+        f"- Target venue: {summary.get('target_venue', '')}",
+        f"- Baseline PDF: {inputs.get('baseline_pdf_path', '')}",
+        f"- Code path: {inputs.get('code_path', '') or 'not provided'}",
+        f"- Network mode: {inputs.get('network_mode', 'environment')}",
+        "",
+        "## Discovery Evidence",
+        "",
+        f"- Reference resolver mode: {summary.get('reference_resolver_mode', 'not run')}",
+        f"- Resolved references: {summary.get('reference_resolved', 0)}",
+        f"- Unresolved seed references: {summary.get('reference_unresolved', 0)}",
+        f"- Reference resolver errors: {summary.get('reference_resolver_error_count', 0)}; sources={', '.join(str(item) for item in summary.get('reference_resolver_error_sources', [])) or 'none'}",
+        f"- Related-work discovery mode: {summary.get('related_work_discovery_mode', 'not run')}",
+        f"- Field query: `{field_query or 'not recorded'}`",
+        f"- Candidate count: {summary.get('related_work_candidates', 0)}",
+        f"- Baseline-lineage candidates: {summary.get('related_work_baseline_lineage_candidates', 0)}",
+        f"- Influential candidates: {summary.get('related_work_influential_candidates', 0)}",
+        f"- Recent candidates: {summary.get('related_work_recent_candidates', 0)}",
+        f"- Discovery errors: {summary.get('related_work_discovery_error_count', 0)}; sources={', '.join(str(item) for item in summary.get('related_work_discovery_error_sources', [])) or 'none'}",
+        "",
+        "## Queries",
+        "",
+    ]
+    if mentioned_queries:
+        for index, query in enumerate(mentioned_queries[:8], start=1):
+            lines.append(f"- Baseline mention query {index}: `{str(query)}`")
+    else:
+        lines.append("- Baseline mention queries: none")
+    lines.extend(
+        [
+            "",
+            "## Candidate Buckets",
+            "",
+            "| Category | Count |",
+            "|---|---:|",
+        ]
+    )
+    if category_counts:
+        for category, count in sorted(category_counts.items()):
+            lines.append(f"| {_table_safe(str(category))} | {int(count)} |")
+    else:
+        lines.append("| none | 0 |")
+    if candidate_preview:
+        lines.extend(
+            [
+                "",
+                "## Candidate Preview",
+                "",
+                "| Category | Year | Title | Query |",
+                "|---|---:|---|---|",
+            ]
+        )
+        for item in candidate_preview:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "| "
+                f"{_table_safe(str(item.get('category', '')))} | "
+                f"{_table_safe(str(item.get('year', '')))} | "
+                f"{_table_safe(str(item.get('title', '')))} | "
+                f"{_table_safe(str(item.get('query', '')))} |"
+            )
+    if warning_items:
+        lines.extend(["", "## Warnings", ""])
+        for item in warning_items:
+            lines.append(f"- {_table_safe(str(item))}")
+    if next_actions:
+        lines.extend(
+            [
+                "",
+                "## Next Actions",
+                "",
+                "| Step | Category | Action | Command |",
+                "|---:|---|---|---|",
+            ]
+        )
+        for index, action in enumerate(next_actions[:10], start=1):
+            if not isinstance(action, dict):
+                continue
+            lines.append(
+                "| "
+                f"{index} | "
+                f"{_table_safe(str(action.get('category', '')))} | "
+                f"{_table_safe(str(action.get('action', '')))} | "
+                f"`{_table_safe(str(action.get('command', '')))}` |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Outputs",
+            "",
+            f"- Summary: {outputs.get('summary', '')}",
+            f"- Report: {outputs.get('report', '')}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _research_paper_guide_next_actions(summary: dict[str, object]) -> list[dict[str, str]]:
