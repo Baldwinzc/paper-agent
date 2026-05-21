@@ -9252,6 +9252,7 @@ def _acceptance_checks(
             f"{summary.get('evidence_guard_findings', 0)} findings",
         ),
         _reviewer_acceptance_item(review_major, review_minor),
+        _related_work_thread_coverage_acceptance_item(summary),
         _acceptance_item(
             "Submission readiness",
             summary.get("submission_readiness_status") == "reviewable",
@@ -9349,6 +9350,35 @@ def _reviewer_acceptance_item(major: int, minor: int) -> dict[str, str]:
     if minor:
         return {"name": "Reviewer", "status": "WARN", "detail": _table_safe(detail)}
     return {"name": "Reviewer", "status": "PASS", "detail": _table_safe(detail)}
+
+
+def _related_work_thread_coverage_acceptance_item(summary: dict) -> dict[str, str]:
+    alignment = summary.get("related_work_thread_alignment", [])
+    if not isinstance(alignment, list) or not alignment:
+        candidates = int(summary.get("related_work_candidates", 0) or 0)
+        if candidates <= 0:
+            return {"name": "Related-work thread coverage", "status": "PASS", "detail": "no planned threads"}
+        return {
+            "name": "Related-work thread coverage",
+            "status": "WARN",
+            "detail": _table_safe(f"not recorded; candidates={candidates}"),
+        }
+
+    missing = int(summary.get("related_work_thread_alignment_missing", 0) or 0)
+    covered = int(summary.get("related_work_thread_alignment_covered", 0) or 0)
+    aligned = int(summary.get("related_work_thread_alignment_aligned", 0) or 0)
+    total = len([item for item in alignment if isinstance(item, dict)])
+    partial = [
+        item
+        for item in alignment
+        if isinstance(item, dict) and str(item.get("status", "") or "") in {"heading_only", "mentioned_without_heading"}
+    ]
+    detail = f"aligned={aligned}/{total}; covered={covered}/{total}; missing={missing}; partial={len(partial)}"
+    if missing > 0:
+        return {"name": "Related-work thread coverage", "status": "FAIL", "detail": _table_safe(detail)}
+    if partial:
+        return {"name": "Related-work thread coverage", "status": "WARN", "detail": _table_safe(detail)}
+    return {"name": "Related-work thread coverage", "status": "PASS", "detail": _table_safe(detail)}
 
 
 def _submission_package_acceptance_item(status: str, errors: int, warnings: int) -> dict[str, str]:

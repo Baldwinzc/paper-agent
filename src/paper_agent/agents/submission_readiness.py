@@ -38,7 +38,7 @@ class SubmissionReadinessAgent:
         action_items = self._action_items(state, blocking_items)
         return {
             "overall_score": overall,
-            "status": self._status(overall, blocking_items),
+            "status": self._status(state, overall, blocking_items),
             "scores": scores,
             "blocking_items": blocking_items,
             "action_items": action_items,
@@ -118,6 +118,19 @@ class SubmissionReadinessAgent:
             if item.get("requires_citation") and not item.get("covered_by_real_citation")
         ]
         score -= min(30, len(missing_coverage) * 10)
+        thread_alignment = artifacts.get("related_work_thread_alignment", [])
+        missing_threads = [
+            item
+            for item in thread_alignment
+            if isinstance(item, dict) and str(item.get("status", "") or "") == "missing"
+        ]
+        partial_threads = [
+            item
+            for item in thread_alignment
+            if isinstance(item, dict) and str(item.get("status", "") or "") in {"heading_only", "mentioned_without_heading"}
+        ]
+        score -= min(40, len(missing_threads) * 18)
+        score -= min(16, len(partial_threads) * 8)
         score -= min(30, len(artifacts.get("undefined_citation_keys", [])) * 15)
         return self._clamp(score)
 
@@ -203,6 +216,23 @@ class SubmissionReadinessAgent:
         if missing_coverage:
             labels = ", ".join(str(item.get("thread")) for item in missing_coverage[:3])
             items.append(f"Add real citations for related-work threads: {labels}.")
+        thread_alignment = artifacts.get("related_work_thread_alignment", [])
+        missing_threads = [
+            item
+            for item in thread_alignment
+            if isinstance(item, dict) and str(item.get("status", "") or "") == "missing"
+        ]
+        partial_threads = [
+            item
+            for item in thread_alignment
+            if isinstance(item, dict) and str(item.get("status", "") or "") in {"heading_only", "mentioned_without_heading"}
+        ]
+        if missing_threads:
+            labels = ", ".join(str(item.get("heading") or item.get("thread_id") or "") for item in missing_threads[:3])
+            items.append(f"Cover missing related-work threads: {labels}.")
+        elif partial_threads:
+            labels = ", ".join(str(item.get("heading") or item.get("thread_id") or "") for item in partial_threads[:3])
+            items.append(f"Strengthen related-work thread alignment: {labels}.")
         section_errors = artifacts.get("section_writer_section_errors", {})
         if section_errors:
             sections = ", ".join(section_errors.keys())
@@ -246,14 +276,25 @@ class SubmissionReadinessAgent:
             result_table_count=result_table_count,
         )
 
-    def _status(self, score: int, blocking_items: list[str]) -> str:
+    def _status(self, state: PaperState, score: int, blocking_items: list[str]) -> str:
         if blocking_items:
             return "needs_evidence"
+        if self._needs_author_pass(state):
+            return "needs_author_pass"
         if score >= 88:
             return "reviewable"
         if score >= 72:
             return "needs_author_pass"
         return "needs_evidence"
+
+    def _needs_author_pass(self, state: PaperState) -> bool:
+        alignment = state.get("artifacts", {}).get("related_work_thread_alignment", [])
+        if not isinstance(alignment, list):
+            return False
+        return any(
+            isinstance(item, dict) and str(item.get("status", "") or "") in {"missing", "heading_only", "mentioned_without_heading"}
+            for item in alignment
+        )
 
     def _clamp(self, value: int) -> int:
         return max(0, min(100, value))

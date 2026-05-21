@@ -2472,6 +2472,87 @@ def test_submission_readiness_blocks_synthetic_experiment_evidence():
     assert any("synthetic/mock" in item for item in readiness["blocking_items"])
 
 
+def test_submission_readiness_downgrades_missing_related_work_threads(tmp_path):
+    state = {
+        "request": PaperRequest(project_name="readiness-related-work-demo", target_venue="TPAMI"),
+        "baseline": BaselineSummary(title="Baseline", problem="Problem", method="Method"),
+        "code": CodeSummary(summary="Code summary"),
+        "experiments": ExperimentSummary(
+            datasets=["BLCA"],
+            metrics=["C-INDEX"],
+            result_tables=[
+                ExperimentTableSummary(
+                    baseline="baseline",
+                    comparisons=[
+                        ExperimentComparison(
+                            dataset="BLCA",
+                            metric="C-INDEX",
+                            method="ours",
+                            baseline="baseline",
+                            method_value=0.671,
+                            baseline_value=0.646,
+                            signed_improvement=0.025,
+                            improved=True,
+                        )
+                    ],
+                )
+            ],
+        ),
+        "sections": DraftSections(
+            abstract="A" * 120,
+            introduction="I" * 120,
+            related_work="### Baseline Lineage\nBaseline family discussion \\cite{paper}.",
+            method="M" * 120,
+            experiments="E" * 120,
+            conclusion="C" * 120,
+        ),
+        "bibliography": [CitationEntry(key="paper", title="Paper", authors=["Ada"], year="2024")],
+        "venue_template": VenueTemplate(venue="TPAMI"),
+        "latex_project_dir": tmp_path,
+        "latex_output_path": tmp_path / "main.tex",
+        "latex_zip_path": tmp_path / "paper.zip",
+        "review_findings": [],
+        "artifacts": {
+            "reference_verification": {"resolved_count": 1, "unresolved_count": 0},
+            "factual_consistency": [{"check": "unsupported_datasets", "status": "ok", "values": []}],
+            "related_work_citation_coverage": [
+                {
+                    "thread": "Baseline Lineage",
+                    "requires_citation": True,
+                    "covered_by_real_citation": True,
+                }
+            ],
+            "related_work_thread_alignment": [
+                {
+                    "thread_id": "baseline_lineage",
+                    "heading": "Baseline Lineage",
+                    "status": "aligned",
+                    "heading_present": True,
+                    "matched_candidate_keys": ["paper"],
+                    "matched_candidate_titles": [],
+                    "covered": True,
+                },
+                {
+                    "thread_id": "recent_developments",
+                    "heading": "Recent Developments",
+                    "status": "missing",
+                    "heading_present": False,
+                    "matched_candidate_keys": [],
+                    "matched_candidate_titles": [],
+                    "covered": False,
+                },
+            ],
+        },
+    }
+
+    state = SubmissionReadinessAgent().run(state)
+
+    readiness = state["artifacts"]["submission_readiness"]
+    assert readiness["status"] == "needs_author_pass"
+    assert readiness["scores"]["citation_readiness"] < 90
+    assert any("Cover missing related-work threads" in item for item in readiness["action_items"])
+
+
 def test_draft_report_includes_submission_readiness(tmp_path):
     state = {
         "request": PaperRequest(project_name="readiness-report-demo", target_venue="TPAMI"),
@@ -3394,8 +3475,8 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     )
     report = report_path.read_text(encoding="utf-8")
 
-    assert "- Overall status: PASS" in report
-    assert "- Pipeline status: PASS" in report
+    assert "- Overall status: FAIL" in report
+    assert "- Pipeline status: FAIL" in report
     assert "- Submission evidence status: PASS" in report
     assert "| Experiment source integrity | PASS | kind=real_result_file" in report
     assert "| Experiment result contract | PASS | complete; main=2;" in report
@@ -3420,6 +3501,7 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "related_work_retry" in report
     assert "paper-agent paper-e2e-smoke --online" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
+    assert "| Related-work thread coverage | FAIL | aligned=1/3; covered=2/3; missing=1; partial=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LLM call trace | PASS | 6/6 calls succeeded; total_tokens=4800; required >= 4 |" in report
     assert "| LaTeX compile | PASS | status=passed; tool=tectonic.exe; mode=compile |" in report
