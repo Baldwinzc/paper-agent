@@ -89,8 +89,9 @@ When online related-work discovery finds verified candidates, generic keyword
 seed references are pruned and the provided baseline seed is enriched from the
 matched scholarly record when possible.
 The run summary, acceptance report, and top-level research-guide report expose
-related-work discovery mode, baseline-lineage/influential/recent candidate
-counts, and retrieval error sources so literature coverage gaps are explicit.
+related-work discovery mode, field query, baseline mention queries,
+baseline-lineage/influential/recent candidate counts, and retrieval error
+sources so literature coverage gaps are explicit.
 The standalone `related-work-doctor` command should expose the same discovery
 state without requiring a full paper run: field query, baseline-mentioned work
 queries, candidate buckets, resolver/discovery error sources, and concrete

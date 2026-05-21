@@ -2757,10 +2757,19 @@ def test_run_summary_reports_core_metrics(tmp_path):
             "reference_pruned_seed_keys": ["survivalprediction"],
             "related_work_discovery_mode": "openalex",
             "related_work_discovery_errors": {"recent_search": "timeout"},
+            "related_work_field_query": "whole slide images survival prediction",
+            "related_work_baseline_mentioned_queries": [
+                "Mobadersany | Predicting cancer outcomes from histology"
+            ],
             "related_work_candidates": [
-                {"title": "A", "category": "baseline_reference"},
-                {"title": "B", "category": "influential"},
-                {"title": "C", "category": "recent"},
+                {
+                    "title": "A",
+                    "category": "baseline_reference",
+                    "query": "A",
+                    "year": "2018",
+                },
+                {"title": "B", "category": "influential", "query": "B", "year": "2020"},
+                {"title": "C", "category": "recent", "query": "C", "year": "2026"},
             ],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
@@ -2831,6 +2840,11 @@ def test_run_summary_reports_core_metrics(tmp_path):
         "influential": 1,
         "recent": 1,
     }
+    assert summary["related_work_field_query"] == "whole slide images survival prediction"
+    assert summary["related_work_baseline_mentioned_queries"] == [
+        "Mobadersany | Predicting cancer outcomes from histology"
+    ]
+    assert summary["related_work_candidate_preview"][0]["title"] == "A"
     assert summary["related_work_discovery_error_count"] == 1
     assert summary["related_work_discovery_error_sources"] == ["recent_search"]
     assert summary["experiment_result_tables"] == 1
@@ -7950,6 +7964,10 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
                     "section_writer_mode": "deterministic",
                     "reference_resolver_mode": "openalex",
                     "related_work_discovery_mode": "openalex",
+                    "related_work_field_query": "whole slide images survival prediction",
+                    "related_work_baseline_mentioned_queries": [
+                        "Mobadersany | Predicting cancer outcomes from histology"
+                    ],
                     "related_work_candidates": [],
                     "related_work_discovery_errors": {"baseline_mentions": "timeout"},
                     "section_writer_llm_successes": [],
@@ -8029,6 +8047,11 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert "--offline" not in summary["next_command"]
     assert "- Artifact manifest:" in acceptance_report
     assert "## Recommended Next Actions" in acceptance_report
+    assert "- Related-work field query: `whole slide images survival prediction`" in acceptance_report
+    assert (
+        "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`"
+        in acceptance_report
+    )
     assert "related_work_online" in acceptance_report
     assert "related_work_seed_review" in acceptance_report
     assert manifest["schema_version"] == "paper-e2e-artifact-manifest/v1"
@@ -8754,6 +8777,21 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                 "related_work_baseline_lineage_candidates": 3,
                 "related_work_influential_candidates": 2,
                 "related_work_recent_candidates": 1,
+                "related_work_field_query": "whole slide images survival prediction",
+                "related_work_baseline_mentioned_queries": [
+                    "Mobadersany | Predicting cancer outcomes from histology",
+                    "Chen | Whole slide images are 2d point clouds",
+                ],
+                "related_work_candidate_preview": [
+                    {
+                        "category": "baseline_mentioned",
+                        "title": "Predicting cancer outcomes from histology",
+                    },
+                    {
+                        "category": "influential",
+                        "title": "Computational pathology survey",
+                    },
+                ],
                 "related_work_discovery_error_count": 1,
                 "related_work_discovery_error_sources": ["recent_search"],
             }
@@ -8803,6 +8841,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["experiment_artifact_consistency_status"] == "complete"
     assert quality["related_work_discovery_mode"] == "openalex"
     assert quality["related_work_candidates"] == 6
+    assert quality["related_work_field_query"] == "whole slide images survival prediction"
+    assert quality["related_work_baseline_mentioned_queries"][0].startswith("Mobadersany |")
+    assert quality["related_work_candidate_preview"][0]["category"] == "baseline_mentioned"
     assert "- LLM sections: 2/3; successes: abstract, method" in report
     assert "- LLM calls: 2/3; tokens=512" in report
     assert "- LLM self-review: llm; auto_revisions=1" in report
@@ -8812,6 +8853,9 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert "- Baseline-lineage candidates: 3" in report
     assert "- Influential candidates: 2" in report
     assert "- Recent candidates: 1" in report
+    assert "- Field query: `whole slide images survival prediction`" in report
+    assert "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`" in report
+    assert "- Candidate preview: [baseline_mentioned] Predicting cancer outcomes from histology; [influential] Computational pathology survey" in report
     assert "- Discovery errors: 1; sources=recent_search" in report
 
 

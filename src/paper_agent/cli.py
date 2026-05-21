@@ -6323,6 +6323,12 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         llm_attempted = []
     if not isinstance(llm_successes, list):
         llm_successes = []
+    related_work_mentioned_queries = quality.get("related_work_baseline_mentioned_queries", [])
+    if not isinstance(related_work_mentioned_queries, list):
+        related_work_mentioned_queries = []
+    related_work_candidate_preview = quality.get("related_work_candidate_preview", [])
+    if not isinstance(related_work_candidate_preview, list):
+        related_work_candidate_preview = []
     llm_attempted_count = len(llm_attempted) if llm_attempted else quality.get("llm_section_call_count", 0)
     lines = [
         "# Research Paper Guide Report",
@@ -6348,38 +6354,56 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         f"- Baseline-lineage candidates: {quality.get('related_work_baseline_lineage_candidates', 0)}",
         f"- Influential candidates: {quality.get('related_work_influential_candidates', 0)}",
         f"- Recent candidates: {quality.get('related_work_recent_candidates', 0)}",
+        f"- Field query: `{str(quality.get('related_work_field_query', '') or 'not recorded')}`",
+        f"- Baseline mention queries recovered: {len(related_work_mentioned_queries)}",
         (
             "- Discovery errors: "
             f"{quality.get('related_work_discovery_error_count', 0)}; "
             f"sources={', '.join(str(item) for item in quality.get('related_work_discovery_error_sources', [])) or 'none'}"
         ),
-        "",
-        "## Paper Acceptance",
-        "",
-        f"- Manifest status: {quality.get('manifest_status', paper_manifest.get('status', 'not found'))}",
-        f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
-        f"- Experiment contract: {quality.get('experiment_contract_status', paper_experiment.get('contract_status', 'not recorded'))}",
-        f"- LLM mode: {quality.get('llm_mode', paper_llm.get('mode', 'not recorded'))}",
-        f"- LLM preflight: {quality.get('llm_preflight_status', paper_llm.get('preflight_status', 'not recorded'))}",
-        (
-            f"- LLM sections: {len(llm_successes)}/{llm_attempted_count}; "
-            f"successes: {', '.join(str(item) for item in llm_successes) or 'none'}"
-        ),
-        (
-            f"- LLM calls: {quality.get('llm_section_call_successes', 0)}/"
-            f"{quality.get('llm_section_call_count', 0)}; "
-            f"tokens={quality.get('llm_section_total_tokens', 0)}"
-        ),
-        (
-            f"- LLM self-review: {quality.get('llm_self_review_mode', paper_llm.get('self_review_mode', 'not run'))}; "
-            f"auto_revisions={quality.get('llm_self_review_auto_revisions', 0)}"
-        ),
-        (
-            f"- LaTeX compile: {quality.get('latex_compile_status', 'not recorded')}; "
-            f"tool={quality.get('latex_compile_tool', '') or 'none'}; "
-            f"mode={quality.get('latex_compile_mode', 'not recorded')}"
-        ),
     ]
+    for index, query in enumerate(related_work_mentioned_queries[:3], start=1):
+        lines.append(f"- Baseline mention query {index}: `{str(query)}`")
+    if related_work_candidate_preview:
+        preview_items: list[str] = []
+        for item in related_work_candidate_preview[:3]:
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category", "") or "unknown")
+            title = str(item.get("title", "") or "untitled")
+            preview_items.append(f"[{category}] {title}")
+        if preview_items:
+            lines.append(f"- Candidate preview: {'; '.join(preview_items)}")
+    lines.extend(
+        [
+            "",
+            "## Paper Acceptance",
+            "",
+            f"- Manifest status: {quality.get('manifest_status', paper_manifest.get('status', 'not found'))}",
+            f"- Smoke contract: {paper_manifest.get('smoke_contract_status', 'not recorded')}",
+            f"- Experiment contract: {quality.get('experiment_contract_status', paper_experiment.get('contract_status', 'not recorded'))}",
+            f"- LLM mode: {quality.get('llm_mode', paper_llm.get('mode', 'not recorded'))}",
+            f"- LLM preflight: {quality.get('llm_preflight_status', paper_llm.get('preflight_status', 'not recorded'))}",
+            (
+                f"- LLM sections: {len(llm_successes)}/{llm_attempted_count}; "
+                f"successes: {', '.join(str(item) for item in llm_successes) or 'none'}"
+            ),
+            (
+                f"- LLM calls: {quality.get('llm_section_call_successes', 0)}/"
+                f"{quality.get('llm_section_call_count', 0)}; "
+                f"tokens={quality.get('llm_section_total_tokens', 0)}"
+            ),
+            (
+                f"- LLM self-review: {quality.get('llm_self_review_mode', paper_llm.get('self_review_mode', 'not run'))}; "
+                f"auto_revisions={quality.get('llm_self_review_auto_revisions', 0)}"
+            ),
+            (
+                f"- LaTeX compile: {quality.get('latex_compile_status', 'not recorded')}; "
+                f"tool={quality.get('latex_compile_tool', '') or 'none'}; "
+                f"mode={quality.get('latex_compile_mode', 'not recorded')}"
+            ),
+        ]
+    )
     blocking_items = summary.get("blocking_items", [])
     if isinstance(blocking_items, list) and blocking_items:
         lines.extend(["", "## Blocking Items", ""])
@@ -6591,6 +6615,23 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         ),
         "related_work_influential_candidates": paper_summary.get("related_work_influential_candidates", 0),
         "related_work_recent_candidates": paper_summary.get("related_work_recent_candidates", 0),
+        "related_work_field_query": str(paper_summary.get("related_work_field_query", "") or ""),
+        "related_work_baseline_mentioned_queries": (
+            [
+                str(item)
+                for item in paper_summary.get("related_work_baseline_mentioned_queries", [])
+                if str(item)
+            ]
+            if isinstance(paper_summary.get("related_work_baseline_mentioned_queries", []), list)
+            else []
+        ),
+        "related_work_candidate_preview": _related_work_candidate_preview(
+            paper_summary.get(
+                "related_work_candidate_preview",
+                paper_summary.get("related_work_candidates", []),
+            ),
+            limit=5,
+        ),
         "related_work_discovery_error_count": paper_summary.get("related_work_discovery_error_count", 0),
         "related_work_discovery_error_sources": paper_summary.get("related_work_discovery_error_sources", []),
         "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
@@ -6689,6 +6730,25 @@ def _related_work_candidate_category_counts(candidates: object) -> dict[str, int
         category = str(item.get("category", "") or "unknown")
         counts[category] = counts.get(category, 0) + 1
     return counts
+
+
+def _related_work_candidate_preview(value: object, *, limit: int = 10) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    preview: list[dict[str, object]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        preview.append(
+            {
+                "key": str(item.get("key", "") or ""),
+                "category": str(item.get("category", "") or ""),
+                "title": str(item.get("title", "") or ""),
+                "year": str(item.get("year", "") or ""),
+                "query": str(item.get("query", "") or ""),
+            }
+        )
+    return preview
 
 
 def _related_work_discovery_summary(source: dict[str, object]) -> dict[str, object]:
@@ -6828,7 +6888,7 @@ def _build_related_work_doctor_summary(
     reference_errors = artifacts.get("reference_resolver_errors", {})
     if not isinstance(reference_errors, dict):
         reference_errors = {}
-    candidate_preview = _related_work_doctor_candidate_preview(artifacts.get("related_work_candidates", []))
+    candidate_preview = _related_work_candidate_preview(artifacts.get("related_work_candidates", []))
     mentioned_queries = artifacts.get("related_work_baseline_mentioned_queries", [])
     if not isinstance(mentioned_queries, list):
         mentioned_queries = []
@@ -6858,25 +6918,6 @@ def _build_related_work_doctor_summary(
         summary["next_action"] = str(next_actions[0].get("action", "") or "")
         summary["next_command"] = str(next_actions[0].get("command", "") or "")
     return summary
-
-
-def _related_work_doctor_candidate_preview(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    preview: list[dict[str, object]] = []
-    for item in value[:10]:
-        if not isinstance(item, dict):
-            continue
-        preview.append(
-            {
-                "key": str(item.get("key", "") or ""),
-                "category": str(item.get("category", "") or ""),
-                "title": str(item.get("title", "") or ""),
-                "year": str(item.get("year", "") or ""),
-                "query": str(item.get("query", "") or ""),
-            }
-        )
-    return preview
 
 
 def _related_work_doctor_warning_items(summary: dict[str, object]) -> list[str]:
@@ -8710,6 +8751,13 @@ def _build_acceptance_report(
 
     inputs = summary.get("inputs", {})
     outputs = summary.get("outputs", {})
+    related_work_field_query = str(summary.get("related_work_field_query", "") or "")
+    related_work_mentioned_queries = summary.get("related_work_baseline_mentioned_queries", [])
+    if not isinstance(related_work_mentioned_queries, list):
+        related_work_mentioned_queries = []
+    related_work_candidate_preview = summary.get("related_work_candidate_preview", [])
+    if not isinstance(related_work_candidate_preview, list):
+        related_work_candidate_preview = []
     lines = [
         "# Paper Agent Acceptance Report",
         "",
@@ -8779,12 +8827,30 @@ def _build_acceptance_report(
             f"{related_work.get('error_count', 0)}; "
             f"sources={', '.join(str(item) for item in related_work.get('error_sources', [])) or 'none'}"
         ),
-        "",
-        "## Acceptance Checks",
-        "",
-        "| Check | Status | Detail |",
-        "|---|---|---|",
+        f"- Related-work field query: `{related_work_field_query or 'not recorded'}`",
+        f"- Baseline mention queries recovered: {len(related_work_mentioned_queries)}",
     ]
+    for index, query in enumerate(related_work_mentioned_queries[:3], start=1):
+        lines.append(f"- Baseline mention query {index}: `{str(query)}`")
+    if related_work_candidate_preview:
+        preview_items: list[str] = []
+        for item in related_work_candidate_preview[:3]:
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category", "") or "unknown")
+            title = str(item.get("title", "") or "untitled")
+            preview_items.append(f"[{category}] {title}")
+        if preview_items:
+            lines.append(f"- Related-work candidate preview: {'; '.join(preview_items)}")
+    lines.extend(
+        [
+            "",
+            "## Acceptance Checks",
+            "",
+            "| Check | Status | Detail |",
+            "|---|---|---|",
+        ]
+    )
     for check in checks:
         lines.append(
             f"| {check['name']} | {check['status']} | {check['detail']} |"
@@ -9423,6 +9489,18 @@ def _build_run_summary(state: dict, markdown_path: Path | None = None) -> dict:
         "related_work_influential_candidates": related_work.get("influential_candidates", 0),
         "related_work_recent_candidates": related_work.get("recent_candidates", 0),
         "related_work_candidate_categories": related_work.get("category_counts", {}),
+        "related_work_field_query": str(artifacts.get("related_work_field_query", "") or ""),
+        "related_work_baseline_mentioned_queries": [
+            str(item)
+            for item in artifacts.get("related_work_baseline_mentioned_queries", [])
+            if str(item)
+        ]
+        if isinstance(artifacts.get("related_work_baseline_mentioned_queries", []), list)
+        else [],
+        "related_work_candidate_preview": _related_work_candidate_preview(
+            artifacts.get("related_work_candidates", []),
+            limit=5,
+        ),
         "related_work_discovery_error_count": related_work.get("error_count", 0),
         "related_work_discovery_error_sources": related_work.get("error_sources", []),
         "experiment_result_tables": len(artifacts.get("experiment_result_tables", [])),

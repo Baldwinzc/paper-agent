@@ -49,7 +49,8 @@ The current scaffold supports:
 - Optional OpenAlex related-work discovery from baseline references, papers citing
   the baseline, influential field papers, and recent field papers.
 - Run summaries, acceptance reports, and research-guide reports surface the
-  related-work discovery mode, candidate buckets, and retrieval error sources.
+  related-work discovery mode, field query, baseline mention queries, candidate
+  buckets, and retrieval error sources.
 - A standalone `related-work-doctor` CLI can run only the baseline/reference/
   literature-discovery path and write a focused diagnostic summary/report with
   retrieval queries, candidate buckets, and repair commands.
