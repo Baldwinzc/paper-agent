@@ -980,6 +980,31 @@ def main() -> None:
         default="",
         help="Output Markdown path. Defaults to SHOWCASE_REPORT.md beside the manifest.",
     )
+    triage_report = sub.add_parser(
+        "triage-report",
+        help="Scan output artifacts and rank research-guide / paper-e2e runs by triage priority.",
+    )
+    triage_report.add_argument(
+        "--root",
+        default="outputs",
+        help="Root directory to scan recursively for RESEARCH_GUIDE_SUMMARY.json and ARTIFACT_MANIFEST.json.",
+    )
+    triage_report.add_argument(
+        "--summary",
+        default="",
+        help="Optional JSON output path. Defaults to TRIAGE_SUMMARY.json under --root.",
+    )
+    triage_report.add_argument(
+        "--report",
+        default="",
+        help="Optional Markdown output path. Defaults to TRIAGE_REPORT.md under --root.",
+    )
+    triage_report.add_argument(
+        "--limit",
+        type=int,
+        default=200,
+        help="Maximum number of ranked entries to include in the outputs.",
+    )
     experiment_template = sub.add_parser(
         "experiment-template",
         help="Write a fill-in Markdown template for real experiment result files.",
@@ -1228,6 +1253,8 @@ def main() -> None:
         _run_paper_e2e_acceptance(args)
     elif args.command == "paper-e2e-report":
         _run_paper_e2e_report(args)
+    elif args.command == "triage-report":
+        _run_triage_report(args)
 
 
 def _resolve_baseline_pdf(path_value: str) -> Path:
@@ -7894,6 +7921,264 @@ def _build_paper_e2e_showcase_report(
     for item in _paper_e2e_manifest_artifacts(manifest):
         lines.append(_paper_e2e_showcase_artifact_row(item))
     return "\n".join(lines) + "\n"
+
+
+def _run_triage_report(args: argparse.Namespace) -> None:
+    root = _resolve_project_relative_path(args.root)
+    summary_path = (
+        _resolve_project_relative_path(args.summary)
+        if args.summary
+        else root / "TRIAGE_SUMMARY.json"
+    )
+    report_path = (
+        _resolve_project_relative_path(args.report)
+        if args.report
+        else root / "TRIAGE_REPORT.md"
+    )
+    payload = _build_triage_report_payload(root, limit=max(1, int(args.limit or 1)))
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_build_triage_report_markdown(payload), encoding="utf-8")
+    counts = payload.get("counts", {})
+    print(f"Triage summary written to {summary_path}")
+    print(f"Triage report written to {report_path}")
+    print(
+        "Triage totals: "
+        f"total={counts.get('total', 0)}; "
+        f"blocked={counts.get('blocked', 0)}; "
+        f"needs_revision={counts.get('needs_revision', 0)}; "
+        f"ready={counts.get('ready', 0)}"
+    )
+
+
+def _build_triage_report_payload(root: Path, *, limit: int) -> dict[str, object]:
+    entries = _collect_triage_entries(root)
+    sorted_entries = sorted(entries, key=_triage_entry_sort_key)
+    limited_entries = sorted_entries[:limit]
+    return {
+        "schema_version": "triage-report/v1",
+        "root": str(root),
+        "limit": limit,
+        "counts": _triage_report_counts(entries, limited_entries),
+        "entries": limited_entries,
+    }
+
+
+def _collect_triage_entries(root: Path) -> list[dict[str, object]]:
+    if not root.exists():
+        return []
+    entries: list[dict[str, object]] = []
+    referenced_manifests: set[str] = set()
+    for summary_path in sorted(root.rglob("RESEARCH_GUIDE_SUMMARY.json")):
+        summary = _read_optional_json_object(str(summary_path))
+        entry = _triage_entry_from_research_guide(summary_path, summary)
+        if entry:
+            entries.append(entry)
+        outputs = summary.get("outputs", {}) if isinstance(summary.get("outputs", {}), dict) else {}
+        manifest_path = str(outputs.get("paper_artifact_manifest", "") or "")
+        if manifest_path:
+            referenced_manifests.add(str(_resolve_project_relative_path(manifest_path)))
+    for manifest_path in sorted(root.rglob("ARTIFACT_MANIFEST.json")):
+        resolved_manifest_path = str(manifest_path.resolve())
+        if resolved_manifest_path in referenced_manifests:
+            continue
+        manifest = _read_optional_json_object(str(manifest_path))
+        summary = _triage_manifest_summary_payload(manifest, manifest_path)
+        entry = _triage_entry_from_paper_manifest(manifest_path, manifest, summary)
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _triage_manifest_summary_payload(manifest: dict[str, object], manifest_path: Path) -> dict[str, object]:
+    artifact = _paper_e2e_manifest_artifact(manifest, "run_summary")
+    summary_path = str(artifact.get("path", "") if isinstance(artifact, dict) else "")
+    if summary_path:
+        return _read_optional_json_object(summary_path)
+    fallback_summary = manifest_path.with_name("RUN_SUMMARY.json")
+    return _read_optional_json_object(str(fallback_summary))
+
+
+def _triage_entry_from_research_guide(summary_path: Path, summary: dict[str, object]) -> dict[str, object]:
+    if not summary:
+        return {}
+    triage = summary.get("triage", {})
+    if not isinstance(triage, dict):
+        triage = {}
+    outputs = summary.get("outputs", {}) if isinstance(summary.get("outputs", {}), dict) else {}
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list):
+        next_actions = []
+    first_action = next_actions[0] if next_actions and isinstance(next_actions[0], dict) else {}
+    return {
+        "source_kind": "research_guide",
+        "project_name": str(summary.get("project_name", "") or summary_path.parent.name),
+        "target_venue": str(summary.get("target_venue", "") or ""),
+        "run_status": str(summary.get("status", "") or "unknown"),
+        "pipeline_phase": str(summary.get("pipeline_phase", "") or ""),
+        "triage_status": str(triage.get("status", "") or "not_recorded"),
+        "priority": str(triage.get("priority", "") or "not_recorded"),
+        "priority_rank": int(triage.get("priority_rank", 0) or 0),
+        "repair_target": str(triage.get("repair_target", "") or ""),
+        "reason": str(triage.get("reason", "") or ""),
+        "summary_path": str(summary_path),
+        "report_path": str(outputs.get("research_guide_report", "") or ""),
+        "manifest_path": str(outputs.get("paper_artifact_manifest", "") or ""),
+        "next_action_category": str(first_action.get("category", "") or ""),
+        "next_action_command": str(first_action.get("command", "") or ""),
+    }
+
+
+def _triage_entry_from_paper_manifest(
+    manifest_path: Path,
+    manifest: dict[str, object],
+    summary: dict[str, object],
+) -> dict[str, object]:
+    if not manifest:
+        return {}
+    triage = manifest.get("triage", {})
+    if not isinstance(triage, dict):
+        triage = _paper_e2e_summary_triage(summary)
+    next_actions = summary.get("next_actions", [])
+    if not isinstance(next_actions, list):
+        next_actions = []
+    first_action = next_actions[0] if next_actions and isinstance(next_actions[0], dict) else {}
+    showcase_path = manifest_path.with_name("SHOWCASE_REPORT.md")
+    return {
+        "source_kind": "paper_e2e",
+        "project_name": str(manifest.get("project_name", "") or manifest_path.parent.name),
+        "target_venue": str(manifest.get("target_venue", "") or ""),
+        "run_status": str(manifest.get("status", summary.get("status", "unknown")) or "unknown"),
+        "pipeline_phase": str(summary.get("pipeline_phase", "") or ""),
+        "triage_status": str(triage.get("status", "") or "not_recorded"),
+        "priority": str(triage.get("priority", "") or "not_recorded"),
+        "priority_rank": int(triage.get("priority_rank", 0) or 0),
+        "repair_target": str(triage.get("repair_target", "") or ""),
+        "reason": str(triage.get("reason", "") or ""),
+        "summary_path": str(_paper_e2e_report_path_arg_or_manifest("", manifest, "run_summary") or ""),
+        "report_path": str(showcase_path if showcase_path.exists() else ""),
+        "manifest_path": str(manifest_path),
+        "next_action_category": str(first_action.get("category", "") or ""),
+        "next_action_command": str(first_action.get("command", "") or ""),
+    }
+
+
+def _triage_entry_sort_key(entry: dict[str, object]) -> tuple[int, int, str, str]:
+    status_rank = {
+        "blocked": 0,
+        "needs_revision": 1,
+        "ready": 2,
+        "not_recorded": 3,
+    }
+    priority_rank = -int(entry.get("priority_rank", 0) or 0)
+    triage_status = str(entry.get("triage_status", "") or "not_recorded")
+    project_name = str(entry.get("project_name", "") or "")
+    summary_path = str(entry.get("summary_path", "") or entry.get("manifest_path", "") or "")
+    return (
+        priority_rank,
+        status_rank.get(triage_status, 4),
+        project_name.lower(),
+        summary_path.lower(),
+    )
+
+
+def _triage_report_counts(
+    all_entries: list[dict[str, object]],
+    emitted_entries: list[dict[str, object]],
+) -> dict[str, object]:
+    def count_by(items: list[dict[str, object]], key: str, expected: str) -> int:
+        return sum(1 for item in items if str(item.get(key, "") or "") == expected)
+
+    return {
+        "total": len(emitted_entries),
+        "scanned_total": len(all_entries),
+        "omitted": max(0, len(all_entries) - len(emitted_entries)),
+        "blocked": count_by(emitted_entries, "triage_status", "blocked"),
+        "needs_revision": count_by(emitted_entries, "triage_status", "needs_revision"),
+        "ready": count_by(emitted_entries, "triage_status", "ready"),
+        "not_recorded": count_by(emitted_entries, "triage_status", "not_recorded"),
+        "high_priority": count_by(emitted_entries, "priority", "high"),
+        "medium_priority": count_by(emitted_entries, "priority", "medium"),
+        "low_priority": count_by(emitted_entries, "priority", "low"),
+        "research_guide": count_by(emitted_entries, "source_kind", "research_guide"),
+        "paper_e2e": count_by(emitted_entries, "source_kind", "paper_e2e"),
+    }
+
+
+def _build_triage_report_markdown(payload: dict[str, object]) -> str:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list):
+        entries = []
+    lines = [
+        "# Run Triage Report",
+        "",
+        f"- Root: {payload.get('root', '')}",
+        f"- Total entries: {counts.get('total', 0)}",
+        f"- Scanned entries: {counts.get('scanned_total', counts.get('total', 0))}",
+        f"- Omitted by limit: {counts.get('omitted', 0)}",
+        f"- Blocked: {counts.get('blocked', 0)}",
+        f"- Needs revision: {counts.get('needs_revision', 0)}",
+        f"- Ready: {counts.get('ready', 0)}",
+        f"- Triage not recorded: {counts.get('not_recorded', 0)}",
+        f"- High priority: {counts.get('high_priority', 0)}",
+        f"- Medium priority: {counts.get('medium_priority', 0)}",
+        f"- Low priority: {counts.get('low_priority', 0)}",
+        "",
+        "## Ranked Entries",
+        "",
+        "| Rank | Source | Project | Venue | Run status | Triage | Priority | Repair target | Next step | Path |",
+        "|---:|---|---|---|---|---|---|---|---|---|",
+    ]
+    for index, entry in enumerate(entries, start=1):
+        path_value = str(
+            entry.get("summary_path", "")
+            or entry.get("manifest_path", "")
+            or entry.get("report_path", "")
+            or ""
+        )
+        lines.append(
+            "| "
+            f"{index} | "
+            f"{_table_safe(str(entry.get('source_kind', '')))} | "
+            f"{_table_safe(str(entry.get('project_name', '')))} | "
+            f"{_table_safe(str(entry.get('target_venue', '')))} | "
+            f"{_table_safe(str(entry.get('run_status', '')))} | "
+            f"{_table_safe(str(entry.get('triage_status', '')))} | "
+            f"{_table_safe(str(entry.get('priority', '')))} "
+            f"(rank={_table_safe(str(entry.get('priority_rank', 0)))}) | "
+            f"{_table_safe(str(entry.get('repair_target', '')))} | "
+            f"{_table_safe(str(entry.get('next_action_category', '') or entry.get('reason', '')))} | "
+            f"`{_table_safe(path_value)}` |"
+        )
+    if entries:
+        lines.extend(["", "## Details", ""])
+    for index, entry in enumerate(entries[:20], start=1):
+        lines.extend(
+            [
+                f"### Entry {index}",
+                "",
+                f"- Source: {entry.get('source_kind', '')}",
+                f"- Project: {entry.get('project_name', '')}",
+                f"- Target venue: {entry.get('target_venue', '')}",
+                f"- Run status: {entry.get('run_status', '')}",
+                f"- Pipeline phase: {entry.get('pipeline_phase', '')}",
+                f"- Triage: {entry.get('triage_status', '')}",
+                f"- Priority: {entry.get('priority', '')} (rank={entry.get('priority_rank', 0)})",
+                f"- Repair target: {entry.get('repair_target', '')}",
+                f"- Reason: {entry.get('reason', '')}",
+                f"- Summary/manifest: {entry.get('summary_path', '') or entry.get('manifest_path', '')}",
+            ]
+        )
+        if entry.get("report_path"):
+            lines.append(f"- Report: {entry.get('report_path', '')}")
+        if entry.get("next_action_command"):
+            lines.append(f"- Next command: `{_table_safe(str(entry.get('next_action_command', '')))}`")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _paper_e2e_showcase_repair_plan(summary: dict) -> list[str]:

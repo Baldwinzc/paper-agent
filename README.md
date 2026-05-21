@@ -328,6 +328,19 @@ Completed `paper-e2e` runs now also carry a stable `triage` object in
 `RUN_SUMMARY.json` and `ARTIFACT_MANIFEST.json`, and `SHOWCASE_REPORT.md`
 surfaces the same `status/priority/repair_target` summary for direct
 automation-facing ranking.
+To rank a whole `outputs\` tree without opening nested reports, run:
+
+```powershell
+python -m paper_agent.cli triage-report `
+  --root outputs `
+  --summary outputs\TRIAGE_SUMMARY.json `
+  --report outputs\TRIAGE_REPORT.md
+```
+
+This scans `RESEARCH_GUIDE_SUMMARY.json` and standalone
+`ARTIFACT_MANIFEST.json` files, deduplicates child paper manifests that are
+already referenced by a research-guide run, and emits one ranked JSON/Markdown
+view keyed by `triage.status`, `priority_rank`, and `repair_target`.
 Add `--write-artifact-template` to make the blocked smoke write those TODO CSV
 templates immediately; use `--artifact-template-dir` to choose the output
 directory and fill the generated files with real trained-model outputs.

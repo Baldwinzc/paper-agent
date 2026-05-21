@@ -188,6 +188,11 @@ Those top-level artifacts should include a stable `triage` record with
 `status`, `priority`, `priority_rank`, `repair_target`, and `reason`, so
 automation can rank `blocked`, `needs_revision`, and `ready` runs directly
 from JSON.
+The repo should also provide a directory-level `triage-report` command that
+scans `RESEARCH_GUIDE_SUMMARY.json` plus standalone `ARTIFACT_MANIFEST.json`
+files under one root, deduplicates child manifests already referenced by a
+research-guide summary, and writes a ranked JSON/Markdown view for heartbeat or
+doctor-style automation.
 Its `--results-mode` option makes result handling explicit: `auto` preserves the
 default missing/template-result repair flow, `use-existing` requires
 `--experiment-results` and never invokes the TCGA result guide, and

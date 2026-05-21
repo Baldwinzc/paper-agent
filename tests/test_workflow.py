@@ -9113,6 +9113,133 @@ def test_cli_paper_e2e_report_writes_showcase_markdown(monkeypatch, tmp_path, ca
     assert hashlib.sha256(draft_path.read_bytes()).hexdigest()[:12] in report
 
 
+def test_cli_triage_report_ranks_and_deduplicates_runs(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "outputs"
+    guide_dir = root / "guide-run"
+    guide_paper_dir = guide_dir / "paper"
+    solo_dir = root / "solo-paper"
+    guide_paper_dir.mkdir(parents=True)
+    solo_dir.mkdir(parents=True)
+
+    guide_manifest_path = guide_paper_dir / "ARTIFACT_MANIFEST.json"
+    solo_manifest_path = solo_dir / "ARTIFACT_MANIFEST.json"
+    guide_summary_path = guide_dir / "RESEARCH_GUIDE_SUMMARY.json"
+    guide_report_path = guide_dir / "RESEARCH_GUIDE_REPORT.md"
+    guide_showcase_path = guide_dir / "SHOWCASE_REPORT.md"
+    solo_showcase_path = solo_dir / "SHOWCASE_REPORT.md"
+
+    guide_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "paper-e2e-artifact-manifest/v1",
+                "status": "fail",
+                "project_name": "guide-paper",
+                "target_venue": "TPAMI",
+                "triage": {
+                    "status": "needs_revision",
+                    "priority": "high",
+                    "priority_rank": 2,
+                    "repair_target": "experiment_result_contract",
+                    "reason": "invalid result contract",
+                },
+                "acceptance": {"overall_status": "FAIL"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    solo_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "paper-e2e-artifact-manifest/v1",
+                "status": "blocked",
+                "project_name": "solo-paper",
+                "target_venue": "NeurIPS",
+                "triage": {
+                    "status": "blocked",
+                    "priority": "high",
+                    "priority_rank": 3,
+                    "repair_target": "paper_e2e_smoke_llm_preflight",
+                    "reason": "quota blocked",
+                },
+                "acceptance": {"overall_status": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+    guide_summary_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "pipeline_phase": "paper_e2e_acceptance_passed",
+                "project_name": "guide-run",
+                "target_venue": "TPAMI",
+                "outputs": {
+                    "research_guide_report": str(guide_report_path),
+                    "paper_artifact_manifest": str(guide_manifest_path),
+                    "showcase_report": str(guide_showcase_path),
+                },
+                "triage": {
+                    "status": "needs_revision",
+                    "priority": "medium",
+                    "priority_rank": 1,
+                    "repair_target": "related_work_thread_coverage",
+                    "reason": "missing related-work thread",
+                },
+                "next_actions": [
+                    {
+                        "source": "paper_e2e",
+                        "category": "related_work_online",
+                        "action": "Rerun online.",
+                        "command": "paper-agent paper-e2e-smoke --online",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    guide_report_path.write_text("# guide report", encoding="utf-8")
+    guide_showcase_path.write_text("# guide showcase", encoding="utf-8")
+    solo_showcase_path.write_text("# solo showcase", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "paper-agent",
+            "triage-report",
+            "--root",
+            str(root),
+            "--summary",
+            str(root / "TRIAGE_SUMMARY.json"),
+            "--report",
+            str(root / "TRIAGE_REPORT.md"),
+        ],
+    )
+
+    cli_module.main()
+
+    output = capsys.readouterr().out
+    summary = json.loads((root / "TRIAGE_SUMMARY.json").read_text(encoding="utf-8"))
+    report = (root / "TRIAGE_REPORT.md").read_text(encoding="utf-8")
+    assert "Triage summary written to" in output
+    assert "Triage report written to" in output
+    assert summary["schema_version"] == "triage-report/v1"
+    assert summary["counts"]["total"] == 2
+    assert summary["counts"]["blocked"] == 1
+    assert summary["counts"]["needs_revision"] == 1
+    assert summary["counts"]["not_recorded"] == 0
+    assert summary["counts"]["research_guide"] == 1
+    assert summary["counts"]["paper_e2e"] == 1
+    assert [item["source_kind"] for item in summary["entries"]] == ["paper_e2e", "research_guide"]
+    assert summary["entries"][0]["project_name"] == "solo-paper"
+    assert summary["entries"][0]["repair_target"] == "paper_e2e_smoke_llm_preflight"
+    assert summary["entries"][1]["project_name"] == "guide-run"
+    assert summary["entries"][1]["next_action_category"] == "related_work_online"
+    assert "# Run Triage Report" in report
+    assert "- Triage not recorded: 0" in report
+    assert "| 1 | paper_e2e | solo-paper | NeurIPS | blocked | blocked | high (rank=3) | paper_e2e_smoke_llm_preflight | quota blocked |" in report
+    assert "| 2 | research_guide | guide-run | TPAMI | pass | needs_revision | medium (rank=1) | related_work_thread_coverage | related_work_online |" in report
+
+
 def test_cli_paper_e2e_acceptance_runs_smoke_and_showcase_report(
     monkeypatch,
     tmp_path,
