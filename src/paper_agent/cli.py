@@ -6367,8 +6367,15 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
     paper_experiment = (
         paper_manifest.get("experiment", {}) if isinstance(paper_manifest.get("experiment", {}), dict) else {}
     )
+    smoke_contract = paper_summary.get("smoke_contract", {}) if isinstance(paper_summary.get("smoke_contract", {}), dict) else {}
+    smoke_checks = smoke_contract.get("checks", {}) if isinstance(smoke_contract.get("checks", {}), dict) else {}
     attempted = paper_summary.get("section_writer_llm_attempted_sections", [])
     successes = paper_summary.get("section_writer_llm_successes", [])
+    llm_preflight_status = str(paper_llm.get("preflight_status", "") or "")
+    if llm_preflight_status in {"", "not_recorded"}:
+        llm_preflight_status = str(
+            paper_summary.get("llm_preflight_status", smoke_checks.get("llm_preflight_status", "not_recorded"))
+        )
     return {
         "result_guide_status": result_summary.get("status", "not found"),
         "result_guide_phase": result_summary.get("pipeline_phase", ""),
@@ -6387,10 +6394,7 @@ def _research_paper_guide_quality_evidence(outputs: dict[str, object]) -> dict[s
         "llm_mode": paper_llm.get("mode", paper_inputs.get("llm_mode", "not recorded")),
         "llm_provider": paper_llm.get("provider", paper_inputs.get("llm_provider", "")),
         "llm_model": paper_llm.get("model", paper_inputs.get("llm_model", "")),
-        "llm_preflight_status": paper_llm.get(
-            "preflight_status",
-            paper_summary.get("llm_preflight_status", "not_recorded"),
-        ),
+        "llm_preflight_status": llm_preflight_status,
         "llm_preflight_total_tokens": paper_llm.get(
             "preflight_total_tokens",
             paper_summary.get("llm_preflight_total_tokens", 0),

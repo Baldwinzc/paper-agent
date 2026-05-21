@@ -8870,7 +8870,9 @@ def test_cli_research_paper_guide_surfaces_llm_preflight_blocking_evidence(
     assert summary["blocking_evidence"]["llm_provider"] == "deepseek"
     assert summary["blocking_evidence"]["llm_model"] == "deepseek-v4-pro"
     assert "secret-test-key" not in serialized
+    assert summary["quality_evidence"]["llm_preflight_status"] == "fail"
     assert "## Blocking Evidence" in report
+    assert "- LLM preflight: fail" in report
     assert "LLM failure kind: quota" in report
     assert "LLM provider/model: deepseek / deepseek-v4-pro" in report
     assert "paper-agent llm-doctor" in report
