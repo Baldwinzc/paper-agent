@@ -5621,6 +5621,11 @@ def _run_paper_e2e_smoke(args: argparse.Namespace) -> None:
         generated_results_from_artifacts=bool(args.generate_results_from_artifacts),
         status="pass",
     )
+    next_actions = _paper_e2e_related_work_next_actions(args, summary)
+    if next_actions:
+        summary["next_actions"] = next_actions
+        summary["next_action"] = str(next_actions[0].get("action", "") or "")
+        summary["next_command"] = str(next_actions[0].get("command", "") or "")
     summary_path = _write_run_summary_data(summary, output_dir / "RUN_SUMMARY.json")
     _write_acceptance_report(
         summary,
@@ -6762,6 +6767,30 @@ def _research_paper_guide_dedup_actions(actions: list[dict[str, str]]) -> list[d
     return unique
 
 
+def _dedup_command_actions(actions: list[dict[str, str]]) -> list[dict[str, str]]:
+    unique: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        key = (
+            str(action.get("category", "") or ""),
+            str(action.get("action", "") or ""),
+            str(action.get("command", "") or ""),
+        )
+        if key in seen or not any(key):
+            continue
+        seen.add(key)
+        unique.append(
+            {
+                "category": key[0],
+                "action": key[1],
+                "command": key[2],
+            }
+        )
+    return unique
+
+
 def _read_optional_json_object(path_value: str) -> dict[str, object]:
     if not path_value:
         return {}
@@ -7442,6 +7471,58 @@ def _paper_e2e_smoke_failure_next_actions(
     ]
 
 
+def _paper_e2e_related_work_next_actions(
+    args: argparse.Namespace,
+    summary: dict[str, object],
+) -> list[dict[str, str]]:
+    related_work = _related_work_discovery_summary(summary)
+    inputs = summary.get("inputs", {})
+    if not isinstance(inputs, dict):
+        inputs = {}
+    reference_resolver_mode = str(summary.get("reference_resolver_mode", "not run") or "not run")
+    network_mode = str(inputs.get("network_mode", "") or "")
+    needs_online = (
+        related_work.get("mode") == "disabled"
+        or reference_resolver_mode == "disabled"
+        or network_mode == "offline"
+    )
+    error_sources = ", ".join(str(item) for item in related_work.get("error_sources", []))
+    rerun_online = _paper_e2e_smoke_rerun_command(args, force_online=True)
+    actions: list[dict[str, str]] = []
+    if needs_online:
+        actions.append(
+            {
+                "category": "related_work_online",
+                "action": "Rerun with online reference and related-work discovery enabled.",
+                "command": rerun_online,
+            }
+        )
+    if int(related_work.get("error_count", 0) or 0) > 0:
+        detail = f" ({error_sources})" if error_sources else ""
+        actions.append(
+            {
+                "category": "related_work_retry",
+                "action": (
+                    "Review related-work discovery error sources"
+                    f"{detail} and rerun after confirming OpenAlex access."
+                ),
+                "command": rerun_online,
+            }
+        )
+    if int(related_work.get("candidates", 0) or 0) == 0 and str(related_work.get("mode", "") or "") != "disabled":
+        actions.append(
+            {
+                "category": "related_work_seed_review",
+                "action": (
+                    "No related-work candidates were recovered; inspect baseline references or keyword seeds, "
+                    "then rerun to repopulate literature candidates."
+                ),
+                "command": rerun_online,
+            }
+        )
+    return _dedup_command_actions(actions)
+
+
 def _paper_e2e_result_preflight_issues(result_preflight: dict[str, object]) -> list[str]:
     issues: list[str] = []
     sections = (
@@ -7517,7 +7598,7 @@ def _paper_e2e_validate_results_command(args: argparse.Namespace, experiment_pat
     return " ".join(_powershell_arg(part) for part in parts)
 
 
-def _paper_e2e_smoke_rerun_command(args: argparse.Namespace) -> str:
+def _paper_e2e_smoke_rerun_command(args: argparse.Namespace, *, force_online: bool = False) -> str:
     parts = [
         "paper-agent",
         "paper-e2e-smoke",
@@ -7542,9 +7623,9 @@ def _paper_e2e_smoke_rerun_command(args: argparse.Namespace) -> str:
         parts.extend(["--template-zip", args.template_zip])
     if args.template_dir:
         parts.extend(["--template-dir", args.template_dir])
-    if args.online:
+    if force_online or args.online:
         parts.append("--online")
-    if args.offline:
+    if args.offline and not force_online:
         parts.append("--offline")
     if args.require_llm:
         parts.append("--require-llm")
@@ -8318,6 +8399,27 @@ def _build_acceptance_report(
                 *[f"- {check['name']}: {check['detail']}" for check in warnings],
             ]
         )
+    next_actions = summary.get("next_actions", [])
+    if isinstance(next_actions, list) and next_actions:
+        lines.extend(
+            [
+                "",
+                "## Recommended Next Actions",
+                "",
+                "| Step | Category | Action | Command |",
+                "|---:|---|---|---|",
+            ]
+        )
+        for index, action in enumerate(next_actions[:10], start=1):
+            if not isinstance(action, dict):
+                continue
+            lines.append(
+                "| "
+                f"{index} | "
+                f"{_table_safe(str(action.get('category', '')))} | "
+                f"{_table_safe(str(action.get('action', '')))} | "
+                f"`{_table_safe(str(action.get('command', '')))}` |"
+            )
     review_details = summary.get("review_finding_details", [])
     if review_details:
         lines.extend(["", "## Reviewer Findings", ""])

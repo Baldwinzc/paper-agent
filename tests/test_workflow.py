@@ -2838,6 +2838,13 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
         "related_work_recent_candidates": 2,
         "related_work_discovery_error_count": 1,
         "related_work_discovery_error_sources": ["recent_search"],
+        "next_actions": [
+            {
+                "category": "related_work_retry",
+                "action": "Review related-work discovery error sources and rerun online.",
+                "command": "paper-agent paper-e2e-smoke --online",
+            }
+        ],
         "experiment_result_tables": 2,
         "experiment_ablation_evidence": 4,
         "experiment_sensitivity_evidence": 1,
@@ -2902,6 +2909,9 @@ def test_acceptance_report_summarizes_passed_real_draft_contract(tmp_path):
     assert "- Related-work discovery mode: openalex" in report
     assert "- Related-work candidate buckets: baseline_lineage=3; influential=2; recent=2; total=7" in report
     assert "- Related-work discovery errors: 1; sources=recent_search" in report
+    assert "## Recommended Next Actions" in report
+    assert "related_work_retry" in report
+    assert "paper-agent paper-e2e-smoke --online" in report
     assert "| Experiment evidence coverage | PASS | main=2; ablation=4; sensitivity=1; statistical=1 |" in report
     assert "| LLM section drafting | PASS | 6/6 sections succeeded" in report
     assert "| LLM call trace | PASS | 6/6 calls succeeded; total_tokens=4800; required >= 4 |" in report
@@ -7810,6 +7820,10 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
                 "bibliography": [],
                 "artifacts": {
                     "section_writer_mode": "deterministic",
+                    "reference_resolver_mode": "openalex",
+                    "related_work_discovery_mode": "openalex",
+                    "related_work_candidates": [],
+                    "related_work_discovery_errors": {"baseline_mentions": "timeout"},
                     "section_writer_llm_successes": [],
                     "llm_self_review": {"mode": "disabled"},
                     "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
@@ -7877,7 +7891,18 @@ def test_cli_paper_e2e_smoke_runs_explicit_inputs_without_llm(monkeypatch, tmp_p
     assert summary["smoke_contract"]["outputs"]["artifact_manifest"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["outputs"]["artifact_manifest_path"].endswith("ARTIFACT_MANIFEST.json")
     assert summary["inputs"]["experiment_results_path"] == str(experiment_path)
+    assert [action["category"] for action in summary["next_actions"]] == [
+        "related_work_online",
+        "related_work_retry",
+        "related_work_seed_review",
+    ]
+    assert summary["next_command"].startswith("paper-agent paper-e2e-smoke")
+    assert "--online" in summary["next_command"]
+    assert "--offline" not in summary["next_command"]
     assert "- Artifact manifest:" in acceptance_report
+    assert "## Recommended Next Actions" in acceptance_report
+    assert "related_work_online" in acceptance_report
+    assert "related_work_seed_review" in acceptance_report
     assert manifest["schema_version"] == "paper-e2e-artifact-manifest/v1"
     assert manifest["project_name"] == cli_module._default_project_name(output_dir)
     assert manifest["smoke_contract_status"] == "pass"
@@ -8693,6 +8718,10 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
                 "bibliography": [],
                 "artifacts": {
                     "section_writer_mode": "deterministic",
+                    "reference_resolver_mode": "openalex",
+                    "related_work_discovery_mode": "openalex",
+                    "related_work_candidates": [],
+                    "related_work_discovery_errors": {"baseline_mentions": "timeout"},
                     "section_writer_llm_successes": [],
                     "llm_self_review": {"mode": "disabled"},
                     "draft_report_path": str(latex_dir / "DRAFT_REPORT.md"),
@@ -8740,8 +8769,17 @@ def test_cli_research_paper_guide_use_existing_skips_result_guide(
     assert not (output_dir / "RESULT_GUIDE_SUMMARY.json").exists()
     assert summary["quality_evidence"]["result_guide_status"] == "not_run"
     assert summary["quality_evidence"]["result_guide_phase"] == "use_existing_results"
+    assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 3
+    assert [action["category"] for action in summary["next_actions"]] == [
+        "related_work_online",
+        "related_work_retry",
+        "related_work_seed_review",
+    ]
     assert "- Result guide status: not_run" in report
     assert "- Result guide phase: use_existing_results" in report
+    assert "## Next Actions" in report
+    assert "related_work_online" in report
+    assert "--online" in report
     assert captured["request"].experiment_results == result_path.read_text(encoding="utf-8")
 
 
