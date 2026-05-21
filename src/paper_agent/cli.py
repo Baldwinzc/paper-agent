@@ -6091,6 +6091,7 @@ def _research_paper_acceptance_args(
     output_dir: Path,
     showcase_path: Path,
 ) -> argparse.Namespace:
+    zip_path = _research_paper_guide_zip_path(args, output_dir.parent)
     return argparse.Namespace(
         project_name=args.project_name,
         baseline_pdf=str(baseline_pdf),
@@ -6099,7 +6100,7 @@ def _research_paper_acceptance_args(
         target_venue=args.target_venue,
         keyword=list(args.keyword or []),
         output_dir=str(output_dir),
-        zip=args.zip,
+        zip=zip_path,
         template_zip=args.template_zip,
         template_dir=args.template_dir,
         online=bool(args.online),
@@ -6163,14 +6164,19 @@ def _research_paper_guide_summary(
             "paper_acceptance_report": str(paper_output_dir / "ACCEPTANCE_REPORT.md"),
             "paper_artifact_manifest": str(paper_output_dir / "ARTIFACT_MANIFEST.json"),
             "showcase_report": str(output_dir / "SHOWCASE_REPORT.md"),
-            "overleaf_zip": str(args.zip or ""),
+            "overleaf_zip": _research_paper_guide_zip_path(args, output_dir),
         },
         "blocking_items": blocking_items,
-        "next_command": _research_paper_guide_next_command(args, experiment_path),
+        "next_command": _research_paper_guide_next_command(args, experiment_path, output_dir=output_dir),
     }
 
 
-def _research_paper_guide_next_command(args: argparse.Namespace, experiment_path: Path) -> str:
+def _research_paper_guide_next_command(
+    args: argparse.Namespace,
+    experiment_path: Path,
+    *,
+    output_dir: Path,
+) -> str:
     parts = [
         "paper-agent",
         "research-paper-guide",
@@ -6185,12 +6191,24 @@ def _research_paper_guide_next_command(args: argparse.Namespace, experiment_path
         "--output-dir",
         args.output_dir,
     ]
+    zip_path = _research_paper_guide_zip_path(args, output_dir)
+    if zip_path:
+        parts.extend(["--zip", zip_path])
     if args.artifacts_dir:
         parts.extend(["--artifacts-dir", args.artifacts_dir])
     results_mode = getattr(args, "results_mode", "auto")
     if results_mode != "auto":
         parts.extend(["--results-mode", results_mode])
     return " ".join(_powershell_arg(part) for part in parts)
+
+
+def _research_paper_guide_zip_path(args: argparse.Namespace, output_dir: Path) -> str:
+    zip_arg = str(getattr(args, "zip", "") or "")
+    if not zip_arg:
+        return ""
+    if zip_arg == "outputs/research-paper-guide-overleaf.zip":
+        return str(output_dir / "paper.zip")
+    return zip_arg
 
 
 def _write_research_paper_guide_outputs(summary: dict[str, object], summary_path: Path) -> Path:

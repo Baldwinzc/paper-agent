@@ -8520,6 +8520,7 @@ def test_cli_research_paper_guide_generates_results_and_runs_paper_acceptance(
     assert summary["status"] == "pass"
     assert summary["pipeline_phase"] == "paper_e2e_acceptance_passed"
     assert summary["outputs"]["research_guide_report"].endswith("RESEARCH_GUIDE_REPORT.md")
+    assert summary["outputs"]["overleaf_zip"] == ""
     assert result_summary["status"] == "pass"
     assert result_summary["experiment_contract_status"] == "complete"
     assert (output_dir / "tcga_results.md").is_file()
@@ -8791,6 +8792,8 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 4
     assert summary["blocking_evidence"]["experiment_contract_status"] == "invalid"
     assert summary["blocking_evidence"]["experiment_contract_errors"]
+    assert summary["outputs"]["overleaf_zip"] == str(output_dir / "paper.zip")
+    assert f"--zip {output_dir / 'paper.zip'}" in summary["next_command"]
     assert [action["category"] for action in summary["next_actions"]] == [
         "validate_results",
         "result_artifacts",
@@ -8798,9 +8801,11 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
         "paper_e2e_smoke",
     ]
     assert summary["next_actions"][0]["command"] == paper_summary["next_actions"][0]["command"]
+    assert str(output_dir / "paper.zip") in summary["next_actions"][3]["command"]
     assert "## Next Actions" in report
     assert "- Experiment contract: invalid" in report
     assert "- Contract issue:" in report
+    assert f"| Overleaf zip | no | `{output_dir / 'paper.zip'}` |" in report
     assert "paper-agent validate-results" in report
     assert "paper-agent paper-e2e-smoke" in report
 
