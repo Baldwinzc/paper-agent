@@ -280,7 +280,9 @@ This writes `RELATED_WORK_DOCTOR_SUMMARY.json` and
 `RELATED_WORK_DOCTOR_REPORT.md`. The report surfaces the OpenAlex field query,
 queries extracted from named works in the baseline related-work section,
 baseline-lineage/influential/recent candidate buckets, resolver/discovery error
-sources, and rerun commands when literature recovery is weak.
+sources, and rerun commands when literature recovery is weak. Its candidate
+preview also carries a human-readable discovery-path label plus the exact source
+query used to recover each paper.
 
 `paper-e2e-acceptance` runs `paper-e2e-smoke` and then writes
 `SHOWCASE_REPORT.md` from the generated artifact manifest. The smoke step always
@@ -296,7 +298,9 @@ LLM preflight status. Successful LLM-required runs also record preflight elapsed
 time and token usage when the provider returns usage metadata.
 The artifact manifest lists the generated Markdown, LaTeX, report, zip, and
 summary files with existence checks, sizes, and file hashes for reproducible
-demo handoff.
+demo handoff. The run summary and acceptance report also surface related-work
+candidate preview entries with discovery-path labels and source queries so
+literature provenance is visible without opening nested doctor artifacts.
 To turn an existing smoke manifest into a one-page demonstration report, run:
 
 ```powershell

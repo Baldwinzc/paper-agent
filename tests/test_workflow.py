@@ -1370,6 +1370,9 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
 
     categories = {item["category"] for item in state["artifacts"]["related_work_candidates"]}
     titles = [item["title"] for item in state["artifacts"]["related_work_candidates"]]
+    candidate_by_category = {
+        item["category"]: item for item in state["artifacts"]["related_work_candidates"] if isinstance(item, dict)
+    }
     assert {"baseline_reference", "baseline_citing", "baseline_mentioned", "influential", "recent"} <= categories
     assert titles.count("New whole-slide survival prediction model") == 1
     assert "Predicting cancer outcomes from histology" in titles
@@ -1378,6 +1381,13 @@ def test_related_work_discovery_adds_categorized_candidates(monkeypatch):
     assert state["artifacts"]["related_work_baseline_mentioned_queries"] == [
         "Mobadersany | Predicting cancer outcomes from histology"
     ]
+    assert candidate_by_category["baseline_reference"]["discovery_path_label"] == "baseline reference list"
+    assert candidate_by_category["baseline_reference"]["source_query"].startswith("baseline references of Baseline Survival Paper")
+    assert candidate_by_category["baseline_citing"]["discovery_path_label"] == "papers citing the baseline"
+    assert candidate_by_category["baseline_citing"]["source_query"].startswith("papers citing Baseline Survival Paper")
+    assert candidate_by_category["influential"]["source_query"] == "whole slide images survival prediction"
+    assert candidate_by_category["recent"]["source_query"] == "whole slide images survival prediction"
+    assert candidate_by_category["baseline_mentioned"]["discovery_path_label"] == "baseline related-work mention"
     assert any(entry.title == "Classic survival analysis for whole-slide images" for entry in state["bibliography"])
     assert "wholeslideimages" not in [entry.key for entry in state["bibliography"]]
     assert state["artifacts"]["reference_pruned_seed_keys"] == ["wholeslideimages"]
@@ -2826,11 +2836,27 @@ def test_run_summary_reports_core_metrics(tmp_path):
                 {
                     "title": "A",
                     "category": "baseline_reference",
+                    "discovery_path_label": "baseline reference list",
                     "query": "A",
+                    "source_query": "baseline references of Baseline Survival Paper",
                     "year": "2018",
                 },
-                {"title": "B", "category": "influential", "query": "B", "year": "2020"},
-                {"title": "C", "category": "recent", "query": "C", "year": "2026"},
+                {
+                    "title": "B",
+                    "category": "influential",
+                    "discovery_path_label": "high-citation field search",
+                    "query": "B",
+                    "source_query": "whole slide images survival prediction",
+                    "year": "2020",
+                },
+                {
+                    "title": "C",
+                    "category": "recent",
+                    "discovery_path_label": "recent field search",
+                    "query": "C",
+                    "source_query": "whole slide images survival prediction",
+                    "year": "2026",
+                },
             ],
             "experiment_result_tables": [{"caption": "Main Results"}],
             "experiment_sensitivity_evidence": [{"parameter": "lambda_rec"}],
@@ -2906,6 +2932,7 @@ def test_run_summary_reports_core_metrics(tmp_path):
         "Mobadersany | Predicting cancer outcomes from histology"
     ]
     assert summary["related_work_candidate_preview"][0]["title"] == "A"
+    assert summary["related_work_candidate_preview"][0]["discovery_path_label"] == "baseline reference list"
     assert summary["related_work_discovery_error_count"] == 1
     assert summary["related_work_discovery_error_sources"] == ["recent_search"]
     assert summary["related_work_discovery_error_details"][0]["source"] == "recent_search"
@@ -8860,11 +8887,15 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
                 "related_work_candidate_preview": [
                     {
                         "category": "baseline_mentioned",
+                        "discovery_path_label": "baseline related-work mention",
                         "title": "Predicting cancer outcomes from histology",
+                        "source_query": "Mobadersany | Predicting cancer outcomes from histology",
                     },
                     {
                         "category": "influential",
+                        "discovery_path_label": "high-citation field search",
                         "title": "Computational pathology survey",
+                        "source_query": "whole slide images survival prediction",
                     },
                 ],
                 "related_work_discovery_error_count": 1,
@@ -8927,6 +8958,7 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert quality["related_work_field_query"] == "whole slide images survival prediction"
     assert quality["related_work_baseline_mentioned_queries"][0].startswith("Mobadersany |")
     assert quality["related_work_candidate_preview"][0]["category"] == "baseline_mentioned"
+    assert quality["related_work_candidate_preview"][0]["discovery_path_label"] == "baseline related-work mention"
     assert quality["related_work_discovery_error_details"][0]["source"] == "recent_search"
     assert "- LLM sections: 2/3; successes: abstract, method" in report
     assert "- LLM calls: 2/3; tokens=512" in report
@@ -8939,7 +8971,10 @@ def test_research_paper_guide_report_surfaces_quality_evidence(tmp_path):
     assert "- Recent candidates: 1" in report
     assert "- Field query: `whole slide images survival prediction`" in report
     assert "- Baseline mention query 1: `Mobadersany | Predicting cancer outcomes from histology`" in report
-    assert "- Candidate preview: [baseline_mentioned] Predicting cancer outcomes from histology; [influential] Computational pathology survey" in report
+    assert (
+        "- Candidate preview: [baseline_mentioned: baseline related-work mention] Predicting cancer outcomes from histology <= Mobadersany | Predicting cancer outcomes from histology; [influential: high-citation field search] Computational pathology survey <= whole slide images survival prediction"
+        in report
+    )
     assert (
         "- Discovery error detail 1: source=recent_search; query=whole slide images survival prediction; sort=publication_date:desc; error=timeout"
         in report

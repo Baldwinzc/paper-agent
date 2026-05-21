@@ -16,6 +16,13 @@ class RelatedWorkDiscoveryAgent:
     """Discovers classic, baseline-lineage, and recent related-work candidates."""
 
     OPENALEX_WORKS_URL = "https://api.openalex.org/works"
+    CATEGORY_LABELS = {
+        "baseline_reference": "baseline reference list",
+        "baseline_citing": "papers citing the baseline",
+        "baseline_mentioned": "baseline related-work mention",
+        "influential": "high-citation field search",
+        "recent": "recent field search",
+    }
 
     def run(self, state: PaperState) -> PaperState:
         if self._disabled():
@@ -174,6 +181,7 @@ class RelatedWorkDiscoveryAgent:
         references = [work_id for work_id in references if work_id][:25]
         if not references:
             return []
+        baseline_title = str(baseline_work.get("title") or "the provided baseline paper")
         data = self._query_openalex(
             {
                 "filter": "openalex_id:" + "|".join(references),
@@ -188,6 +196,7 @@ class RelatedWorkDiscoveryAgent:
                 work,
                 category="baseline_reference",
                 note_prefix="Baseline-reference candidate cited by the provided baseline paper",
+                retrieval_query=f"baseline references of {baseline_title}",
             )
             for work in works[:limit]
         ]
@@ -196,6 +205,7 @@ class RelatedWorkDiscoveryAgent:
         baseline_id = self._openalex_id(str(baseline_work.get("id") or ""))
         if not baseline_id:
             return []
+        baseline_title = str(baseline_work.get("title") or "the provided baseline paper")
         data = self._query_openalex(
             {
                 "filter": f"cites:{baseline_id}",
@@ -210,6 +220,7 @@ class RelatedWorkDiscoveryAgent:
                 work,
                 category="baseline_citing",
                 note_prefix="Recent follow-up candidate that cites the provided baseline paper",
+                retrieval_query=f"papers citing {baseline_title}",
             )
             for work in works[:limit]
         ]
@@ -243,8 +254,9 @@ class RelatedWorkDiscoveryAgent:
                 selected,
                 category="baseline_mentioned",
                 note_prefix="Candidate discovered from a named work in the provided baseline related-work text",
+                retrieval_query=query,
             )
-            entries.append(entry.model_copy(update={"query": query, "note": f"{entry.note} Source query: {query}."}))
+            entries.append(entry)
         return entries
 
     def _mentioned_work_queries(self, baseline) -> list[str]:
@@ -418,7 +430,12 @@ class RelatedWorkDiscoveryAgent:
         relevant = [work for work in works if self._relevant_to_query(query, str(work.get("title") or ""))]
         selected = relevant[:limit] if relevant else works[:limit]
         return [
-            self._entry_from_work(work, category=category, note_prefix=note_prefix)
+            self._entry_from_work(
+                work,
+                category=category,
+                note_prefix=note_prefix,
+                retrieval_query=query,
+            )
             for work in selected
         ]
 
@@ -436,6 +453,8 @@ class RelatedWorkDiscoveryAgent:
         work: dict[str, Any],
         category: str,
         note_prefix: str,
+        *,
+        retrieval_query: str = "",
     ) -> CitationEntry:
         title = str(work.get("title") or "Untitled related work")
         doi = self._clean_doi(str(work.get("doi") or ""))
@@ -443,7 +462,7 @@ class RelatedWorkDiscoveryAgent:
         return CitationEntry(
             key=self._citation_key(title),
             title=title,
-            query=title,
+            query=retrieval_query or title,
             authors=self._authors(work),
             year=str(work.get("publication_year") or ""),
             venue=self._venue(work),
@@ -563,6 +582,7 @@ class RelatedWorkDiscoveryAgent:
     def _candidate_artifact(self, entry: CitationEntry) -> dict[str, Any]:
         category_match = re.search(r"category=([^;]+)", entry.note)
         cited_match = re.search(r"cited_by_count=(\d+)", entry.note)
+        category = category_match.group(1) if category_match else "unknown"
         return {
             "key": entry.key,
             "title": entry.title,
@@ -572,7 +592,9 @@ class RelatedWorkDiscoveryAgent:
             "doi": entry.doi,
             "url": entry.url,
             "query": entry.query,
-            "category": category_match.group(1) if category_match else "unknown",
+            "source_query": entry.query,
+            "category": category,
+            "discovery_path_label": self.CATEGORY_LABELS.get(category, category.replace("_", " ")),
             "cited_by_count": int(cited_match.group(1)) if cited_match else 0,
         }
 

@@ -92,10 +92,14 @@ The run summary, acceptance report, and top-level research-guide report expose
 related-work discovery mode, field query, baseline mention queries,
 baseline-lineage/influential/recent candidate counts, and retrieval error
 sources plus query-specific error details so literature coverage gaps are explicit.
+Their related-work candidate previews should also record a human-readable
+discovery-path label and the exact source query used to recover each candidate.
 The standalone `related-work-doctor` command should expose the same discovery
 state without requiring a full paper run: field query, baseline-mentioned work
 queries, candidate buckets, resolver/discovery error sources, and concrete
-rerun commands when online retrieval or better keyword seeds are needed.
+rerun commands when online retrieval or better keyword seeds are needed. Its
+candidate preview should use the same path/query provenance fields as the full
+paper pipeline.
 Generated sections are also checked against supplied experiments and innovation
 points to flag unsupported datasets, metrics, numeric results, or Method subsections.
 After review, the workflow computes a submission-readiness score across evidence

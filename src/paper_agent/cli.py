@@ -6374,8 +6374,14 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             if not isinstance(item, dict):
                 continue
             category = str(item.get("category", "") or "unknown")
+            path_label = str(item.get("discovery_path_label", "") or "")
             title = str(item.get("title", "") or "untitled")
-            preview_items.append(f"[{category}] {title}")
+            source_query = str(item.get("source_query", "") or str(item.get("query", "") or ""))
+            label = f"{category}: {path_label}" if path_label else category
+            if source_query:
+                preview_items.append(f"[{label}] {title} <= {source_query}")
+            else:
+                preview_items.append(f"[{label}] {title}")
         if preview_items:
             lines.append(f"- Candidate preview: {'; '.join(preview_items)}")
     for index, detail in enumerate(related_work_error_details, start=1):
@@ -6753,9 +6759,11 @@ def _related_work_candidate_preview(value: object, *, limit: int = 10) -> list[d
             {
                 "key": str(item.get("key", "") or ""),
                 "category": str(item.get("category", "") or ""),
+                "discovery_path_label": str(item.get("discovery_path_label", "") or ""),
                 "title": str(item.get("title", "") or ""),
                 "year": str(item.get("year", "") or ""),
                 "query": str(item.get("query", "") or ""),
+                "source_query": str(item.get("source_query", "") or str(item.get("query", "") or "")),
             }
         )
     return preview
@@ -7177,8 +7185,8 @@ def _build_related_work_doctor_report(summary: dict[str, object]) -> str:
                 "",
                 "## Candidate Preview",
                 "",
-                "| Category | Year | Title | Query |",
-                "|---|---:|---|---|",
+                "| Category | Path | Year | Title | Query |",
+                "|---|---|---:|---|---|",
             ]
         )
         for item in candidate_preview:
@@ -7187,9 +7195,10 @@ def _build_related_work_doctor_report(summary: dict[str, object]) -> str:
             lines.append(
                 "| "
                 f"{_table_safe(str(item.get('category', '')))} | "
+                f"{_table_safe(str(item.get('discovery_path_label', '')))} | "
                 f"{_table_safe(str(item.get('year', '')))} | "
                 f"{_table_safe(str(item.get('title', '')))} | "
-                f"{_table_safe(str(item.get('query', '')))} |"
+                f"{_table_safe(str(item.get('source_query', '') or str(item.get('query', ''))))} |"
             )
     if warning_items:
         lines.extend(["", "## Warnings", ""])
@@ -8904,8 +8913,14 @@ def _build_acceptance_report(
             if not isinstance(item, dict):
                 continue
             category = str(item.get("category", "") or "unknown")
+            path_label = str(item.get("discovery_path_label", "") or "")
             title = str(item.get("title", "") or "untitled")
-            preview_items.append(f"[{category}] {title}")
+            source_query = str(item.get("source_query", "") or str(item.get("query", "") or ""))
+            label = f"{category}: {path_label}" if path_label else category
+            if source_query:
+                preview_items.append(f"[{label}] {title} <= {source_query}")
+            else:
+                preview_items.append(f"[{label}] {title}")
         if preview_items:
             lines.append(f"- Related-work candidate preview: {'; '.join(preview_items)}")
     for index, detail in enumerate(related_work_error_details, start=1):
