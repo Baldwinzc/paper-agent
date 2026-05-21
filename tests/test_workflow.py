@@ -8789,6 +8789,8 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     assert summary["status"] == "blocked"
     assert summary["pipeline_phase"] == "paper_e2e_acceptance_blocked"
     assert [action["source"] for action in summary["next_actions"]] == ["paper_e2e"] * 4
+    assert summary["blocking_evidence"]["experiment_contract_status"] == "invalid"
+    assert summary["blocking_evidence"]["experiment_contract_errors"]
     assert [action["category"] for action in summary["next_actions"]] == [
         "validate_results",
         "result_artifacts",
@@ -8797,6 +8799,8 @@ def test_cli_research_paper_guide_propagates_blocked_paper_next_actions(
     ]
     assert summary["next_actions"][0]["command"] == paper_summary["next_actions"][0]["command"]
     assert "## Next Actions" in report
+    assert "- Experiment contract: invalid" in report
+    assert "- Contract issue:" in report
     assert "paper-agent validate-results" in report
     assert "paper-agent paper-e2e-smoke" in report
 

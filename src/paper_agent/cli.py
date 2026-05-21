@@ -6294,6 +6294,23 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
             lines.append(f"- Source: {_table_safe(str(blocking_evidence.get('source', '')))}")
         if blocking_evidence.get("pipeline_phase"):
             lines.append(f"- Child phase: {_table_safe(str(blocking_evidence.get('pipeline_phase', '')))}")
+        if blocking_evidence.get("experiment_contract_status"):
+            lines.append(
+                f"- Experiment contract: {_table_safe(str(blocking_evidence.get('experiment_contract_status', '')))}"
+            )
+        if blocking_evidence.get("experiment_quality_status"):
+            lines.append(
+                f"- Experiment quality: {_table_safe(str(blocking_evidence.get('experiment_quality_status', '')))}"
+            )
+        if blocking_evidence.get("experiment_provenance_status"):
+            lines.append(
+                f"- Experiment provenance: {_table_safe(str(blocking_evidence.get('experiment_provenance_status', '')))}"
+            )
+        if blocking_evidence.get("experiment_artifact_consistency_status"):
+            lines.append(
+                "- Experiment artifact consistency: "
+                f"{_table_safe(str(blocking_evidence.get('experiment_artifact_consistency_status', '')))}"
+            )
         if blocking_evidence.get("llm_failure_kind"):
             lines.append(f"- LLM failure kind: {_table_safe(str(blocking_evidence.get('llm_failure_kind', '')))}")
         if blocking_evidence.get("llm_provider") or blocking_evidence.get("llm_model"):
@@ -6321,6 +6338,17 @@ def _build_research_paper_guide_report(summary: dict[str, object]) -> str:
         todo_files = blocking_evidence.get("artifact_csv_todo_files", [])
         if isinstance(todo_files, list) and todo_files:
             lines.append(f"- Result CSV files with TODO: {len(todo_files)}")
+        for label, key in (
+            ("Contract issue", "experiment_contract_errors"),
+            ("Quality issue", "experiment_quality_errors"),
+            ("Provenance issue", "experiment_provenance_errors"),
+            ("Artifact consistency issue", "experiment_artifact_consistency_errors"),
+        ):
+            issues = blocking_evidence.get(key, [])
+            if not isinstance(issues, list):
+                continue
+            for item in issues[:3]:
+                lines.append(f"- {label}: {_table_safe(str(item))}")
     if next_actions:
         lines.extend(
             [
@@ -6435,9 +6463,21 @@ def _research_paper_guide_blocking_evidence(outputs: dict[str, object]) -> dict[
         artifact_template = paper_summary.get("artifact_template", {})
         if not isinstance(artifact_template, dict):
             artifact_template = {}
+        contract = _summary_experiment_contract(paper_summary)
+        quality = _summary_experiment_quality(paper_summary)
+        provenance = _summary_experiment_provenance(paper_summary)
+        consistency = _summary_experiment_artifact_consistency(paper_summary)
         return {
             "source": "paper_e2e",
             "pipeline_phase": str(paper_summary.get("pipeline_phase", "") or ""),
+            "experiment_contract_status": str(contract.get("status", "") or ""),
+            "experiment_contract_errors": list(contract.get("errors", [])) if isinstance(contract.get("errors", []), list) else [],
+            "experiment_quality_status": str(quality.get("status", "") or ""),
+            "experiment_quality_errors": list(quality.get("errors", [])) if isinstance(quality.get("errors", []), list) else [],
+            "experiment_provenance_status": str(provenance.get("status", "") or ""),
+            "experiment_provenance_errors": list(provenance.get("errors", [])) if isinstance(provenance.get("errors", []), list) else [],
+            "experiment_artifact_consistency_status": str(consistency.get("status", "") or ""),
+            "experiment_artifact_consistency_errors": list(consistency.get("errors", [])) if isinstance(consistency.get("errors", []), list) else [],
             "llm_failure_kind": str(diagnostics.get("failure_kind", "") or ""),
             "llm_provider": str(diagnostics.get("provider", "") or ""),
             "llm_model": str(diagnostics.get("model", "") or ""),
